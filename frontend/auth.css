@@ -1,0 +1,411 @@
+body.auth-page{
+min-height:100vh;
+margin:0;
+display:flex;
+align-items:center;
+justify-content:center;
+background:
+linear-gradient(135deg,#eef2ff 0%,#f8fafc 48%,#e0f2fe 100%);
+font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+color:#0f172a;
+}
+
+.auth-shell{
+width:min(960px,calc(100% - 32px));
+display:grid;
+grid-template-columns:1fr 420px;
+overflow:hidden;
+border:1px solid rgba(148,163,184,.22);
+border-radius:22px;
+background:#fff;
+box-shadow:0 28px 80px rgba(15,23,42,.16);
+}
+
+.auth-brand-panel{
+position:relative;
+min-height:560px;
+padding:42px;
+background:linear-gradient(145deg,#0f172a,#1e1b4b 58%,#2563eb);
+color:white;
+overflow:hidden;
+}
+
+.auth-brand-panel::after{
+content:"";
+position:absolute;
+right:-110px;
+bottom:-120px;
+width:330px;
+height:330px;
+border-radius:50%;
+border:46px solid rgba(255,255,255,.08);
+}
+
+.auth-logo{
+display:flex;
+align-items:center;
+gap:12px;
+font-size:22px;
+font-weight:950;
+}
+
+.auth-logo span{
+width:42px;
+height:42px;
+display:flex;
+align-items:center;
+justify-content:center;
+border-radius:12px;
+background:#fff;
+box-shadow:0 16px 30px rgba(99,102,241,.34);
+font-size:14px;
+padding:5px;
+overflow:hidden;
+flex:0 0 auto;
+}
+
+.auth-logo img{
+width:100%;
+height:100%;
+object-fit:contain;
+display:block;
+}
+
+.auth-brand-panel h1{
+max-width:430px;
+margin:96px 0 14px;
+font-size:38px;
+line-height:1.08;
+font-weight:950;
+letter-spacing:0;
+}
+
+.auth-brand-panel p{
+max-width:420px;
+font-size:15px;
+line-height:1.7;
+color:#dbeafe;
+}
+
+.auth-card{
+padding:42px;
+display:flex;
+flex-direction:column;
+justify-content:center;
+}
+
+.auth-card h2{
+font-size:28px;
+font-weight:950;
+margin:0 0 8px;
+color:#0f172a;
+}
+
+.auth-subtitle{
+margin:0 0 24px;
+font-size:14px;
+line-height:1.6;
+color:#64748b;
+}
+
+.auth-card input{
+width:100%;
+height:48px;
+border:1px solid #dbe3ef;
+border-radius:12px;
+padding:0 14px;
+margin-bottom:14px;
+font-size:14px;
+background:#f8fafc;
+outline:none;
+}
+
+.auth-card input:focus{
+background:white;
+border-color:#6366f1;
+box-shadow:0 0 0 4px rgba(99,102,241,.12);
+}
+
+.auth-primary-btn,
+.auth-google-btn{
+width:100%;
+height:48px;
+border-radius:12px;
+font-weight:900;
+transition:transform .18s ease, box-shadow .18s ease;
+}
+
+.auth-primary-btn{
+border:0;
+background:linear-gradient(135deg,#4f46e5,#2563eb);
+color:white;
+box-shadow:0 14px 28px rgba(37,99,235,.22);
+}
+
+.auth-primary-btn:hover,
+.auth-google-btn:hover{
+transform:translateY(-1px);
+}
+
+.auth-divider{
+display:flex;
+align-items:center;
+gap:12px;
+margin:18px 0 2px;
+font-size:12px;
+font-weight:800;
+color:#94a3b8;
+text-transform:uppercase;
+letter-spacing:.08em;
+}
+
+.auth-divider::before,
+.auth-divider::after{
+content:"";
+height:1px;
+flex:1;
+background:#e2e8f0;
+}
+
+.auth-google-btn{
+border:1px solid #dbe3ef;
+background:white;
+color:#0f172a;
+box-shadow:0 10px 24px rgba(15,23,42,.06);
+}
+
+.auth-google-btn.auth-google-disabled{
+opacity:.62;
+cursor:not-allowed;
+background:#f8fafc;
+box-shadow:none;
+}
+
+.auth-google-btn.auth-google-disabled:hover{
+transform:none;
+}
+
+.pricing-page{
+min-height:100vh;
+margin:0;
+background:#f8fafc;
+font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+color:#0f172a;
+}
+
+.pricing-shell{
+width:min(1180px,calc(100% - 32px));
+margin:0 auto;
+padding:28px 0 54px;
+}
+
+.pricing-nav{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:12px;
+padding:18px 0 34px;
+}
+
+.pricing-nav a{
+color:#2563eb;
+font-weight:900;
+text-decoration:none;
+}
+
+.pricing-hero{
+max-width:680px;
+margin:0 0 28px;
+}
+
+.pricing-hero span{
+display:block;
+font-size:13px;
+font-weight:950;
+color:#4f46e5;
+text-transform:uppercase;
+margin-bottom:10px;
+}
+
+.pricing-hero h1{
+margin:0 0 12px;
+font-size:42px;
+line-height:1.08;
+font-weight:950;
+}
+
+.pricing-hero p{
+margin:0;
+font-size:16px;
+line-height:1.7;
+color:#64748b;
+}
+
+.pricing-grid{
+display:grid;
+grid-template-columns:repeat(3,minmax(0,1fr));
+gap:20px;
+}
+
+.pricing-card{
+position:relative;
+border:1px solid #e2e8f0;
+border-radius:18px;
+background:white;
+padding:28px;
+box-shadow:0 18px 48px rgba(15,23,42,.08);
+}
+
+.pricing-card.is-popular{
+border-color:#6366f1;
+box-shadow:0 24px 60px rgba(79,70,229,.18);
+}
+
+.pricing-card b{
+position:absolute;
+right:24px;
+top:24px;
+font-size:11px;
+color:#4f46e5;
+background:#eef2ff;
+border-radius:999px;
+padding:5px 10px;
+}
+
+.pricing-card span{
+display:block;
+font-size:16px;
+font-weight:950;
+color:#0f172a;
+margin-bottom:10px;
+}
+
+.pricing-card h2{
+margin:0;
+font-size:38px;
+font-weight:950;
+color:#111827;
+}
+
+.pricing-card h2 small{
+font-size:16px;
+font-weight:800;
+color:#64748b;
+}
+
+.pricing-card p{
+margin:10px 0 18px;
+font-size:14px;
+line-height:1.5;
+color:#64748b;
+}
+
+.pricing-card ul{
+margin:0 0 24px;
+padding-left:18px;
+font-size:14px;
+line-height:1.8;
+color:#334155;
+}
+
+.pricing-card button{
+width:100%;
+height:48px;
+border:1px solid #6366f1;
+border-radius:12px;
+background:white;
+color:#4f46e5;
+font-weight:900;
+}
+
+.pricing-card.is-popular button{
+background:linear-gradient(135deg,#4f46e5,#2563eb);
+color:white;
+border:0;
+}
+
+.pricing-note{
+margin-top:22px;
+border:1px solid #dbeafe;
+background:#eff6ff;
+border-radius:16px;
+padding:18px;
+color:#1e3a8a;
+}
+
+.pricing-note strong{
+display:block;
+margin-bottom:6px;
+font-weight:950;
+}
+
+.pricing-note p{
+margin:0;
+line-height:1.6;
+}
+
+.auth-links{
+display:flex;
+justify-content:space-between;
+gap:12px;
+margin-top:16px;
+font-size:13px;
+}
+
+.auth-links a,
+.auth-card a{
+color:#2563eb;
+font-weight:800;
+text-decoration:none;
+}
+
+.auth-links a:hover,
+.auth-card a:hover{
+text-decoration:underline;
+}
+
+#error{
+margin:0 0 12px;
+padding:10px 12px;
+border-radius:10px;
+background:#fef2f2;
+color:#b91c1c;
+font-size:13px;
+font-weight:700;
+}
+
+#resetMessage{
+margin:0 0 12px;
+padding:10px 12px;
+border-radius:10px;
+background:#ecfdf5;
+color:#047857;
+font-size:13px;
+font-weight:800;
+line-height:1.5;
+word-break:break-word;
+}
+
+@media (max-width: 860px){
+.auth-shell{
+grid-template-columns:1fr;
+}
+
+.pricing-grid{
+grid-template-columns:1fr;
+}
+
+.pricing-hero h1{
+font-size:32px;
+}
+
+.auth-brand-panel{
+min-height:auto;
+padding:30px;
+}
+
+.auth-brand-panel h1{
+margin:42px 0 12px;
+font-size:30px;
+}
+}

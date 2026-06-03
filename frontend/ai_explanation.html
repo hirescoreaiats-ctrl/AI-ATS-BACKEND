@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Candidate Analysis</title>
+<link rel="stylesheet" href="ai_explanation.css">
+</head>
+
+<body onload="loadExplanationPage()">
+<main class="analysis-shell">
+    <header class="topbar">
+        <div>
+            <p class="eyebrow">Recruiter intelligence</p>
+            <h1>AI Candidate Report</h1>
+        </div>
+        <div class="topbar-actions">
+            <button onclick="regenerateReport()" class="secondary-btn" type="button">Regenerate report</button>
+            <button onclick="goBack()" class="back-btn" type="button">Back to Results</button>
+        </div>
+    </header>
+
+    <section id="loadingScreen" class="loading-state">
+        <div class="loader"></div>
+        <h2>Building candidate report</h2>
+        <p>Reading AI evidence, project history, score signals, and screening gaps.</p>
+    </section>
+
+    <section id="explanationBox" class="analysis-content hidden" aria-live="polite"></section>
+</main>
+
+<script src="runtime-config.js"></script>
+<script src="config.js"></script>
+<script src="ai_explanation.js"></script>
+</body>
+</html>

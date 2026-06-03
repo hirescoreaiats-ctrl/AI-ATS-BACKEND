@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Sign Up - HireScore AI</title>
+<link rel="icon" href="assets/hirescore-mark.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="auth.css">
+</head>
+
+<body class="auth-page">
+
+<div class="auth-shell">
+
+<div class="auth-brand-panel">
+<div class="auth-logo"><span><img src="assets/hirescore-mark.png" alt=""></span> HireScore AI</div>
+<h1>Create a secure AI recruiting workspace.</h1>
+<p>Manage jobs, screen resumes with AI, shortlist candidates, and run recruiter outreach from one ATS.</p>
+</div>
+
+<div class="auth-card">
+
+<h2>Create Account</h2>
+<p class="auth-subtitle">Set up recruiter access after checkout or admin invitation.</p>
+
+<div id="paidSignupNotice" class="hidden border border-blue-100 bg-blue-50 text-blue-900 rounded p-3 mb-4 text-sm">
+Paid access is required for new recruiter workspaces. Enter an admin invite code if you already have one, or choose a plan to continue.
+</div>
+
+<input id="name" placeholder="Full Name" class="border p-3 rounded w-full mb-4">
+
+<input id="email" type="email" placeholder="Email" class="border p-3 rounded w-full mb-4">
+
+<input id="password" type="password" placeholder="Password" class="border p-3 rounded w-full mb-4">
+
+<input id="accessCode" placeholder="Admin invite code (optional)" class="border p-3 rounded w-full mb-4">
+
+<p id="error" class="text-red-500 hidden mb-3 text-sm"></p>
+
+<button id="checkoutBtn" type="button" class="auth-google-btn mb-3">
+View Plans & Buy Access
+</button>
+
+<button onclick="signupUser()" class="auth-primary-btn">
+Create Paid Account
+</button>
+
+<div class="auth-divider"><span>or</span></div>
+
+<div class="mt-4">
+<button id="googleBtn" onclick="googleLogin()" class="auth-google-btn flex items-center justify-center gap-2">
+<img src="https://www.svgrepo.com/show/475656/google-color.svg" width="18">
+Continue with Google
+</button>
+</div>
+
+<p class="text-center mt-4 text-sm">
+Already have an account?
+<a href="login.html" class="text-blue-600 hover:underline">Login</a>
+</p>
+
+</div>
+</div>
+
+<script src="runtime-config.js"></script>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+
+</body>
+</html>

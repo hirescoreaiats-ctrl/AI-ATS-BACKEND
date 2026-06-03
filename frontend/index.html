@@ -1,0 +1,2706 @@
+
+
+
+
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+<title>HireScore AI</title>
+<link rel="icon" href="assets/hirescore-mark.png">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="stylesview-resultpage.css">
+<link rel="stylesheet" href="stylesview-resultpage-aisingnts.css">
+<link rel="stylesheet" href="bulkresumeanalyzer.css">
+<link rel="stylesheet" href="sidebar.css">
+<link rel="stylesheet" href="createjob.css">
+<link rel="stylesheet" href="Dashbord.css">
+<link rel="stylesheet" href="ui-fix.css?v=ai-posts-1">
+
+</head>
+
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+
+<div class="w-full px-6 py-6">
+
+
+
+<!-- SIDEBAR -->
+
+<div class="ats-sidebar w-72 h-screen bg-gradient-to-b from-[#0f172a] via-[#111827] to-[#1e293b] text-white flex flex-col fixed left-0 top-0 shadow-2xl border-r border-slate-800">
+<!-- LOGO -->
+
+<div class="ats-sidebar-brand p-6 border-b border-slate-700 flex items-center gap-3">
+
+<div class="ats-brand-mark bg-white w-9 h-9 flex items-center justify-center rounded-lg font-bold shadow-lg shadow-indigo-500/30">
+<img src="assets/hirescore-mark.png" alt="HireScore AI">
+</div>
+
+<div class="ats-brand-copy">
+<span class="text-lg font-semibold tracking-wide">
+HireScore AI
+</span>
+<small>Resume Screening</small>
+</div>
+
+</div>
+
+
+<!-- MENU -->
+
+<div class="ats-sidebar-menu flex-1 p-5 space-y-3">
+
+<div class="ats-nav-label">Workspace</div>
+
+<button class="nav-btn" onclick="showPage('dashboard')">
+<span class="ats-nav-icon" aria-hidden="true">JD</span>
+<span class="nav-text">Jobs</span>
+<small>Open roles and analytics</small>
+</button>
+
+
+<button class="nav-btn" onclick="showPage('results')">
+<span class="ats-nav-icon" aria-hidden="true">RC</span>
+<span class="nav-text">Recruiter</span>
+<small>Shortlist and review</small>
+</button>
+
+<button class="nav-btn" onclick="showPage('bulk')">
+<span class="ats-nav-icon" aria-hidden="true">BA</span>
+<span class="nav-text">Bulk Analyzer</span>
+<small>Batch AI screening</small>
+</button>
+
+
+<button class="nav-btn" onclick="showPage('communication')">
+<span class="ats-nav-icon" aria-hidden="true">CM</span>
+<span class="nav-text">Outreach</span>
+<small>Candidate outreach</small>
+</button>
+
+<button class="nav-btn" onclick="showPage('interviewDashboard')">
+<span class="ats-nav-icon" aria-hidden="true">ID</span>
+<span class="nav-text">Interview Dashboard</span>
+<small>Scheduling pipeline</small>
+</button>
+
+</div>
+
+
+<!-- LOGOUT -->
+
+<div class="ats-sidebar-footer p-4 border-t border-slate-700">
+
+<div class="ats-ai-status">
+<span></span>
+<div>
+<strong>AI Matching</strong>
+<small>Pipeline ready</small>
+</div>
+</div>
+
+<button onclick="logoutUser()" class="ats-logout-btn w-full bg-red-500 hover:bg-red-600 py-3 rounded-lg font-medium">
+Logout
+</button>
+
+</div>
+
+</div>
+
+
+
+<!-- MAIN -->
+
+<div class="flex-1 p-8 overflow-auto min-h-screen ml-72">
+
+<div id="pagesContainer">
+
+<!-- TOP BAR -->
+
+<div class="ats-top-banner bg-white rounded-xl shadow-sm p-5 mb-8 flex justify-between items-center">
+
+
+<div class="ats-banner-content">
+<div class="ats-banner-kicker">Enterprise AI Recruiting Workspace</div>
+<h2 class="font-semibold text-lg">HireScore AI</h2>
+<p>Review jobs, rank candidates, shortlist profiles, and manage communication from one recruiter dashboard.</p>
+</div>
+
+<div class="ats-banner-profile">
+<div class="ats-profile-avatar">RC</div>
+<div>
+<span class="ats-profile-label">Recruiter</span>
+<span id="profileName"></span>
+</div>
+</div>
+
+</div>
+
+
+
+<!-- DASHBOARD -->
+
+<div id="dashboardPage">
+
+<div class="ats-dashboard-redesign">
+
+<div class="ats-dashboard-hero">
+<div>
+<span class="ats-page-kicker">Jobs dashboard</span>
+<h2 class="dashboard-title">Hiring Command Center</h2>
+<p>Track active roles, candidate volume, AI scores, and recruiter actions from one focused workspace.</p>
+</div>
+<div class="ats-dashboard-hero-actions">
+<button onclick="showPage('job')" class="ats-dashboard-primary-action">Create Job</button>
+<button onclick="showPage('applyJob')" class="ats-dashboard-secondary-action">Apply Pages</button>
+</div>
+</div>
+
+<div class="dashboard-cards ats-dashboard-stats">
+<div class="stat-card ats-stat-blue">
+<span class="ats-stat-icon">JB</span>
+<div class="stat-label">Active Jobs</div>
+<div id="dash_active_jobs" class="stat-value">0</div>
+<small>Open roles</small>
+</div>
+
+<div class="stat-card ats-stat-green">
+<span class="ats-stat-icon">AP</span>
+<div class="stat-label">Total Applicants</div>
+<div id="dash_total_applicants" class="stat-value">0</div>
+<small>Across all jobs</small>
+</div>
+
+<div class="stat-card ats-stat-violet">
+<span class="ats-stat-icon">TS</span>
+<div class="stat-label">Top Score</div>
+<div id="dash_top_score" class="stat-value">0</div>
+<small>Best AI fit</small>
+</div>
+
+<div class="stat-card ats-stat-amber">
+<span class="ats-stat-icon">AV</span>
+<div class="stat-label">Avg Score</div>
+<div id="dash_avg_score" class="stat-value">0</div>
+<small>Pipeline quality</small>
+</div>
+</div>
+
+<div class="ats-dashboard-main-grid">
+<div class="dashboard-graph-card">
+<div class="ats-dashboard-card-head">
+<div>
+<h2>Applications per Job</h2>
+<p>Candidate volume across active roles.</p>
+</div>
+<span>Live</span>
+</div>
+<div class="graph-container">
+<canvas id="jobApplicationChart"></canvas>
+</div>
+</div>
+
+<div class="dashboard-graph-card ats-source-analytics-card">
+<div class="ats-dashboard-card-head">
+<div>
+<h2>Applications by Source</h2>
+<p>Candidate volume from tracked sourcing links.</p>
+</div>
+<span>Sources</span>
+</div>
+<div id="applicationsBySourceCard" class="ats-source-analytics-list">
+No source data yet. Share tracked apply links to start tracking candidate sources.
+</div>
+</div>
+
+<div class="ats-dashboard-action-panel">
+<div class="ats-dashboard-card-head">
+<div>
+<h2>Job Operations</h2>
+<p>Fast access for recruiter workflow.</p>
+</div>
+</div>
+
+<div class="dashboard-action-grid">
+<button onclick="showPage('job')" class="ats-action-create">
+<span class="ats-action-badge">CJ</span>
+<span class="ats-action-copy">
+<strong>Create Job</strong>
+<small>Publish a new JD and start screening.</small>
+</span>
+<span class="ats-action-arrow">Go</span>
+</button>
+
+<button class="ats-action-edit" onclick="showPage('editJob')">
+<span class="ats-action-badge">EJ</span>
+<span class="ats-action-copy">
+<strong>Edit Job</strong>
+<small>Update role details, status, or JD.</small>
+</span>
+<span class="ats-action-arrow">Go</span>
+</button>
+
+<button onclick="showPage('applyJob')" class="ats-action-apply">
+<span class="ats-action-badge">AP</span>
+<span class="ats-action-copy">
+<strong>Apply Pages</strong>
+<small>Open candidate application links.</small>
+</span>
+<span class="ats-action-arrow">Go</span>
+</button>
+
+<button onclick="showPage('deleteJobs')" class="ats-action-delete">
+<span class="ats-action-badge">DJ</span>
+<span class="ats-action-copy">
+<strong>Delete Job</strong>
+<small>Remove inactive or duplicate roles.</small>
+</span>
+<span class="ats-action-arrow">Go</span>
+</button>
+</div>
+
+<div class="ats-operation-footnote">
+<div>
+<strong>Workflow</strong>
+<span>Create JD -> share apply link -> review candidates</span>
+</div>
+<span class="ats-operation-status">Ready</span>
+</div>
+</div>
+</div>
+
+<div class="dashboard-table-card dashboard-job-table-card">
+<div class="table-header ats-dashboard-table-head">
+<div>
+<h3>Job Management</h3>
+<p>Open candidate results, review top candidates, and manage active job status.</p>
+</div>
+</div>
+
+<div class="dashboard-table-scroll dashboard-table-fixed">
+<table class="dashboard-table">
+<thead>
+<tr>
+<th>Job</th>
+<th>Applicants</th>
+<th>Top Score</th>
+<th>Status</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="dashboardJobTable"></tbody>
+</table>
+</div>
+</div>
+
+</div>
+
+<div class="hidden" aria-hidden="true">
+<h2 class="dashboard-title">
+Dashboard
+</h2>
+
+<!-- TOP STATS -->
+
+<div class="dashboard-cards">
+
+<div class="stat-card">
+<div class="stat-label">Active Jobs</div>
+<div id="legacy_dash_active_jobs" class="stat-value">0</div>
+</div>
+
+<div class="stat-card">
+<div class="stat-label">Total Applicants</div>
+<div id="legacy_dash_total_applicants" class="stat-value">0</div>
+</div>
+
+<div class="stat-card">
+<div class="stat-label">Top Score</div>
+<div id="legacy_dash_top_score" class="stat-value">0</div>
+</div>
+
+<div class="stat-card">
+<div class="stat-label">Avg Score</div>
+<div id="legacy_dash_avg_score" class="stat-value">0</div>
+</div>
+
+</div>
+
+<!-- HIRING GRAPH -->
+
+<div class="dashboard-graph-card">
+
+<h2 class="text-2xl font-bold text-center mb-6">
+Applications per Job
+</h2>
+
+<div class="graph-container">
+<canvas id="legacy_jobApplicationChart"></canvas>
+</div>
+
+</div>
+
+<!-- JOB ACTION BUTTONS -->
+
+<!-- JOB ACTION PANEL -->
+
+<div class="dashboard-action-grid">
+
+<button
+onclick="showPage('job')"
+class="bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-medium">
++ Create Job
+</button>
+
+<button
+class="bg-green-600 text-white px-6 py-3 rounded"
+onclick="showPage('editJob')">
+Edit Edit Job
+</button>
+
+<button
+onclick="showPage('applyJob')"
+class="bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg font-medium">
+Link Apply Pages
+</button>
+
+<button
+onclick="showPage('deleteJobs')"
+class="bg-red-500 hover:bg-red-600 text-white py-3 rounded-lg font-medium">
+Delete Delete Job
+</button>
+
+</div>
+
+<!-- JOB MANAGEMENT -->
+
+<div class="dashboard-table-card dashboard-job-table-card">
+
+<div class="table-header">
+<h3>Job Management</h3>
+</div>
+
+<div class="dashboard-table-scroll dashboard-table-fixed">
+<table class="dashboard-table">
+
+<thead>
+<tr>
+<th>Job</th>
+<th>Applicants</th>
+<th>Top Score</th>
+<th>Status</th>
+<th>Action</th>
+</tr>
+</thead>
+
+<tbody id="legacy_dashboardJobTable"></tbody>
+
+</table>
+</div>
+
+</div>
+
+</div>
+
+</div>
+<!-- JOB POSTS PAGE -->
+
+<div id="jobPostsPage" class="hidden ats-job-post-page">
+<div class="ats-job-post-hero">
+<div>
+<span class="ats-page-kicker">Sourcing posts</span>
+<h2 id="jobPostPageTitle">Job Posts</h2>
+<p id="jobPostPageSubtitle">Copy job-wise posts and publish them on LinkedIn, WhatsApp, Naukri, and other platforms.</p>
+</div>
+<button onclick="showPage('dashboard')" class="ats-back-btn">Back to Dashboard</button>
+</div>
+
+<div id="jobPostPageBody" class="ats-post-output-grid"></div>
+</div>
+
+<!-- TOP CANDIDATE PAGE -->
+
+<div id="candidateProfilePage" class="hidden ats-top-candidate-page">
+
+<div class="ats-candidate-profile-header">
+<div>
+<span class="ats-page-kicker">Top candidate</span>
+<h2 id="candidateProfileTitle">Top Candidate Profile</h2>
+<p>Review the highest ranked applicant for this job with fit signals, contact details, and hiring notes.</p>
+</div>
+
+<button onclick="showPage('dashboard')" class="ats-back-btn">
+Back to Dashboard
+</button>
+</div>
+
+<div id="candidateProfileContent"></div>
+
+
+</div>
+
+
+<!-- CREATE JOB -->
+
+<div id="jobPage" class="job-page hidden">
+
+<div class="ats-job-composer">
+
+<div class="ats-job-hero">
+<div>
+<span class="ats-page-kicker">Job setup</span>
+<h1>Create New Job</h1>
+<p>Publish a role, capture the JD, and prepare the ATS pipeline for resume matching.</p>
+</div>
+
+<button onclick="showPage('dashboard')" class="ats-back-btn">
+Back to Dashboard
+</button>
+</div>
+
+<form onsubmit="createJob(event)" class="ats-job-layout">
+
+<section class="ats-job-main-panel">
+<div class="ats-job-panel-head">
+<div>
+<h2>Role Information</h2>
+<p>Core details candidates and recruiters will see first.</p>
+</div>
+<span>Required</span>
+</div>
+
+<div class="ats-job-fields">
+<div class="form-group full">
+<label>Job Title</label>
+<input id="jobTitle" placeholder="e.g. Python Backend Developer">
+</div>
+
+<div class="form-group">
+<label>Company Name</label>
+<input id="company" placeholder="Infometry">
+</div>
+
+<div class="form-group">
+<label>Department</label>
+<input id="department" placeholder="Engineering">
+</div>
+
+<div class="form-group">
+<label>Job Location</label>
+<input id="location" placeholder="Remote / India">
+</div>
+
+<div class="form-group">
+<label>Work Mode</label>
+<select id="workMode">
+<option value="">Select Mode</option>
+<option>Remote</option>
+<option>Hybrid</option>
+<option>Onsite</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Job Type</label>
+<select id="jobType">
+<option value="">Select Type</option>
+<option>Full Time</option>
+<option>Part Time</option>
+<option>Internship</option>
+<option>Contract</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Experience Required</label>
+<input id="experience" placeholder="2-5 Years">
+</div>
+
+<div class="form-group">
+<label>Salary Range</label>
+<input id="salary" placeholder="8-12 LPA">
+</div>
+
+<div class="form-group">
+<label>Hiring Manager</label>
+<input id="hiringManager" placeholder="John Doe">
+</div>
+
+<div class="form-group full">
+<label>Application Deadline</label>
+<input type="date" id="deadline">
+</div>
+</div>
+</section>
+
+<div class="ats-job-side-stack">
+<section class="ats-job-sourcing-panel">
+<div class="ats-job-panel-head">
+<div>
+<h2>AI Sourcing Kit</h2>
+<p>Generate tracked apply links and ready-to-share channel copy for this role.</p>
+</div>
+<span>New</span>
+</div>
+
+<div class="ats-sourcing-toggles">
+<label><input type="checkbox" id="publicApplyEnabled" checked> Enable public apply page</label>
+<label><input type="checkbox" id="sourceTrackingEnabled" checked> Enable source tracking</label>
+</div>
+
+<div class="ats-source-channel-grid">
+<label><input type="checkbox" class="sourceChannel" value="linkedin" checked> LinkedIn</label>
+<label><input type="checkbox" class="sourceChannel" value="whatsapp" checked> WhatsApp</label>
+<label><input type="checkbox" class="sourceChannel" value="naukri" checked> Naukri</label>
+<label><input type="checkbox" class="sourceChannel" value="referral" checked> Referral</label>
+<label><input type="checkbox" class="sourceChannel" value="website" checked> Website</label>
+<label><input type="checkbox" class="sourceChannel" value="direct" checked> Direct</label>
+</div>
+</section>
+
+<aside class="ats-job-side-panel">
+<div class="ats-job-panel-head">
+<div>
+<h2>Publishing Status</h2>
+<p>Ready for AI screening after creation.</p>
+</div>
+</div>
+
+<div class="ats-job-readiness">
+<div>
+<strong>JD Parsing</strong>
+<span>Enabled</span>
+</div>
+<div>
+<strong>Skill Matching</strong>
+<span>Automatic</span>
+</div>
+<div>
+<strong>Apply Link</strong>
+<span>Generated after save</span>
+</div>
+</div>
+</aside>
+</div>
+
+<section class="ats-job-jd-panel">
+<div class="ats-job-panel-head">
+<div>
+<h2>Job Description</h2>
+<p>Responsibilities, requirements, skills, qualifications, and screening context.</p>
+</div>
+<span>AI input</span>
+</div>
+
+<div class="form-group full">
+<label>Full Job Description</label>
+<div class="ats-jd-upload-bar">
+<input type="file" id="jdFileUpload" accept=".pdf,.docx,.txt">
+<button type="button" onclick="uploadJDFile()">Upload JD & Autofill</button>
+<span id="jdUploadStatus"></span>
+</div>
+<textarea id="jdText" placeholder="Paste full job description here"></textarea>
+</div>
+</section>
+
+<div class="ats-job-submit-bar">
+<button type="button" onclick="showPage('dashboard')" class="ats-job-secondary-btn">
+Cancel
+</button>
+<button type="submit" class="create-btn">
+Create Job
+</button>
+</div>
+
+</form>
+
+</div>
+
+<div class="job-container hidden" aria-hidden="true">
+
+<!-- HEADER -->
+
+<div class="job-header">
+
+<h1>Create New Job</h1>
+
+<p>
+Publish a new job opening and start receiving candidates instantly
+</p>
+
+</div>
+
+
+<!-- FORM CARD -->
+
+<div class="job-card">
+
+<form onsubmit="createJob(event)" class="job-form">
+
+<!-- JOB TITLE -->
+
+<div class="form-group full">
+
+<label>Job Title</label>
+
+<input id="legacy_jobTitle" placeholder="e.g. Python Backend Developer">
+
+</div>
+
+
+<!-- COMPANY -->
+
+<div class="form-group">
+
+<label>Company Name</label>
+
+<input id="legacy_company" placeholder="Infometry">
+
+</div>
+
+
+<!-- DEPARTMENT -->
+
+<div class="form-group">
+
+<label>Department</label>
+
+<input id="legacy_department" placeholder="Engineering">
+
+</div>
+
+
+<!-- LOCATION -->
+
+<div class="form-group">
+
+<label>Job Location</label>
+
+<input id="legacy_location" placeholder="Remote / India">
+
+</div>
+
+
+<!-- WORK MODE -->
+
+<div class="form-group">
+
+<label>Work Mode</label>
+
+<select id="legacy_workMode">
+
+<option value="">Select Mode</option>
+<option>Remote</option>
+<option>Hybrid</option>
+<option>Onsite</option>
+
+</select>
+
+</div>
+
+
+<!-- JOB TYPE -->
+
+<div class="form-group">
+
+<label>Job Type</label>
+
+<select id="legacy_jobType">
+
+<option value="">Select Type</option>
+<option>Full Time</option>
+<option>Part Time</option>
+<option>Internship</option>
+<option>Contract</option>
+
+</select>
+
+</div>
+
+
+<!-- EXPERIENCE -->
+
+<div class="form-group">
+
+<label>Experience Required</label>
+
+<input id="legacy_experience" placeholder="2-5 Years">
+
+</div>
+
+
+<!-- SALARY -->
+
+<div class="form-group">
+
+<label>Salary Range</label>
+
+<input id="legacy_salary" placeholder="8-12 LPA">
+
+</div>
+
+
+<!-- HIRING MANAGER -->
+
+<div class="form-group">
+
+<label>Hiring Manager</label>
+
+<input id="legacy_hiringManager" placeholder="John Doe">
+
+</div>
+
+
+<!-- DEADLINE -->
+
+<div class="form-group">
+
+<label>Application Deadline</label>
+
+<input type="date" id="legacy_deadline">
+
+</div>
+
+
+<!-- JOB DESCRIPTION -->
+
+<div class="form-group full">
+
+<label>Job Description</label>
+
+<textarea id="legacy_jdText" placeholder="Paste full job description here"></textarea>
+
+</div>
+
+
+<!-- BUTTON -->
+
+<div class="form-actions">
+
+<button type="submit" class="create-btn">
+
+Create Job
+
+</button>
+
+</div>
+
+</form>
+
+</div>
+
+
+
+
+</div>
+<div class="mt-10 flex justify-left">
+  <button 
+    onclick="showPage('dashboard')"
+    class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+    Back Back to Dashboard
+
+  </button>
+</div>
+
+</div>
+
+<div id="jobSuccessModal" 
+class="fixed inset-0 bg-black bg-opacity-40 hidden flex items-center justify-center z-50">
+
+  <div class="bg-white rounded-2xl shadow-xl p-8 w-[450px] text-center">
+
+    <h2 class="text-2xl font-bold text-green-600 mb-4">
+      OK Job Created Successfully
+    </h2>
+
+    <p class="text-gray-600 mb-2">
+      Job ID:
+    </p>
+
+<p id="successJobId" class="font-semibold mb-4"></p>
+
+    <div id="sourcingSuccessPanel" class="ats-sourcing-success-panel"></div>
+
+    <button onclick="closeSuccessModal()"
+    class="mt-6 text-gray-500 text-sm">
+      Close
+    </button>
+
+  </div>
+
+</div>
+
+<div id="editJobPage" class="hidden ats-job-admin-page ats-edit-admin-page">
+
+<div class="ats-job-admin-hero">
+<div>
+<span class="ats-page-kicker">Job operations</span>
+<h2>Edit Jobs</h2>
+<p>Update job details, reactivate inactive roles, and keep every hiring pipeline accurate.</p>
+</div>
+<button onclick="showPage('dashboard')" class="ats-back-btn">Back to Dashboard</button>
+</div>
+
+<!-- ACTIVE JOBS -->
+
+<div class="job-section-box ats-active-jobs-section">
+
+<h3 class="section-title">Active Jobs</h3>
+
+<div id="activeJobsContainer" class="job-grid"></div>
+
+<div class="view-more-wrapper hidden" id="editActiveViewMore">
+
+<button class="view-more-btn" id="editActiveArrow" onclick="toggleEditActiveJobs()">
+More
+</button>
+
+</div>
+
+</div>
+
+
+<!-- INACTIVE JOBS -->
+
+<div class="job-section-box ats-inactive-jobs-section">
+
+<h3 class="section-title">Inactive Jobs</h3>
+
+<div id="inactiveJobsContainer" class="job-grid"></div>
+
+<div class="view-more-wrapper hidden" id="editInactiveViewMore">
+
+<button class="view-more-btn" id="editInactiveArrow" onclick="toggleEditInactiveJobs()">
+More
+</button>
+
+</div>
+
+</div>
+<div class="mt-10 flex justify-left">
+  <button 
+    onclick="showPage('dashboard')"
+    class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+    Back Back to Dashboard
+
+  </button>
+</div>
+
+</div>
+
+
+<!-- EDIT JOB FORM -->
+
+<div id="editFormPage" class="hidden ats-job-admin-page ats-edit-form-page">
+
+<div class="ats-job-admin-hero">
+<div>
+<span class="ats-page-kicker">Job editor</span>
+<h2>Edit Job</h2>
+<p>Refresh role information, screening context, and publishing details from one form.</p>
+</div>
+<button onclick="showPage('editJob')" class="ats-back-btn">Back to Edit Jobs</button>
+</div>
+
+<div class="bg-white p-6 rounded-xl shadow mt-6">
+
+<h3 class="text-xl font-bold mb-6">Edit Job</h3>
+
+<input type="hidden" id="editJobId">
+
+<div class="grid grid-cols-2 gap-4">
+
+<input id="editJobTitle" class="border p-2 rounded" placeholder="Job Title">
+
+<input id="editCompany" class="border p-2 rounded" placeholder="Company Name">
+
+<input id="editDepartment" class="border p-2 rounded" placeholder="Department">
+
+<input id="editLocation" class="border p-2 rounded" placeholder="Location">
+
+<select id="editWorkMode" class="border p-2 rounded">
+<option>Remote</option>
+<option>Hybrid</option>
+<option>Onsite</option>
+</select>
+
+<select id="editJobType" class="border p-2 rounded">
+<option>Full Time</option>
+<option>Part Time</option>
+<option>Contract</option>
+</select>
+
+<input id="editExperience" class="border p-2 rounded" placeholder="Experience Required">
+
+<input id="editSalary" class="border p-2 rounded" placeholder="Salary Range">
+
+<input id="editHiringManager" class="border p-2 rounded" placeholder="Hiring Manager">
+
+<input id="editDeadline" type="date" class="border p-2 rounded">
+
+</div>
+
+<textarea id="editJD"
+class="border p-2 rounded w-full mt-4 h-40"
+placeholder="Job Description">
+</textarea>
+
+<button onclick="updateJob()"
+class="bg-indigo-600 text-white px-6 py-2 rounded mt-4">
+Update Job
+</button>
+
+</div>
+
+<div class="mt-10 flex justify-left">
+  <button 
+    onclick="showPage('dashboard')"
+    class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+    Back Back to Dashboard
+
+  </button>
+</div>
+
+</div>
+
+
+
+
+<!-- ================= APPLY JOB PAGE ================= -->
+
+<div id="applyJobPage" class="hidden ats-job-admin-page ats-apply-admin-page">
+
+<div class="ats-job-admin-hero">
+<div>
+<span class="ats-page-kicker">Candidate entry</span>
+<h2>Apply Pages</h2>
+<p>Open public application pages for active jobs and review inactive posting links.</p>
+</div>
+<button onclick="showPage('dashboard')" class="ats-back-btn">Back to Dashboard</button>
+</div>
+
+<!-- ACTIVE JOBS -->
+
+<div class="job-section-box ats-active-jobs-section">
+
+<h3 class="section-title">Active Jobs</h3>
+
+<div id="applyActiveJobsContainer" class="job-grid"></div>
+
+<div class="view-more-wrapper hidden" id="applyActiveViewMore">
+
+<button 
+class="view-more-btn"
+id="applyActiveArrow"
+onclick="toggleApplyActiveJobs()">
+More
+</button>
+
+</div>
+
+</div>
+
+
+<!-- INACTIVE JOBS -->
+
+<div class="job-section-box ats-inactive-jobs-section">
+
+<h3 class="section-title">Inactive Jobs</h3>
+
+<div id="applyInactiveJobsContainer" class="job-grid"></div>
+
+<div class="view-more-wrapper hidden" id="applyInactiveViewMore">
+
+<button 
+class="view-more-btn"
+id="applyInactiveArrow"
+onclick="toggleApplyInactiveJobs()">
+More
+</button>
+
+</div>
+
+</div>
+<div id="applyBackDashboardBtn" class="back-dashboard-fixed hidden">
+<button 
+onclick="showPage('dashboard')"
+class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+Back Back to Job Dashboard
+
+</button>
+
+</div>
+<div class="mt-10 flex justify-left">
+  <button 
+    onclick="showPage('dashboard')"
+    class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+    Back Back to Dashboard
+
+  </button>
+</div>
+
+</div>
+
+<!-- ================= DELETE JOB PAGE ================= -->
+
+<div id="deleteJobsPage" class="hidden ats-job-admin-page ats-delete-admin-page">
+
+<div class="ats-job-admin-hero">
+<div>
+<span class="ats-page-kicker">Cleanup workspace</span>
+<h2>Delete Jobs</h2>
+<p>Remove duplicate, test, or closed jobs while keeping active and inactive roles clearly separated.</p>
+</div>
+<button onclick="showPage('dashboard')" class="ats-back-btn">Back to Dashboard</button>
+</div>
+
+<!-- ACTIVE JOBS -->
+
+<div class="job-section-box ats-active-jobs-section">
+
+<h3 class="section-title">Active Jobs</h3>
+
+<div id="deleteActiveJobsContainer" class="job-grid"></div>
+
+<div class="view-more-wrapper hidden" id="deleteActiveViewMore">
+
+<button 
+class="view-more-btn"
+onclick="toggleDeleteActiveJobs()"
+id="deleteActiveArrow">
+
+More
+
+</button>
+
+</div>
+
+</div>
+
+
+<!-- INACTIVE JOBS -->
+
+<div class="job-section-box ats-inactive-jobs-section">
+
+<h3 class="section-title">Inactive Jobs</h3>
+
+<div id="deleteInactiveJobsContainer" class="job-grid"></div>
+
+<div class="view-more-wrapper hidden" id="deleteInactiveViewMore">
+
+<button 
+class="view-more-btn"
+onclick="toggleDeleteInactiveJobs()"
+id="deleteInactiveArrow">
+
+More
+
+</button>
+
+</div>
+
+</div>
+<div id="deleteBackDashboardBtn" class="back-dashboard-fixed hidden">
+<button 
+onclick="showPage('dashboard')"
+class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+Back Back to Job Dashboard
+
+</button>
+
+</div>
+<div class="mt-10 flex justify-left">
+  <button 
+    onclick="showPage('dashboard')"
+    class="bg-gray-900 text-white px-6 py-3 rounded-lg">
+
+    Back Back to Dashboard
+
+  </button>
+</div>
+
+</div>
+
+<!-- ================= ================= -->
+
+<!-- BULK RESUME ANALYZER -->
+
+<div id="bulkPage" class="hidden ats-bulk-page">
+
+<div class="ats-bulk-console bg-white rounded-xl shadow-sm p-6 mb-8">
+
+<div class="ats-bulk-console-head">
+<div>
+<div class="ats-section-kicker">AI Batch Screening</div>
+<h2 class="text-xl font-semibold mb-4">
+Bulk Resume Analyzer
+</h2>
+<p>Paste a job description, upload multiple resumes, and let the AI rank candidates with recruiter-grade signals.</p>
+</div>
+<div class="ats-bulk-console-actions">
+<button id="dropBulkSessionBtn" type="button" class="ats-bulk-drop-btn hidden" onclick="dropBulkSession()">Drop current batch</button>
+<div class="ats-bulk-badge">Enterprise AI</div>
+</div>
+</div>
+
+<textarea id="bulkJD"
+class="ats-bulk-jd w-full border rounded-lg p-4 h-32 mb-4"
+placeholder="Paste Job Description">
+</textarea>
+
+<div class="ats-bulk-upload-row flex items-center gap-4 mb-4">
+
+<label class="ats-file-drop">
+<span class="ats-file-icon">CV</span>
+<span>
+<strong>Upload resumes</strong>
+<small>PDF, DOCX, or multiple candidate files</small>
+</span>
+<input type="file" id="bulkResumes" multiple>
+</label>
+
+<button id="bulkAnalyzeBtn" onclick="analyzeBulkResumes()"
+class="ats-bulk-analyze-btn bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700">
+Analyze Resumes
+</button>
+
+</div>
+
+<div id="bulkResult" class="ats-bulk-result-state text-green-600"></div>
+<div id="bulkRecentSessions" class="ats-bulk-recent-sessions"></div>
+
+</div>
+
+<!-- NAVIGATION CARDS -->
+
+<div class="ats-bulk-nav ats-bulk-workflow-nav grid grid-cols-5 gap-4 mb-8">
+
+<div onclick="showBulkSection('candidates')" class="ats-bulk-tab bg-white rounded-xl shadow-sm p-5 flex items-center gap-4 cursor-pointer hover:shadow-md transition">
+<div class="bulk-icon">AI</div>
+<div class="bulk-text">
+<h3>Candidates</h3>
+<p>All analyzed resumes</p>
+</div>
+</div>
+
+<div onclick="showBulkSection('shortlist')" class="ats-bulk-tab bulk-card">
+<div class="bulk-icon trophy">SL</div>
+<div class="bulk-text">
+<h3>Shortlist</h3>
+<p><span id="bulkShortlistCount">0</span> recruiter picks</p>
+</div>
+</div>
+
+<div onclick="showBulkSection('communication')" class="ats-bulk-tab bulk-card">
+<div class="bulk-icon comm">CM</div>
+<div class="bulk-text">
+<h3>Communication</h3>
+<p><span id="bulkCommunicationCount">0</span> in outreach</p>
+</div>
+</div>
+
+<div onclick="showBulkSection('interview')" class="ats-bulk-tab bulk-card">
+<div class="bulk-icon interview">IN</div>
+<div class="bulk-text">
+<h3>Interview</h3>
+<p><span id="bulkInterviewCount">0</span> ready</p>
+</div>
+</div>
+
+<div onclick="showBulkSection('analytics')" class="ats-bulk-tab bulk-card">
+<div class="bulk-icon chart">AN</div>
+<div class="bulk-text">
+<h3>AI Analytics</h3>
+<p>Candidate insights</p>
+</div>
+</div>
+
+</div>
+
+
+<!-- FILTERS -->
+
+<div class="ats-bulk-filter-card bg-white p-4 rounded-xl shadow-sm mb-6 flex flex-wrap gap-3 items-center">
+
+<input id="searchName"
+class="border rounded-lg px-3 py-2"
+placeholder="Search Name">
+
+<input id="skillFilter" placeholder="Skill" class="border p-2 rounded">
+
+<input id="locationFilter" placeholder="Location" class="border p-2 rounded">
+
+<input id="educationFilter" placeholder="Education" class="border p-2 rounded">
+
+<input id="scoreFilter" type="number" placeholder="Min Score" class="border p-2 rounded">
+
+<button onclick="applyBulkFilters()"
+class="ats-filter-btn bg-indigo-600 text-white px-16 py-2 rounded-lg">
+Apply Filter
+</button>
+
+</div>
+
+
+
+<!-- ================= CANDIDATES SECTION ================= -->
+
+<div id="bulkCandidates" class="ats-bulk-section bg-white p-6 rounded-xl shadow-sm mt-6">
+    <div class="ats-bulk-section-head">
+    <div>
+    <h2 class="text-lg font-semibold mb-4">
+Candidate Results
+</h2>
+    <p>Ranked AI screening results from uploaded resumes.</p>
+    </div>
+
+<button onclick="toggleBulkColumnPanel()" 
+class="ats-column-btn bg-blue-600 text-white px-4 py-2 rounded mb-3">
+Customize Columns
+</button>
+    </div>
+
+<div id="bulkColumnPanel"
+style="display:none;background:white;border:1px solid #ddd;padding:12px;border-radius:6px;margin-bottom:10px">
+
+<label><input type="checkbox" checked data-col="1" onchange="toggleBulkColumn(this)"> Name</label><br>
+<label><input type="checkbox" checked data-col="2" onchange="toggleBulkColumn(this)"> Email</label><br>
+<label><input type="checkbox" checked data-col="3" onchange="toggleBulkColumn(this)"> Phone</label><br>
+<label><input type="checkbox" checked data-col="4" onchange="toggleBulkColumn(this)"> Location</label><br>
+
+<label><input type="checkbox" checked data-col="5" onchange="toggleBulkColumn(this)"> Designation</label><br>
+<label><input type="checkbox" checked data-col="6" onchange="toggleBulkColumn(this)"> Experience</label><br>
+
+<label><input type="checkbox" checked data-col="7" onchange="toggleBulkColumn(this)"> Last Company</label><br>
+<label><input type="checkbox" checked data-col="8" onchange="toggleBulkColumn(this)"> Last Working Date</label><br>
+
+<label><input type="checkbox" checked data-col="9" onchange="toggleBulkColumn(this)"> Matched Skills</label><br>
+<label><input type="checkbox" checked data-col="10" onchange="toggleBulkColumn(this)"> Missing Skills</label><br>
+
+<label><input type="checkbox" checked data-col="11" onchange="toggleBulkColumn(this)"> Skill Match %</label><br>
+
+<label><input type="checkbox" checked data-col="12" onchange="toggleBulkColumn(this)"> Industry</label><br>
+<label><input type="checkbox" checked data-col="13" onchange="toggleBulkColumn(this)"> Domain</label><br>
+<label><input type="checkbox" checked data-col="14" onchange="toggleBulkColumn(this)"> Education</label><br>
+
+<label><input type="checkbox" checked data-col="15" onchange="toggleBulkColumn(this)"> Status</label><br>
+<label><input type="checkbox" checked data-col="16" onchange="toggleBulkColumn(this)"> Score</label>
+
+</div>
+
+
+<div class="table-scroll ats-bulk-table-scroll">
+
+<table id="bulkAnalyzerTable" class="data-table">
+
+<thead>
+
+
+<tr>
+
+<th>Rank</th>
+
+<th>Name</th>
+<th>Email</th>
+<th class="hidden">Phone</th>
+<th>Location</th>
+
+<th class="hidden">Designation</th>
+<th>Experience</th>
+
+<th class="hidden">Last Company</th>
+<th class="hidden">Last Working Date</th>
+
+<th class="hidden">Matched Skills</th>
+<th class="hidden">Missing Skills</th>
+<th class="hidden">Skill Match %</th>
+
+<th class="hidden">Industry</th>
+<th class="hidden">Domain</th>
+<th class="hidden">Education</th>
+
+<th class="hidden">Status</th>
+<th>Score</th>
+<th>Bulk Workflow</th>
+
+</tr>
+
+</thead>
+
+<tbody id="bulkResultsTable"></tbody>
+
+</table>
+
+</div>
+
+</div>
+
+
+
+<!-- ================= TOP 10 SECTION ================= -->
+
+<div id="bulkTop10" class="hidden mt-6 ats-bulk-section">
+<div class="ats-bulk-section-head">
+<div>
+<h2 class="text-lg font-semibold mb-1">Top Ranked Candidates</h2>
+<p>Highest scoring candidates from this batch analysis.</p>
+</div>
+
+<button onclick="toggleTop10ColumnPanel()" 
+class="ats-column-btn bg-blue-600 text-white px-4 py-2 rounded mb-3">
+Customize Columns
+</button>
+</div>
+
+<div id="top10ColumnPanel"
+style="display:none;background:white;border:1px solid #ddd;padding:12px;border-radius:6px;margin-bottom:10px">
+
+<label><input type="checkbox" checked data-col="1" onchange="toggleTop10Column(this)"> Name</label><br>
+<label><input type="checkbox" checked data-col="2" onchange="toggleTop10Column(this)"> Email</label><br>
+<label><input type="checkbox" checked data-col="3" onchange="toggleTop10Column(this)"> Phone</label><br>
+<label><input type="checkbox" checked data-col="4" onchange="toggleTop10Column(this)"> Location</label><br>
+
+<label><input type="checkbox" checked data-col="5" onchange="toggleTop10Column(this)"> Designation</label><br>
+<label><input type="checkbox" checked data-col="6" onchange="toggleTop10Column(this)"> Experience</label><br>
+
+<label><input type="checkbox" checked data-col="7" onchange="toggleTop10Column(this)"> Last Company</label><br>
+<label><input type="checkbox" checked data-col="8" onchange="toggleTop10Column(this)"> Last Working Date</label><br>
+
+<label><input type="checkbox" checked data-col="9" onchange="toggleTop10Column(this)"> Matched Skills</label><br>
+<label><input type="checkbox" checked data-col="10" onchange="toggleTop10Column(this)"> Missing Skills</label><br>
+
+<label><input type="checkbox" checked data-col="11" onchange="toggleTop10Column(this)"> Skill Match %</label><br>
+
+<label><input type="checkbox" checked data-col="12" onchange="toggleTop10Column(this)"> Industry</label><br>
+<label><input type="checkbox" checked data-col="13" onchange="toggleTop10Column(this)"> Domain</label><br>
+<label><input type="checkbox" checked data-col="14" onchange="toggleTop10Column(this)"> Education</label><br>
+
+<label><input type="checkbox" checked data-col="15" onchange="toggleTop10Column(this)"> Status</label><br>
+<label><input type="checkbox" checked data-col="16" onchange="toggleTop10Column(this)"> Score</label><br>
+
+<label><input type="checkbox" checked data-col="17" onchange="toggleTop10Column(this)"> AI Explanation</label>
+
+</div>
+
+<div class="table-scroll ats-bulk-table-scroll">
+
+<table id="top10AnalyzerTable" class="data-table">
+
+<thead class="bg-gray-200">
+
+<tr>
+
+<th>Rank</th>
+
+<th>Name</th>
+<th>Email</th>
+<th>Phone</th>
+<th>Location</th>
+
+<th>Designation</th>
+<th>Experience</th>
+
+<th>Last Company</th>
+<th>Last Working Date</th>
+
+<th>Matched Skills</th>
+<th>Missing Skills</th>
+<th>Skill Match %</th>
+
+<th>Industry</th>
+<th>Domain</th>
+<th>Education</th>
+
+<th>Status</th>
+<th>Score</th>
+
+<th>AI Explanation</th>
+<th>Bulk Workflow</th>
+
+</tr>
+
+</thead>
+
+<tbody id="top10Table"></tbody>
+
+</table>
+
+</div>
+
+</div>
+
+
+
+<!-- ================= ANALYTICS SECTION ================= -->
+
+<div id="bulkAnalytics" class="hidden mt-6 ats-bulk-section">
+<div class="ats-bulk-section-head">
+<div>
+<h2 class="text-lg font-semibold mb-1">AI Analytics</h2>
+<p>Batch-level candidate distribution and screening signals.</p>
+</div>
+</div>
+
+<div id="bulkAnalyticsSummary" class="ats-bulk-analytics-summary"></div>
+
+<div class="ats-bulk-analytics-grid">
+
+<div class="ats-analytics-panel is-wide">
+<div class="ats-analytics-panel-head">
+<span>Top matched skills</span>
+<h3>Skills Distribution</h3>
+</div>
+<canvas id="bulkSkillChart"></canvas>
+</div>
+
+<div class="ats-analytics-panel">
+<div class="ats-analytics-panel-head">
+<span>AI rank spread</span>
+<h3>Score Bands</h3>
+</div>
+<canvas id="bulkScoreChart"></canvas>
+</div>
+
+<div class="ats-analytics-panel">
+<div class="ats-analytics-panel-head">
+<span>Seniority mix</span>
+<h3>Experience Distribution</h3>
+</div>
+<canvas id="bulkExpChart"></canvas>
+</div>
+
+<div class="ats-analytics-panel">
+<div class="ats-analytics-panel-head">
+<span>Candidate market</span>
+<h3>Location Distribution</h3>
+</div>
+<canvas id="bulkLocationChart"></canvas>
+</div>
+
+<div class="ats-analytics-panel">
+<div class="ats-analytics-panel-head">
+<span>Qualification signal</span>
+<h3>Education Distribution</h3>
+</div>
+<canvas id="bulkEducationChart"></canvas>
+</div>
+
+
+</div>
+
+</div>
+
+<!-- ================= BULK SHORTLIST SECTION ================= -->
+
+<div id="bulkShortlist" class="hidden mt-6 ats-bulk-section ats-bulk-workflow-section ats-bulk-shortlist-board">
+<div class="ats-bulk-section-head">
+<div>
+<h2 class="text-lg font-semibold mb-1">Bulk Shortlist Board</h2>
+<p>AI-ranked recruiter review queue for this batch. Validate evidence, then move approved candidates to communication.</p>
+</div>
+<span class="ats-bulk-flow-pill" id="bulkShortlistPill">0 candidates</span>
+</div>
+
+<div id="bulkShortlistSummary" class="ats-bulk-shortlist-summary"></div>
+
+<div class="ats-bulk-workflow-layout">
+<section class="ats-bulk-workflow-panel">
+<h3>Recruiter Review Queue</h3>
+<p>Shortlisted profiles with score, skills, risk, and next action in one place.</p>
+<div id="bulkShortlistList" class="ats-bulk-workflow-list"></div>
+</section>
+
+<section class="ats-bulk-workflow-panel is-template">
+<h3>Decision Controls</h3>
+<label>Review Criteria</label>
+<textarea id="bulkShortlistNotes" placeholder="Validate score, JD critical skills, experience claims, project evidence, and availability before communication."></textarea>
+<label>Minimum Score</label>
+<input id="bulkShortlistMinScore" placeholder="Example: 60">
+</section>
+</div>
+</div>
+
+<!-- ================= BULK COMMUNICATION SECTION ================= -->
+
+<div id="bulkCommunication" class="hidden mt-6 ats-bulk-section ats-bulk-workflow-section">
+<div class="ats-bulk-section-head">
+<div>
+<h2 class="text-lg font-semibold mb-1">Bulk Communication Workspace</h2>
+<p>This queue belongs only to the current bulk analysis. It does not depend on the main ATS communication page.</p>
+</div>
+<span class="ats-bulk-flow-pill" id="bulkCommunicationPill">0 candidates</span>
+</div>
+
+<div class="ats-bulk-workflow-layout">
+<section class="ats-bulk-workflow-panel">
+<h3>Outreach Queue</h3>
+<p>Prepare first-contact outreach for selected bulk candidates.</p>
+<div id="bulkCommunicationList" class="ats-bulk-workflow-list"></div>
+</section>
+
+<section class="ats-bulk-workflow-panel is-template">
+<h3>Communication Notes</h3>
+<label>Message Template</label>
+<textarea id="bulkCommunicationTemplate" placeholder="Hi {name}, your profile looks relevant for the role. We would like to discuss your experience in {skills}."></textarea>
+<label>Owner / Next action</label>
+<input id="bulkCommunicationOwner" placeholder="Recruiter name or follow-up note">
+</section>
+</div>
+</div>
+
+<!-- ================= BULK INTERVIEW SECTION ================= -->
+
+<div id="bulkInterview" class="hidden mt-6 ats-bulk-section ats-bulk-workflow-section">
+<div class="ats-bulk-section-head">
+<div>
+<h2 class="text-lg font-semibold mb-1">Bulk Interview Workspace</h2>
+<p>Independent interview planning for candidates chosen from the bulk analyzer.</p>
+</div>
+<span class="ats-bulk-flow-pill" id="bulkInterviewPill">0 candidates</span>
+</div>
+
+<div class="ats-bulk-workflow-layout">
+<section class="ats-bulk-workflow-panel">
+<h3>Interview Queue</h3>
+<p>Track candidates to call, screen, or schedule after bulk analysis.</p>
+<div id="bulkInterviewList" class="ats-bulk-workflow-list"></div>
+</section>
+
+<section class="ats-bulk-workflow-panel is-template">
+<h3>Interview Plan</h3>
+<label>Focus Areas</label>
+<textarea id="bulkInterviewPlan" placeholder="Validate project ownership, role fit, missing skills, communication clarity, and availability."></textarea>
+<label>Default Round</label>
+<input id="bulkInterviewRound" placeholder="Screening / Technical / Manager round">
+</section>
+</div>
+</div>
+</div>
+
+
+<!-- ================= AI CANDIDATE PROFILE PAGE ================= -->
+
+<div id="candidateAIProfilePage" class="hidden mt-6">
+
+<h2 class="text-2xl font-bold mb-6">
+AI Candidate Profile
+</h2>
+
+<div class="bg-white p-6 rounded shadow">
+
+<div id="candidateAIContent"></div>
+
+</div>
+
+</div>
+</section>
+
+<button id="candidateAIBackTop10" onclick="backToTop10()"
+class="hidden bg-gray-800 text-white px-4 py-2 rounded">
+
+Back Back to Top 10
+
+</button>
+
+</div>
+
+<!-- =================B.E ================= -->
+<!-- =================RECRUITER DASHBOARD ================= -->
+<!-- RECRUITER DASHBOARD -->
+
+
+<div id="resultsPage" class="hidden min-h-screen w-full ats-recruiter-dashboard">
+
+<div class="ats-recruiter-hero">
+<div>
+<span class="ats-page-kicker">Recruiter workspace</span>
+<h2>Recruiter Dashboard</h2>
+<p>Review active roles, shortlist candidates by score, inspect AI signals, and move strong profiles into outreach.</p>
+</div>
+<button onclick="showPage('dashboard')" class="ats-back-btn">Back to Jobs</button>
+</div>
+
+<div class="ats-recruiter-kpi-grid">
+<div class="ats-recruiter-kpi">
+<span>Active Roles</span>
+<strong id="recruiterActiveRoles">0</strong>
+<small>Open for screening</small>
+</div>
+<div class="ats-recruiter-kpi">
+<span>Total Applicants</span>
+<strong id="recruiterTotalApplicants">0</strong>
+<small>Across active jobs</small>
+</div>
+<div class="ats-recruiter-kpi">
+<span>Best Score</span>
+<strong id="recruiterBestScore">0</strong>
+<small>Top candidate signal</small>
+</div>
+<div class="ats-recruiter-kpi">
+<span>Shortlist Mode</span>
+<strong>AI</strong>
+<small>Score based filtering</small>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold mb-6">
+Recruiter Dashboard
+</h2>
+<div class="bg-indigo-50 rounded-2xl p-10 mt-6">
+
+<div id="jobCards" class="grid grid-cols-3 gap-6 mt-6">
+</div>
+
+<div class="flex justify-center mt-10">
+
+<button onclick="toggleRecruiterJobs()"
+class="w-14 h-14 bg-indigo-500 text-white rounded-full text-xl shadow-lg flex items-center justify-center hover:scale-105 transition">
+
+More
+
+</button>
+
+</div>
+</div>
+<!-- SHORTLIST SETTINGS ROW -->
+
+
+
+<h3 class="text-xl font-bold mt-10 mb-4">
+Shortlist Filter
+</h3>
+
+<div class="bg-white rounded-xl shadow p-6 w-full">
+
+<p class="font-semibold mb-4">
+JOB FILTER TO GET SHORTLIST CANDIDATE
+</p>
+
+<div class="grid grid-cols-3 gap-6 w-full">
+
+<select id="shortlistJobSelect"
+class="border p-3 rounded w-full">
+<option value="">SELECT JOBS</option>
+</select>
+
+<input
+type="number"
+id="shortlistMinScore"
+placeholder="TYPE SCORE"
+class="border p-3 rounded w-full">
+
+<button
+onclick="applyShortlistFilter()"
+class="bg-blue-600 text-white rounded w-full">
+
+APPLY
+
+</button>
+
+</div>
+
+</div>
+
+<h3 class="text-xl font-bold mt-8 mb-4 ats-shortlist-title">
+Shortlisted Candidates
+</h3>
+<!-- CUSTOMIZE COLUMNS BUTTON -->
+
+<div class="shortlist-action-bar flex gap-4 mt-6 mb-4">
+
+<button onclick="toggleShortlistColumnPanel()"
+class="action-btn">
+Customize Columns
+</button>
+
+<button onclick="openShortlistExplanation()"
+class="action-btn">
+AI Explanation
+</button>
+
+<button onclick="openShortlistAnalytics()"
+class="action-btn">
+AI Analytics
+</button>
+
+<button onclick="moveAllToCommunication()"
+class="action-btn">
+Move to Communication
+</button>
+
+<button onclick="downloadShortlisted()"
+class="action-btn">
+Download Shortlisted Candidates
+</button>
+
+<button onclick="openClientShortlistReport()"
+class="action-btn">
+Client Report
+</button>
+
+</div>
+
+<!-- end of short list config and table -->
+
+<!-- SHORTLIST COLUMN PANEL -->
+
+<div id="shortlistColumnPanel" class="ats-shortlist-column-panel"
+style="display:none">
+
+<label><input type="checkbox" checked data-col="1" onchange="toggleShortlistColumn(this)"> Name</label><br>
+<label><input type="checkbox" checked data-col="2" onchange="toggleShortlistColumn(this)"> Email</label><br>
+
+<label><input type="checkbox" data-col="3" onchange="toggleShortlistColumn(this)"> Phone</label><br>
+
+<label><input type="checkbox" checked data-col="4" onchange="toggleShortlistColumn(this)"> Location</label><br>
+
+<label><input type="checkbox" data-col="5" onchange="toggleShortlistColumn(this)"> Designation</label><br>
+
+<label><input type="checkbox" checked data-col="6" onchange="toggleShortlistColumn(this)"> Experience</label><br>
+
+<label><input type="checkbox" data-col="7" onchange="toggleShortlistColumn(this)"> Last Company</label><br>
+<label><input type="checkbox" data-col="8" onchange="toggleShortlistColumn(this)"> Last Working Date</label><br>
+
+<label><input type="checkbox" data-col="9" onchange="toggleShortlistColumn(this)"> Matched Skills</label><br>
+<label><input type="checkbox" data-col="10" onchange="toggleShortlistColumn(this)"> Missing Skills</label><br>
+
+<label><input type="checkbox" data-col="11" onchange="toggleShortlistColumn(this)"> Skill Match %</label><br>
+
+<label><input type="checkbox" data-col="12" onchange="toggleShortlistColumn(this)"> Industry</label><br>
+<label><input type="checkbox" data-col="13" onchange="toggleShortlistColumn(this)"> Domain</label><br>
+<label><input type="checkbox" data-col="14" onchange="toggleShortlistColumn(this)"> Education</label><br>
+
+<label><input type="checkbox" data-col="15" onchange="toggleShortlistColumn(this)"> Status</label><br>
+
+<label><input type="checkbox" checked data-col="16" onchange="toggleShortlistColumn(this)"> Score</label>
+
+</div>
+
+<!-- SHORTLISTED TABLE -->
+
+<div class="table-scroll ats-fixed-table ats-shortlist-scroll ats-shortlist-table-card mt-6">
+
+<table id="shortlistTableMain" class="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden bg-white ats-shortlist-table">
+<thead>
+
+<tr>
+
+<th class="px-6 py-4 text-left font-bold text-gray-900">Rank</th>
+<th class="px-6 py-4 text-left font-bold text-gray-900">Name</th>
+<th class="px-6 py-4 text-left font-bold text-gray-900">Email</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Phone</th>
+<th class="px-6 py-4 text-left font-bold text-gray-900">Location</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Designation</th>
+<th class="px-6 py-4 text-left font-bold text-gray-900">Experience</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Last Company</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Last Working Date</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Matched Skills</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Missing Skills</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Skill Match</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Industry</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Domain</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Education</th>
+<th class="px-6 py-4 text-left hidden font-bold text-gray-900">Status</th>
+<th class="px-6 py-4 text-left font-bold text-gray-900">Score</th>
+<th class="px-6 py-4 text-left font-bold text-gray-900">Action</th>
+
+</tr>
+
+</thead>
+
+<tbody id="shortlistTable"></tbody>
+
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+<div id="shortlistAnalyticsPage" class="hidden ats-shortlist-analytics-page">
+
+<section class="ats-shortlist-analytics-hero">
+<div>
+<span>AI shortlist analytics</span>
+<h2>Shortlist Intelligence</h2>
+<p>Score spread, experience mix, repeated skill evidence, and recruiter-ready screening priorities from the current shortlisted table.</p>
+<small id="shortlistAnalyticsJob">Selected shortlist</small>
+</div>
+<button onclick="showPage('results')" class="ats-back-btn">Back to Shortlist</button>
+</section>
+
+<section class="ats-shortlist-analytics-kpis">
+<article id="shortlistAnalyticsTotal"><strong>0</strong><span>shortlisted candidates</span></article>
+<article id="shortlistAnalyticsAvg"><strong>0.0</strong><span>average AI score</span></article>
+<article id="shortlistAnalyticsTop"><strong>N/A</strong><span>top candidate</span></article>
+<article id="shortlistAnalyticsExp"><strong>0.0</strong><span>average years</span></article>
+</section>
+
+<section class="ats-shortlist-analytics-grid">
+<article class="ats-shortlist-analytics-card">
+<div class="ats-shortlist-analytics-head">
+<h3>Score Distribution</h3>
+<span>AI score bands</span>
+</div>
+<div class="ats-shortlist-chart-wrap">
+<canvas id="shortlistScoreChart"></canvas>
+</div>
+</article>
+
+<article class="ats-shortlist-analytics-card">
+<div class="ats-shortlist-analytics-head">
+<h3>Experience Mix</h3>
+<span>Seniority spread</span>
+</div>
+<div class="ats-shortlist-chart-wrap">
+<canvas id="shortlistExperienceChart"></canvas>
+</div>
+</article>
+
+<article class="ats-shortlist-analytics-card">
+<div class="ats-shortlist-analytics-head">
+<h3>Location Concentration</h3>
+<span>Where candidates are based</span>
+</div>
+<div class="ats-shortlist-chart-wrap">
+<canvas id="shortlistLocationChart"></canvas>
+</div>
+</article>
+
+<article class="ats-shortlist-analytics-card">
+<div class="ats-shortlist-analytics-head">
+<h3>Skill Evidence</h3>
+<span>Repeated matched skills</span>
+</div>
+<div id="shortlistAnalyticsSkills" class="ats-shortlist-skill-list"></div>
+</article>
+</section>
+
+<section class="ats-shortlist-analytics-bottom">
+<article>
+<div class="ats-shortlist-analytics-head">
+<h3>Ranked Shortlist</h3>
+<span>Best profiles first</span>
+</div>
+<div id="shortlistAnalyticsCandidates" class="ats-shortlist-analytics-candidates"></div>
+</article>
+
+<article>
+<div class="ats-shortlist-analytics-head">
+<h3>Recruiter Signals</h3>
+<span>Actionable summary</span>
+</div>
+<ul id="shortlistAnalyticsInsights" class="ats-shortlist-insight-list"></ul>
+</article>
+</section>
+
+</div>
+
+<div id="shortlistExplanationPage" class="hidden ats-shortlist-explanation-page">
+
+<section class="ats-shortlist-explain-hero">
+<div>
+<span>AI shortlist explanation</span>
+<h2 id="shortlistExplainHeadline">Shortlist AI Explanation</h2>
+<p>The complete shortlisted table, hidden customize-column data, and selected JD context are analyzed together for recruiter-ready explanation.</p>
+<small id="shortlistExplainJob">Selected job</small>
+</div>
+<div class="ats-shortlist-explain-side">
+<strong id="shortlistExplainTotal">0 candidates</strong>
+<span id="shortlistExplainStatus">Waiting for shortlist data</span>
+<button onclick="showPage('results')" class="ats-back-btn">Back to Shortlist</button>
+</div>
+</section>
+
+<div id="shortlistExplainBody"></div>
+
+</div>
+
+
+
+<div id="jobResultPage" class="hidden ats-result-workspace">
+
+<div class="ats-result-header">
+<div>
+<div class="ats-section-kicker">Candidate Intelligence Board</div>
+<h2 id="jobResultTitle" class="text-2xl font-bold mb-6">
+JOB RESULT
+</h2>
+<p>Review ranked applicants, refine filters, inspect AI signals, and move candidates through the recruiter workflow.</p>
+</div>
+<button onclick="showPage('results')" class="ats-back-btn">
+Back to Recruiter Dashboard
+</button>
+</div>
+<div class="ats-result-stats grid grid-cols-4 gap-6 mb-8">
+
+<!-- TOTAL APPLICANTS -->
+<div class="stat-card-modern clickable" onclick="openAllCandidates()">
+  <div class="stat-icon">TA</div>
+  <div class="stat-title-modern">Total Applicants</div>
+  <div class="stat-value-modern" id="stat_total_app">0</div>
+</div>
+
+<!-- AVG SCORE -->
+<div class="stat-card-modern">
+  <div class="stat-icon">AS</div>
+  <div class="stat-title-modern">Average Score</div>
+  <div class="stat-value-modern" id="stat_avg_score">0</div>
+</div>
+
+<!-- TOP 10 -->
+<div class="stat-card-modern clickable" onclick="openTopCandidates()">
+  <div class="stat-icon">T10</div>
+  <div class="stat-title-modern">Top 10 Candidates</div>
+  <div class="stat-value-modern action" id="stat_top_score">0</div>
+</div>
+
+<!-- AI INSIGHT -->
+<div class="stat-card-modern clickable" onclick="openInsights()">
+  <div class="stat-icon">AI</div>
+  <div class="stat-title-modern">Shortlisted</div>
+  <div class="stat-value-modern action" id="stat_shortlisted_count">0</div>
+</div>
+
+</div>
+
+<!-- FILTER BAR -->
+<div class="filter-bar">
+
+  <!-- SKILLS -->
+  <div class="filter-group skill-group">
+    <label>Skills</label>
+
+    <div class="skill-box" onclick="toggleSkillDropdown()">
+      Select Skills v
+    </div>
+
+    <div id="skillDropdown" class="skill-dropdown hidden"></div>
+  </div>
+
+  <!-- LOCATION -->
+  <div class="filter-group">
+    <label>Location</label>
+    <input id="resultLocationFilter" placeholder="Location">
+  </div>
+
+  <!-- SCORE -->
+  <div class="filter-group">
+    <label>Min Score</label>
+    <input id="resultScoreFilter" type="number" placeholder="Score">
+  </div>
+
+  <!-- APPLY -->
+  <div class="filter-group button-group">
+    <button onclick="applyResultFilters()">Apply</button>
+  </div>
+
+</div>
+
+
+
+<div class="ats-result-table-card">
+<div class="ats-result-table-head">
+<div>
+<h3>Candidate Results</h3>
+<p>AI-ranked candidates for the selected job.</p>
+</div>
+<button onclick="toggleColumnPanel()" 
+class="ats-column-btn bg-blue-600 text-white px-4 py-2 rounded">
+Customize Columns
+</button>
+</div>
+
+<!-- COLUMN PANEL -->
+
+<div id="columnPanel" 
+style="display:none;background:white;border:1px solid #ddd;padding:10px;border-radius:6px">
+
+<label><input type="checkbox" checked data-col="1" onchange="toggleColumn(this)"> Name</label><br>
+<label><input type="checkbox" data-col="2" onchange="toggleColumn(this)"> Email</label><br>
+<label><input type="checkbox" data-col="3" onchange="toggleColumn(this)"> Phone</label><br>
+<label><input type="checkbox" checked data-col="4" onchange="toggleColumn(this)"> Location</label><br>
+
+<label><input type="checkbox" data-col="5" onchange="toggleColumn(this)"> Designation</label><br>
+
+<label><input type="checkbox" checked data-col="6" onchange="toggleColumn(this)"> Experience</label><br>
+<label><input type="checkbox" checked data-col="7" onchange="toggleColumn(this)"> Last Company</label><br>
+
+<label><input type="checkbox" data-col="8" onchange="toggleColumn(this)"> Last Working Date</label><br>
+
+<label><input type="checkbox" data-col="9" onchange="toggleColumn(this)"> Matched Skills</label><br>
+<label><input type="checkbox" data-col="10" onchange="toggleColumn(this)"> Missing Skills</label><br>
+
+<label><input type="checkbox" data-col="11" onchange="toggleColumn(this)"> Skill Match %</label><br>
+
+<label><input type="checkbox" data-col="12" onchange="toggleColumn(this)"> Industry</label><br>
+<label><input type="checkbox" data-col="13" onchange="toggleColumn(this)"> Domain</label><br>
+<label><input type="checkbox" data-col="14" onchange="toggleColumn(this)"> Education</label><br>
+
+<label><input type="checkbox" checked data-col="15" onchange="toggleColumn(this)"> Status</label><br>
+<label><input type="checkbox" checked data-col="16" onchange="toggleColumn(this)"> Score</label><br>
+<label><input type="checkbox" data-col="17" onchange="toggleColumn(this)"> Download Resume</label>
+
+</div>
+
+<!-- TABLE -->
+
+<div class="table-scroll ats-fixed-table ats-results-scroll ats-result-table-scroll">
+
+<table class="w-full bg-white shadow table-fixed">
+
+<thead class="bg-gray-200">
+
+
+<tr>
+<th>Rank</th>
+<th>Name</th>
+
+<th class="hidden">Email</th>
+<th class="hidden">Phone</th>
+
+<th>Location</th>
+
+<th class="hidden">Designation</th>
+
+<th>Experience</th>
+<th>Last Company</th>
+
+<th class="hidden">Last Working Date</th>
+<th class="hidden">Matched Skills</th>
+<th class="hidden">Missing Skills</th>
+<th class="hidden">Skill Match %</th>
+
+<th class="hidden">Industry</th>
+<th class="hidden">Domain</th>
+<th class="hidden">Education</th>
+
+<th>Status</th>
+<th>Score</th>
+<th class="hidden">Download Resume</th>
+<th>Action</th>
+
+
+</tr>
+
+
+</thead>
+
+<tbody id="resultsTable"></tbody>
+
+</table>
+
+</div>
+
+<div class="flex justify-left mt-8 ats-result-bottom-back">
+  <button onclick="showPage('results')"
+  class="ats-back-btn bg-gray-900 hover:bg-gray-700 text-white px-6 py-3 rounded-lg shadow transition">
+
+    Back Back to Recruiter Dashboard
+
+  </button>
+</div>
+</div>
+</div>
+
+<!--  start working area current  -->
+
+<!-- ================= AI INSIGHTS PAGE ================= -->
+
+<div id="insightPage" class="hidden p-8 ats-insight-page">
+
+<section class="ats-insight-hero">
+<div>
+<span>Candidate intelligence board</span>
+<h2 id="insightRoleTitle">AI Hiring Insights</h2>
+<p>Recruiter-ready view of pool health, shortlist readiness, skill supply, and candidate quality signals.</p>
+</div>
+<div class="ats-insight-actions">
+<span>HireScore AI Score Engine</span>
+<button onclick="showPage('jobResult')" class="ats-insight-back-btn">Back to Job Results</button>
+</div>
+</section>
+
+<section class="ats-insight-decision-grid">
+<article class="ats-insight-decision-card">
+<small>Recruiter decision</small>
+<h3 id="insightDecisionStatus">Review candidate pool</h3>
+<p id="insightDecisionText">Open the ranked candidates and validate the strongest profiles before outreach.</p>
+</article>
+<article>
+<small>Lead candidate</small>
+<strong id="insightBestCandidate">-</strong>
+<span id="insightBestScore">Score 0</span>
+</article>
+<article>
+<small>Risk signal</small>
+<strong id="insightRiskSignal">0 low-match</strong>
+<span>Needs manual validation</span>
+</article>
+</section>
+
+<div class="ats-insight-kpis">
+<article><small>Total Candidates</small><strong id="insightTotalCandidates">0</strong><span>Analyzed profiles</span></article>
+<article><small>Average Score</small><strong id="insightAvgScore">0</strong><span>AI fit benchmark</span></article>
+<article><small>Top Talent</small><strong id="insightTopTalent">0</strong><span>Score 80+</span></article>
+<article><small>Avg Experience</small><strong id="insightAvgExp">0y</strong><span>Candidate pool maturity</span></article>
+</div>
+
+<div class="ats-insight-layout">
+
+<section class="insight-card insight-card-wide">
+<div class="insight-card-head">
+<div>
+<h3>JD Skill Coverage</h3>
+<p>How many candidates show evidence for each required JD skill.</p>
+</div>
+<span id="insightSkillCount">0 JD skills</span>
+</div>
+<div class="insight-chart-wrap insight-chart-tall">
+<canvas id="insightSkillChart"></canvas>
+</div>
+</section>
+
+<section class="insight-card">
+<div class="insight-card-head"><div><h3>Experience Mix</h3><p>Seniority distribution for screening context.</p></div></div>
+<div class="insight-chart-wrap insight-donut-wrap">
+<canvas id="insightExpChart"></canvas>
+</div>
+</section>
+
+<section class="insight-card">
+<div class="insight-card-head"><div><h3>AI Score Bands</h3><p>Quality spread across fit score ranges.</p></div></div>
+<div class="insight-chart-wrap">
+<canvas id="insightScoreChart"></canvas>
+</div>
+</section>
+
+<section class="insight-card">
+<div class="insight-card-head"><div><h3>Education Signals</h3><p>Background patterns from parsed resumes.</p></div></div>
+<div class="ats-education-signal-list" id="insightEducationList">
+<div class="ats-education-empty">No education data available.</div>
+</div>
+</section>
+
+</div>
+
+<div class="ai-summary ats-ai-recommendation">
+
+<div>
+<h3>AI Hiring Recommendation</h3>
+<p>Recruiter-ready interpretation of this candidate pool.</p>
+</div>
+<div id="aiSummaryBox"></div>
+
+</div>
+
+<br>
+
+<button onclick="showPage('jobResult')"
+class="bg-gray-800 text-white px-4 py-2 rounded">
+
+Back Back to Job Results
+
+</button>
+</div>
+
+<!-- working area current  -->
+
+<!-- ================= TOP CANDIDATES PAGE ================= -->
+
+<div id="topCandidatePage" class="hidden p-8 ats-top10-page">
+
+<section class="ats-top10-hero">
+<div>
+<span class="ats-top10-eyebrow">AI ranked shortlist</span>
+<h2>Top 10 Candidates</h2>
+<p>Review the strongest profiles by score, experience, resume signals, and recruiter action status.</p>
+</div>
+<button onclick="showPage('jobResult')" class="ats-top10-back-btn">
+<span>Back</span>
+Back to Job Results
+</button>
+</section>
+
+<section class="ats-top10-metrics">
+<article>
+<span>Ranked Profiles</span>
+<strong id="top10TotalCount">0</strong>
+<small>Best candidates in this role</small>
+</article>
+<article>
+<span>Highest Score</span>
+<strong id="top10BestScore">0</strong>
+<small>Top AI fit signal</small>
+</article>
+<article>
+<span>Average Score</span>
+<strong id="top10AvgScore">0</strong>
+<small>Across top profiles</small>
+</article>
+<article>
+<span>Shortlisted</span>
+<strong id="top10ShortlistedCount">0</strong>
+<small>Already moved forward</small>
+</article>
+</section>
+
+<section class="ats-top10-board">
+<div class="ats-top10-board-head">
+<div>
+<h3>Candidate Ranking Board</h3>
+<p>Action-ready comparison of the highest ranked applicants.</p>
+</div>
+<span id="top10BoardMeta">0 candidates</span>
+</div>
+
+<div class="ats-top10-table-wrap">
+
+<table class="ats-top10-table">
+
+<thead>
+
+
+<tr>
+<th>Rank</th>
+<th>Candidate</th>
+<th>Resume Signals</th>
+<th>AI Score</th>
+<th>Status</th>
+<th>Actions</th>
+</tr>
+
+</thead>
+
+<tbody id="topCandidateTable"></tbody>
+
+</table>
+</div>
+</section>
+
+<div class="hidden">
+
+Back Back to Job Results
+
+</div>
+
+</div>
+
+
+<!-- ================= AI EXPLANATION MODAL ================= -->
+
+<div id="explainModal"
+class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center">
+
+<div class="bg-white p-6 rounded-lg w-96">
+
+<h3 class="font-bold mb-3">AI Explanation</h3>
+
+<p id="explainText"></p>
+
+<button onclick="closeExplain()"
+class="mt-4 bg-gray-800 text-white px-4 py-2 rounded">
+
+Close
+
+</button>
+
+</div>
+
+</div>
+<!-- ALL JOBS PAGE -->
+
+<div id="allJobsPage" class="hidden">
+
+<h2 class="text-2xl font-bold mb-6">
+All Jobs
+</h2>
+
+<div id="allJobsContainer" class="grid grid-cols-3 gap-6">
+</div>
+
+<br>
+
+<button onclick="showPage('results')" 
+class="bg-gray-900 text-white px-4 py-2 rounded">
+
+Back Back to Recruitment Dashboard
+
+</button>
+
+</div>
+
+
+<!-- ================= COMMUNICATION PAGE ================= -->
+
+<div id="communicationPageLegacy" class="hidden p-8">
+
+    <h2 class="text-2xl font-bold mb-6">
+        Communication Pipeline
+    </h2>
+
+    <!--  JOB CARDS CONTAINER -->
+    <div id="communicationJobsContainerLegacy" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    </div>
+
+</div>
+
+
+<!-- ================= COMMUNICATION PAGE ================= -->
+
+<div id="communicationPage" class="hidden p-8 ats-outreach-page">
+
+    <section class="ats-outreach-hero">
+        <div>
+            <span class="ats-page-kicker">Candidate outreach</span>
+            <h2>Outreach Command Center</h2>
+            <p>Open role-specific communication queues, send recruiter emails, sync replies, and move responsive candidates into the next stage.</p>
+        </div>
+        <button onclick="syncGmailReplies()" class="ats-outreach-sync-btn">Sync Replies</button>
+    </section>
+
+    <section class="ats-outreach-metrics">
+        <article>
+            <span>Active Roles</span>
+            <strong id="outreachActiveRoles">0</strong>
+            <small>Ready for outreach</small>
+        </article>
+        <article>
+            <span>Total Applicants</span>
+            <strong id="outreachApplicants">0</strong>
+            <small>Across active roles</small>
+        </article>
+        <article>
+            <span>Communication Queue</span>
+            <strong id="outreachQueueCount">0</strong>
+            <small>Moved to outreach</small>
+        </article>
+        <article>
+            <span>Best Score</span>
+            <strong id="outreachBestScore">0</strong>
+            <small>Strongest profile signal</small>
+        </article>
+    </section>
+
+    <section class="ats-outreach-board">
+        <div class="ats-outreach-board-head">
+            <div>
+                <h3>Role Outreach Queues</h3>
+                <p>Select a role to review first contact, replies, and follow-up actions.</p>
+            </div>
+            <span id="outreachRoleMeta">0 roles</span>
+        </div>
+
+    <!--  JOB CARDS CONTAINER -->
+    <div id="communicationJobsContainer" class="ats-outreach-role-grid">
+    </div>
+    </section>
+
+</div>
+
+
+<div id="communicationResultsPage" class="hidden p-8 ats-outreach-detail-page">
+
+<section class="ats-comm-detail-hero">
+<div>
+<span class="ats-page-kicker">Outreach pipeline</span>
+<h2 id="communicationResultsTitle">Communication Candidates</h2>
+<p>Track first contact, candidate replies, assessment follow-up, and interview handoff for this role.</p>
+</div>
+<button onclick="showPage('communication')" class="ats-comm-back-btn">Back to Outreach</button>
+</section>
+
+<section class="ats-comm-detail-metrics">
+<article>
+<span>First contact</span>
+<strong id="commFirstContactCount">0</strong>
+<small>Waiting for outreach</small>
+</article>
+<article>
+<span>Interested</span>
+<strong id="commInterestedCount">0</strong>
+<small>Ready for test or interview</small>
+</article>
+<article>
+<span>Pending replies</span>
+<strong id="commPendingCount">0</strong>
+<small>Follow-up queue</small>
+</article>
+<article>
+<span>Not interested</span>
+<strong id="commNotInterestedCount">0</strong>
+<small>Closed responses</small>
+</article>
+</section>
+
+<section class="ats-gmail-connect-card ats-comm-sender-panel">
+<div>
+<span class="ats-comm-panel-icon">MAIL</span>
+<div>
+<h3>Outreach Sender</h3>
+<p id="gmailConnectStatus">Connect your outreach sender when you are ready to send candidate emails from your company email.</p>
+<div class="ats-sender-email-row">
+<input id="outreachSenderEmail" type="email" placeholder="sender@company.com" oninput="saveOutreachSenderEmail()" onchange="saveOutreachSenderEmail()">
+<small>Use a Google Workspace/Gmail account for OAuth, or your configured SMTP/Resend sender.</small>
+</div>
+</div>
+</div>
+<button onclick="connectGmailForOutreach()" class="ats-gmail-connect-btn">
+Connect Google Mail
+</button>
+<button onclick="syncGmailReplies()" class="ats-gmail-connect-btn is-secondary">
+Sync Replies
+</button>
+</section>
+
+<section class="ats-comm-section">
+<div class="ats-comm-section-head">
+<div>
+<span>First contact</span>
+<h3>Candidates Waiting for Outreach</h3>
+</div>
+<strong id="commFirstContactBadge">0 candidates</strong>
+</div>
+<!--  MAIN TABLE -->
+<div class="table-scroll ats-fixed-table ats-communication-scroll">
+<table class="dashboard-table">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>AI Fit Score</th>
+<th>Next Step</th>
+<th>Status</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="communicationResultsTable"></tbody>
+</table>
+</div>
+</section>
+
+
+<section class="ats-comm-section is-positive">
+<div class="ats-comm-section-head">
+<div>
+<span>Positive replies</span>
+<h3>Interested Candidates</h3>
+</div>
+<strong id="commInterestedBadge">0 candidates</strong>
+</div>
+
+<div class="table-scroll ats-fixed-table ats-communication-scroll">
+<table class="dashboard-table ats-pending-response-table">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>AI Fit Score</th>
+<th>Next Step</th>
+<th>Test Result</th>
+<th>Interview Pipeline</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody id="interestedTable"></tbody>
+</table>
+</div>
+</section>
+
+
+<section class="ats-comm-section is-closed">
+<div class="ats-comm-section-head">
+<div>
+<span>Closed</span>
+<h3>Not Interested Candidates</h3>
+</div>
+<strong id="commNotInterestedBadge">0 candidates</strong>
+</div>
+
+<div class="table-scroll ats-fixed-table ats-communication-scroll">
+<table class="dashboard-table">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>AI Fit Score</th>
+<th>Next Step</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody id="notInterestedTable"></tbody>
+</table>
+</div>
+</section>
+
+
+
+<section class="ats-comm-section is-waiting">
+<div class="ats-comm-section-head">
+<div>
+<span>Follow-up</span>
+<h3>Pending Candidates</h3>
+</div>
+<strong id="commPendingBadge">0 candidates</strong>
+</div>
+
+<div class="table-scroll ats-fixed-table ats-communication-scroll">
+<table class="dashboard-table">
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>AI Fit Score</th>
+<th>Next Step</th>
+<th>Status</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="pendingTable"></tbody>
+</table>
+</div>
+</section>
+
+</div>
+
+<div id="interviewDashboardPage" class="hidden p-8 ats-interview-page">
+<div class="ats-interview-hero">
+<div>
+<span class="ats-page-kicker">Interview Operations</span>
+<h2>Interview Schedule</h2>
+<p>Track assessment-qualified candidates, coordinate rounds, and keep scheduling decisions moving.</p>
+</div>
+<div class="ats-interview-toolbar">
+<button onclick="loadInterviewDashboard()" class="ats-interview-icon-btn" title="Refresh interview dashboard">Refresh</button>
+<button onclick="alert('Calendar scheduling integration is ready for this workflow.')" class="ats-interview-primary-btn">New Schedule</button>
+</div>
+</div>
+
+<div class="ats-interview-summary">
+<div>
+<small>Total Scheduled</small>
+<span id="interviewTotalCount">0</span>
+<strong>Across active jobs</strong>
+</div>
+<div>
+<small>Today's Interviews</small>
+<span id="interviewTodayCount">0</span>
+<strong>Due today</strong>
+</div>
+<div>
+<small>Pending</small>
+<span id="interviewPendingCount">0</span>
+<strong>Awaiting schedule</strong>
+</div>
+<div>
+<small>Completed</small>
+<span id="interviewCompletedCount">0</span>
+<strong>Finished rounds</strong>
+</div>
+<div>
+<small>Rescheduled</small>
+<span id="interviewRescheduledCount">0</span>
+<strong>Changed slots</strong>
+</div>
+</div>
+
+<section class="ats-interview-commandbar">
+<div class="ats-interview-search">
+<span>Search</span>
+<input id="interviewSearchFilter" type="search" placeholder="Find candidate, role, interviewer..." oninput="renderInterviewDashboard()">
+</div>
+<div class="ats-filter-chips">
+<button class="ats-filter-chip is-active" data-status="" onclick="setInterviewStatusFilter('', this)">All</button>
+<button class="ats-filter-chip" data-status="Pending" onclick="setInterviewStatusFilter('Pending', this)">Pending</button>
+<button class="ats-filter-chip" data-status="Completed" onclick="setInterviewStatusFilter('Completed', this)">Completed</button>
+<button class="ats-filter-chip" data-status="Rescheduled" onclick="setInterviewStatusFilter('Rescheduled', this)">Rescheduled</button>
+</div>
+<div class="ats-compact-filters">
+<select id="interviewJobFilter" onchange="renderInterviewDashboard()">
+<option value="">All roles</option>
+</select>
+<select id="interviewRoundFilter" onchange="renderInterviewDashboard()">
+<option value="">All rounds</option>
+<option value="Technical Screen">Technical Screen</option>
+<option value="Recruiter Screen">Recruiter Screen</option>
+<option value="Hiring Manager">Hiring Manager</option>
+</select>
+<input id="interviewDateFilter" type="date" onchange="renderInterviewDashboard()">
+<input id="interviewStatusFilter" type="hidden" value="">
+</div>
+</section>
+
+<section class="ats-interview-workflow">
+<div class="ats-workflow-column" data-stage="Today">
+<div class="ats-workflow-heading"><span>Today</span><strong id="workflowTodayCount">0</strong></div>
+<div id="workflowTodayList" class="ats-workflow-list"></div>
+</div>
+<div class="ats-workflow-column" data-stage="Scheduled">
+<div class="ats-workflow-heading"><span>Scheduled</span><strong id="workflowScheduledCount">0</strong></div>
+<div id="workflowScheduledList" class="ats-workflow-list"></div>
+</div>
+<div class="ats-workflow-column" data-stage="Pending">
+<div class="ats-workflow-heading"><span>Pending</span><strong id="workflowPendingCount">0</strong></div>
+<div id="workflowPendingList" class="ats-workflow-list"></div>
+</div>
+<div class="ats-workflow-column" data-stage="Completed">
+<div class="ats-workflow-heading"><span>Completed</span><strong id="workflowCompletedCount">0</strong></div>
+<div id="workflowCompletedList" class="ats-workflow-list"></div>
+</div>
+<div class="ats-workflow-column" data-stage="Rescheduled">
+<div class="ats-workflow-heading"><span>Rescheduled</span><strong id="workflowRescheduledCount">0</strong></div>
+<div id="workflowRescheduledList" class="ats-workflow-list"></div>
+</div>
+</section>
+
+<section class="ats-interview-panel ats-interview-table-panel">
+<div class="ats-panel-heading">
+<div>
+<h3>Central Interview Pipeline</h3>
+<p>All interview-ready candidates across every active job.</p>
+</div>
+</div>
+<div class="table-scroll ats-interview-table-scroll">
+<table class="dashboard-table ats-interview-table">
+<thead>
+<tr>
+<th>Candidate Name</th>
+<th>Applied Role</th>
+<th>Interview Round</th>
+<th>Interviewer</th>
+<th>Date & Time</th>
+<th>Status</th>
+<th>Meeting Type</th>
+<th>Actions</th>
+</tr>
+</thead>
+<tbody id="interviewDashboardTable"></tbody>
+</table>
+</div>
+</section>
+</div>
+</div>  <!-- pagesContainer -->
+<!-- ================= ================= -->
+<script src="runtime-config.js"></script>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script src="app.js?v=ai-posts-1"></script>
+
+
+</div>
+</body>
+</html>
+

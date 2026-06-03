@@ -1,0 +1,702 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apply for Job</title>
+<style>
+:root{
+--ink:#0f172a;
+--muted:#64748b;
+--line:#dbe4f0;
+--panel:#ffffff;
+--soft:#f4f7fb;
+--blue:#2563eb;
+--teal:#0f766e;
+--green:#16a34a;
+--amber:#d97706;
+--red:#dc2626;
+}
+
+*{box-sizing:border-box}
+
+body{
+margin:0;
+font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+color:var(--ink);
+background:
+linear-gradient(180deg,#eef5ff 0,#f8fafc 44%,#eef2f7 100%);
+min-height:100vh;
+}
+
+.page-shell{
+width:min(1180px,calc(100% - 32px));
+margin:0 auto;
+padding:28px 0 44px;
+}
+
+.topbar{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:16px;
+margin-bottom:18px;
+}
+
+.brand{
+display:flex;
+align-items:center;
+gap:12px;
+min-width:0;
+}
+
+.brand-mark{
+width:42px;
+height:42px;
+border-radius:8px;
+display:grid;
+place-items:center;
+background:linear-gradient(135deg,#2563eb,#14b8a6);
+color:white;
+font-weight:900;
+box-shadow:0 14px 28px rgba(37,99,235,.18);
+}
+
+.brand-title{
+font-size:15px;
+font-weight:900;
+letter-spacing:.08em;
+text-transform:uppercase;
+}
+
+.brand-subtitle{
+font-size:12px;
+font-weight:800;
+color:var(--muted);
+letter-spacing:.08em;
+text-transform:uppercase;
+}
+
+.status-pill{
+display:inline-flex;
+align-items:center;
+gap:8px;
+min-height:34px;
+padding:0 12px;
+border-radius:999px;
+background:#ecfdf5;
+border:1px solid #bbf7d0;
+color:#047857;
+font-size:12px;
+font-weight:900;
+white-space:nowrap;
+}
+
+.status-dot{
+width:8px;
+height:8px;
+border-radius:999px;
+background:#22c55e;
+}
+
+.apply-layout{
+display:grid;
+grid-template-columns:minmax(0,1.02fr) minmax(390px,.78fr);
+gap:18px;
+align-items:start;
+}
+
+.job-panel,
+.form-panel{
+background:rgba(255,255,255,.94);
+border:1px solid var(--line);
+border-radius:8px;
+box-shadow:0 24px 50px rgba(15,23,42,.10);
+overflow:hidden;
+}
+
+.job-hero{
+position:relative;
+padding:30px;
+background:
+linear-gradient(135deg,rgba(37,99,235,.13),rgba(20,184,166,.12) 48%,rgba(245,158,11,.12));
+border-bottom:1px solid var(--line);
+}
+
+.eyebrow{
+display:inline-flex;
+align-items:center;
+gap:8px;
+margin-bottom:14px;
+font-size:12px;
+font-weight:950;
+letter-spacing:.11em;
+text-transform:uppercase;
+color:#1d4ed8;
+}
+
+.eyebrow::before{
+content:"";
+width:24px;
+height:3px;
+border-radius:999px;
+background:#14b8a6;
+}
+
+h1{
+margin:0;
+font-size:clamp(30px,4.2vw,52px);
+line-height:1.03;
+letter-spacing:0;
+max-width:820px;
+}
+
+.company-line{
+margin:16px 0 0;
+color:#334155;
+font-size:16px;
+font-weight:750;
+line-height:1.5;
+}
+
+.meta-grid{
+display:grid;
+grid-template-columns:repeat(2,minmax(0,1fr));
+gap:10px;
+padding:20px 30px 8px;
+}
+
+.meta-item{
+display:flex;
+align-items:flex-start;
+gap:10px;
+min-height:64px;
+padding:12px;
+border:1px solid #e2e8f0;
+border-radius:8px;
+background:#f8fafc;
+}
+
+.meta-icon{
+width:30px;
+height:30px;
+border-radius:8px;
+display:grid;
+place-items:center;
+flex:0 0 auto;
+font-size:12px;
+font-weight:950;
+color:white;
+}
+
+.meta-icon.blue{background:#2563eb}
+.meta-icon.teal{background:#0f766e}
+.meta-icon.amber{background:#d97706}
+.meta-icon.green{background:#16a34a}
+
+.meta-label{
+font-size:11px;
+font-weight:950;
+text-transform:uppercase;
+letter-spacing:.08em;
+color:#64748b;
+}
+
+.meta-value{
+margin-top:3px;
+font-size:14px;
+font-weight:850;
+color:#0f172a;
+line-height:1.35;
+word-break:break-word;
+}
+
+.description-card{
+padding:22px 30px 30px;
+}
+
+.section-title{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:12px;
+margin:0 0 14px;
+padding-bottom:12px;
+border-bottom:1px solid var(--line);
+}
+
+.section-title h2,
+.form-title h2{
+margin:0;
+font-size:22px;
+line-height:1.2;
+letter-spacing:0;
+}
+
+.section-title span{
+font-size:12px;
+font-weight:900;
+color:#1d4ed8;
+background:#eff6ff;
+border:1px solid #bfdbfe;
+border-radius:999px;
+padding:7px 10px;
+white-space:nowrap;
+}
+
+.job-description{
+max-height:390px;
+overflow:auto;
+padding-right:8px;
+font-size:15px;
+line-height:1.72;
+color:#334155;
+}
+
+.job-description p{
+margin:0 0 14px;
+}
+
+.job-description strong{
+display:block;
+margin:18px 0 8px;
+font-size:13px;
+font-weight:950;
+text-transform:uppercase;
+letter-spacing:.08em;
+color:#0f172a;
+}
+
+.job-description ul{
+margin:0 0 16px;
+padding-left:20px;
+}
+
+.job-description li{
+margin:5px 0;
+}
+
+.form-panel{
+position:sticky;
+top:22px;
+}
+
+.form-title{
+padding:26px 28px 18px;
+border-bottom:1px solid var(--line);
+background:
+linear-gradient(180deg,#ffffff,#f8fbff);
+}
+
+.form-title p{
+margin:8px 0 0;
+color:var(--muted);
+font-size:14px;
+line-height:1.55;
+font-weight:700;
+}
+
+form{
+padding:22px 28px 28px;
+}
+
+.field-grid{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:14px;
+}
+
+.field{
+display:flex;
+flex-direction:column;
+gap:7px;
+margin-bottom:14px;
+}
+
+.field.full{
+grid-column:1 / -1;
+}
+
+label{
+font-size:12px;
+font-weight:950;
+letter-spacing:.06em;
+text-transform:uppercase;
+color:#475569;
+}
+
+input{
+width:100%;
+min-height:48px;
+border:1px solid #d7e1ee;
+border-radius:8px;
+background:#ffffff;
+padding:0 14px;
+font:inherit;
+font-size:14px;
+font-weight:700;
+color:#0f172a;
+outline:none;
+transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;
+}
+
+input::placeholder{
+color:#94a3b8;
+font-weight:650;
+}
+
+input:focus{
+border-color:#2563eb;
+box-shadow:0 0 0 4px rgba(37,99,235,.13);
+background:#fbfdff;
+}
+
+.upload-zone{
+position:relative;
+display:grid;
+grid-template-columns:auto 1fr;
+gap:14px;
+align-items:center;
+padding:18px;
+border:1.5px dashed #9db7dc;
+border-radius:8px;
+background:#f8fbff;
+margin:4px 0 16px;
+transition:border-color .16s ease,background .16s ease,box-shadow .16s ease;
+}
+
+.upload-zone.is-dragging{
+border-color:#2563eb;
+background:#eff6ff;
+box-shadow:0 0 0 4px rgba(37,99,235,.12);
+}
+
+.upload-icon{
+width:48px;
+height:48px;
+border-radius:8px;
+display:grid;
+place-items:center;
+background:#e0f2fe;
+color:#0369a1;
+font-weight:950;
+}
+
+.upload-copy strong{
+display:block;
+font-size:15px;
+line-height:1.2;
+}
+
+.upload-copy span{
+display:block;
+margin-top:5px;
+font-size:13px;
+font-weight:700;
+color:var(--muted);
+line-height:1.45;
+}
+
+.file-button{
+display:inline-flex;
+align-items:center;
+justify-content:center;
+min-height:38px;
+margin-top:12px;
+padding:0 14px;
+border-radius:8px;
+border:1px solid #bfdbfe;
+background:#eff6ff;
+color:#1d4ed8;
+font-size:13px;
+font-weight:950;
+cursor:pointer;
+}
+
+.upload-zone input[type="file"]{
+position:absolute;
+inset:0;
+opacity:0;
+cursor:pointer;
+height:100%;
+}
+
+.file-name{
+margin:-6px 0 16px;
+font-size:13px;
+font-weight:850;
+color:#0f766e;
+min-height:18px;
+}
+
+.progress-box{
+display:none;
+margin:0 0 16px;
+}
+
+.progress-copy{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:12px;
+margin-bottom:8px;
+font-size:12px;
+font-weight:900;
+color:#475569;
+}
+
+.progress-track{
+height:9px;
+border-radius:999px;
+background:#e2e8f0;
+overflow:hidden;
+}
+
+.progress-bar{
+height:100%;
+width:0%;
+border-radius:999px;
+background:linear-gradient(90deg,#2563eb,#14b8a6,#22c55e);
+transition:width .2s ease;
+}
+
+.submit-btn{
+width:100%;
+min-height:50px;
+border:0;
+border-radius:8px;
+background:linear-gradient(135deg,#2563eb,#0f766e);
+color:white;
+font-size:15px;
+font-weight:950;
+cursor:pointer;
+box-shadow:0 16px 30px rgba(37,99,235,.22);
+transition:transform .16s ease,box-shadow .16s ease,opacity .16s ease;
+}
+
+.submit-btn:hover{
+transform:translateY(-1px);
+box-shadow:0 18px 34px rgba(15,118,110,.22);
+}
+
+.submit-btn:disabled{
+opacity:.65;
+cursor:not-allowed;
+transform:none;
+}
+
+.message{
+display:none;
+margin-top:14px;
+padding:12px 13px;
+border-radius:8px;
+font-size:13px;
+font-weight:850;
+line-height:1.5;
+}
+
+.message.success{
+display:block;
+background:#ecfdf5;
+border:1px solid #bbf7d0;
+color:#047857;
+}
+
+.message.error{
+display:block;
+background:#fef2f2;
+border:1px solid #fecaca;
+color:#b91c1c;
+}
+
+.loading-state{
+padding:26px 30px;
+font-size:14px;
+font-weight:850;
+color:#475569;
+}
+
+@media (max-width:980px){
+.apply-layout{
+grid-template-columns:1fr;
+}
+
+.form-panel{
+position:static;
+}
+}
+
+@media (max-width:640px){
+.page-shell{
+width:min(100% - 20px,1180px);
+padding:18px 0 28px;
+}
+
+.topbar{
+align-items:flex-start;
+flex-direction:column;
+}
+
+.job-hero,
+.description-card,
+.form-title,
+form{
+padding-left:18px;
+padding-right:18px;
+}
+
+.meta-grid,
+.field-grid{
+grid-template-columns:1fr;
+}
+
+.upload-zone{
+grid-template-columns:1fr;
+}
+}
+</style>
+</head>
+
+<body>
+<main class="page-shell">
+<header class="topbar">
+<div class="brand">
+<div class="brand-mark" id="brandMark">HS</div>
+<div>
+<div class="brand-title" id="brandCompany">HireScore AI Careers</div>
+<div class="brand-subtitle">Application Portal</div>
+</div>
+</div>
+<div class="status-pill"><span class="status-dot"></span> Accepting applications</div>
+</header>
+
+<section class="apply-layout">
+<article class="job-panel" aria-label="Job details">
+<div class="job-hero">
+<div class="eyebrow">Open Role</div>
+<h1 id="jobTitle">Loading role...</h1>
+<p class="company-line">
+<span id="company">Company</span> is hiring for this position. Review the role details and submit your profile.
+</p>
+</div>
+
+<div class="meta-grid">
+<div class="meta-item">
+<div class="meta-icon blue">LOC</div>
+<div>
+<div class="meta-label">Location</div>
+<div class="meta-value" id="location">Loading...</div>
+</div>
+</div>
+<div class="meta-item">
+<div class="meta-icon teal">TYPE</div>
+<div>
+<div class="meta-label">Job Type</div>
+<div class="meta-value" id="jobType">Loading...</div>
+</div>
+</div>
+<div class="meta-item">
+<div class="meta-icon amber">PAY</div>
+<div>
+<div class="meta-label">Salary</div>
+<div class="meta-value" id="salary">Not disclosed</div>
+</div>
+</div>
+<div class="meta-item">
+<div class="meta-icon green">EXP</div>
+<div>
+<div class="meta-label">Experience</div>
+<div class="meta-value" id="experience">Role dependent</div>
+</div>
+</div>
+</div>
+
+<div class="description-card">
+<div class="section-title">
+<h2>Role Overview</h2>
+<span id="workMode">Screening ready</span>
+</div>
+<div id="description" class="job-description">
+<div class="loading-state">Loading job description...</div>
+</div>
+</div>
+</article>
+
+<aside class="form-panel" aria-label="Submit application">
+<div class="form-title">
+<h2>Submit Application</h2>
+<p>Share your contact details and upload your latest resume. PDF, DOC, and DOCX files are supported.</p>
+</div>
+
+<form id="applyForm">
+<div class="field-grid">
+<div class="field full">
+<label for="fullName">Full Name</label>
+<input id="fullName" name="form_full_name" type="text" placeholder="Your full name" autocomplete="name" required>
+</div>
+
+<div class="field">
+<label for="email">Email</label>
+<input id="email" name="form_email" type="email" placeholder="you@example.com" autocomplete="email" required>
+</div>
+
+<div class="field">
+<label for="phone">Phone</label>
+<input id="phone" name="form_phone" type="tel" placeholder="Mobile number" autocomplete="tel">
+</div>
+
+<div class="field full">
+<label for="candidateLocation">Current Location</label>
+<input id="candidateLocation" name="form_location" type="text" placeholder="City, State" autocomplete="address-level2">
+</div>
+
+<div class="field">
+<label for="noticePeriod">Notice Period</label>
+<input id="noticePeriod" name="notice_period" type="text" placeholder="Immediate / 30 days">
+</div>
+
+<div class="field">
+<label for="expectedSalary">Expected Salary</label>
+<input id="expectedSalary" name="expected_salary" type="text" placeholder="Optional">
+</div>
+
+<div class="field full">
+<label for="linkedin">LinkedIn / Portfolio</label>
+<input id="linkedin" name="linkedin" type="url" placeholder="https://linkedin.com/in/your-profile">
+</div>
+</div>
+
+<label for="resumeFile">Resume</label>
+<div class="upload-zone" id="uploadZone">
+<div class="upload-icon">CV</div>
+<div class="upload-copy">
+<strong>Upload resume</strong>
+<span>Drop your file here or browse from your device.</span>
+<span class="file-button">Choose file</span>
+</div>
+<input id="resumeFile" name="files" type="file" accept=".pdf,.doc,.docx,.rtf,.txt" required>
+</div>
+<div class="file-name" id="fileName">No file selected</div>
+
+<div id="uploadProgressBox" class="progress-box">
+<div class="progress-copy">
+<span>Uploading resume</span>
+<span id="uploadPercent">0%</span>
+</div>
+<div class="progress-track">
+<div id="uploadProgressBar" class="progress-bar"></div>
+</div>
+</div>
+
+<button id="submitBtn" class="submit-btn" type="submit">Submit Application</button>
+<div id="formMessage" class="message"></div>
+</form>
+</aside>
+</section>
+</main>
+
+<script src="runtime-config.js"></script>
+<script src="apply.js?v=modern-apply-4" defer></script>
+</body>
+</html>
+

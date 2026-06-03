@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Pricing - HireScore AI</title>
+<link rel="icon" href="assets/hirescore-mark.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="auth.css">
+</head>
+
+<body class="pricing-page">
+
+<main class="pricing-shell">
+<nav class="pricing-nav">
+<div class="auth-logo"><span><img src="assets/hirescore-mark.png" alt=""></span> HireScore AI</div>
+<a href="Signup.html">Create Account</a>
+</nav>
+
+<section class="pricing-hero">
+<span>Recruiting agency plans</span>
+<h1>Choose the plan for your hiring workflow.</h1>
+<p>Choose a plan to activate your recruiter account with the same email or Google login you just used.</p>
+</section>
+
+<section id="pricingPlans" class="pricing-grid">
+<article class="pricing-card">
+<span>Starter</span>
+<h2>Rs.999<small>/mo</small></h2>
+<p>For solo recruiters validating AI screening.</p>
+<ul>
+<li>3 active jobs</li>
+<li>300 resume parses/month</li>
+<li>AI ranking + shortlist</li>
+<li>Email support</li>
+</ul>
+<button type="button" onclick="choosePaidPlan('starter')">Choose Starter</button>
+</article>
+
+<article class="pricing-card is-popular">
+<b>Most Popular</b>
+<span>Agency Pro</span>
+<h2>Rs.2,999<small>/mo</small></h2>
+<p>For recruiting agencies running client shortlists.</p>
+<ul>
+<li>15 active jobs</li>
+<li>2,000 resume parses/month</li>
+<li>Client report + outreach workflow</li>
+<li>Notes, tags, and tracking links</li>
+</ul>
+<button type="button" onclick="choosePaidPlan('agency-pro')">Choose Agency Pro</button>
+</article>
+
+<article class="pricing-card">
+<span>Enterprise</span>
+<h2>Rs.7,999<small>/mo</small></h2>
+<p>For teams needing admin control and scale.</p>
+<ul>
+<li>Unlimited jobs</li>
+<li>10,000 resume parses/month</li>
+<li>Team access + priority support</li>
+<li>Custom onboarding</li>
+</ul>
+<button type="button" onclick="choosePaidPlan('enterprise')">Choose Enterprise</button>
+</article>
+</section>
+
+<section class="pricing-note">
+<strong>After payment</strong>
+<p>Successful checkout returns to HireScore AI, marks your account subscribed, and logs you in automatically.</p>
+</section>
+</main>
+
+<script src="runtime-config.js"></script>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+</body>
+</html>

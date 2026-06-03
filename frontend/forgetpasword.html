@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Forgot Password - HireScore AI</title>
+<link rel="icon" href="assets/hirescore-mark.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="auth.css">
+</head>
+
+<body class="auth-page">
+
+<div class="auth-shell">
+
+<div class="auth-brand-panel">
+<div class="auth-logo"><span><img src="assets/hirescore-mark.png" alt=""></span> HireScore AI</div>
+<h1>Recover recruiter access securely.</h1>
+<p>Reset your password and return to your AI recruiting workspace.</p>
+</div>
+
+<div class="auth-card">
+
+<h2>
+Reset Password
+</h2>
+<p class="auth-subtitle">Enter your registered email to generate a temporary password.</p>
+
+<input id="email"
+placeholder="Enter your email"
+class="border p-3 rounded w-full mb-4">
+
+<p id="error" class="text-red-500 hidden mb-3 text-sm"></p>
+<p id="resetMessage" class="hidden mb-3 text-sm"></p>
+
+<button onclick="resetPassword()"
+class="auth-primary-btn">
+Reset Password
+</button>
+
+<p class="text-center mt-4">
+<a href="login.html" class="text-blue-600">Back to Login</a>
+</p>
+
+</div>
+</div>
+
+<script src="config.js"></script>
+<script src="auth.js"></script>
+
+</body>
+</html>

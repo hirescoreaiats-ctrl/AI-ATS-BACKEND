@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Candidate Tracking | HireScore AI</title>
+<link rel="icon" href="assets/hirescore-mark.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="candidate-tracking.css">
+</head>
+<body>
+<main class="track-shell">
+    <section class="track-hero">
+        <div class="track-hero-main">
+            <div id="candidateAvatar" class="track-avatar">AI</div>
+            <div>
+                <span>HireScore AI Candidate Journey</span>
+                <h1 id="candidateName">Candidate Tracking</h1>
+                <p id="candidateSubtitle">Loading candidate pipeline...</p>
+                <div class="track-hero-tags">
+                    <strong id="heroStage">Stage: -</strong>
+                    <strong id="heroScore">Score: 0</strong>
+                </div>
+            </div>
+        </div>
+        <div class="track-hero-actions">
+            <button onclick="window.print()" class="track-action-btn">Print</button>
+            <button onclick="window.close()" class="track-close-btn">Close</button>
+        </div>
+    </section>
+
+    <section id="trackingState" class="track-state">Loading tracking details...</section>
+
+    <section id="trackingContent" class="track-content hidden">
+        <div class="track-overview">
+            <article>
+                <small>Current Stage</small>
+                <strong id="currentStage">-</strong>
+                <span>Pipeline position</span>
+            </article>
+            <article>
+                <small>AI Fit Score</small>
+                <strong id="fitScore">0</strong>
+                <span>Matching confidence</span>
+            </article>
+            <article>
+                <small>Mail Status</small>
+                <strong id="mailStatus">-</strong>
+                <span>Recruiter outreach</span>
+            </article>
+            <article>
+                <small>Candidate Response</small>
+                <strong id="responseStatus">-</strong>
+                <span>Latest reply signal</span>
+            </article>
+        </div>
+
+        <section class="track-panel track-pipeline-panel">
+            <div class="track-panel-head">
+                <div>
+                    <h2>Hiring Pipeline</h2>
+                    <p>Live candidate movement across ATS stages.</p>
+                </div>
+                <button onclick="location.reload()" class="track-action-btn">Refresh</button>
+            </div>
+            <div id="timeline" class="track-timeline"></div>
+        </section>
+
+        <div class="track-grid">
+            <section class="track-panel">
+                <h2>Candidate Profile</h2>
+                <div class="track-info">
+                    <div><span>Email</span><strong id="candidateEmail">-</strong></div>
+                    <div><span>Phone</span><strong id="candidatePhone">-</strong></div>
+                    <div><span>Location</span><strong id="candidateLocation">-</strong></div>
+                    <div><span>Experience</span><strong id="candidateExperience">-</strong></div>
+                </div>
+            </section>
+
+            <section class="track-panel">
+                <h2>Role Context</h2>
+                <div class="track-info">
+                    <div><span>Applied Role</span><strong id="jobTitle">-</strong></div>
+                    <div><span>Company</span><strong id="companyName">-</strong></div>
+                    <div><span>Status</span><strong id="candidateStatus">-</strong></div>
+                    <div><span>Designation</span><strong id="candidateDesignation">-</strong></div>
+                </div>
+            </section>
+        </div>
+    </section>
+</main>
+
+<script src="runtime-config.js"></script>
+<script src="config.js"></script>
+<script src="candidate-tracking.js"></script>
+</body>
+</html>

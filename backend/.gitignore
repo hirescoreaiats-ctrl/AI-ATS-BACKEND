@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+!.env.production.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+uploads/
+data/
+*.db
+*.sqlite
+*.log
+*.json
+!.vscode/settings.json

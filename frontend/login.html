@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Login - HireScore AI</title>
+<link rel="icon" href="assets/hirescore-mark.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="auth.css">
+</head>
+
+<body class="auth-page">
+
+<div class="auth-shell">
+
+<div class="auth-brand-panel">
+<div class="auth-logo"><span><img src="assets/hirescore-mark.png" alt=""></span> HireScore AI</div>
+<h1>Enterprise recruiting intelligence for modern hiring teams.</h1>
+<p>Secure recruiter access for job management, AI screening, shortlist workflows, and candidate outreach.</p>
+</div>
+
+<div class="auth-card">
+
+<h2>
+Recruiter Login
+</h2>
+<p class="auth-subtitle">Sign in to continue to your AI recruiting workspace.</p>
+
+<!-- EMAIL -->
+<input id="email" type="email" placeholder="Email"
+class="border p-3 rounded w-full mb-4">
+
+<!-- PASSWORD -->
+<input id="password" type="password" placeholder="Password"
+class="border p-3 rounded w-full mb-4">
+
+<!-- ERROR -->
+<p id="error" class="text-red-500 hidden mb-3 text-sm"></p>
+
+<!-- LOGIN BUTTON -->
+<button id="loginBtn" onclick="loginUser()"
+class="auth-primary-btn">
+Login
+</button>
+
+<div class="auth-divider"><span>or</span></div>
+
+<!-- GOOGLE LOGIN -->
+<div class="mt-4">
+<button id="googleBtn" onclick="googleLogin()"
+class="auth-google-btn flex items-center justify-center gap-2">
+
+<img src="https://www.svgrepo.com/show/475656/google-color.svg" width="18">
+
+Continue with Google
+
+</button>
+</div>
+
+<!-- LINKS -->
+<div class="auth-links">
+
+<a href="Signup.html" class="text-blue-600 hover:underline">
+Create Account
+</a>
+
+<a href="forgetpasword.html" class="text-blue-600 hover:underline">
+Forgot Password?
+</a>
+
+</div>
+
+<div class="text-center mt-4">
+
+<a href="support.html" class="text-gray-600 hover:underline">
+Contact Support
+</a>
+
+</div>
+
+</div>
+</div>
+
+<!-- SCRIPT -->
+<script src="runtime-config.js"></script>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+
+</body>
+</html>

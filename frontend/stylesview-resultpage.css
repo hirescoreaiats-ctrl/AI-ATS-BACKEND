@@ -1,0 +1,953 @@
+/* =========================
+GLOBAL PAGE STYLE
+========================= */
+
+body{
+background:linear-gradient(135deg,#f8fafc,#eef2ff);
+font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
+margin:0;
+padding:0;
+}
+
+
+/* =========================
+RECRUITER DASHBOARD
+========================= */
+
+#resultsPage{
+width:100%;
+padding:30px;
+min-height:100vh;
+box-sizing:border-box;
+}
+
+#resultsPage h2{
+font-size:30px;
+font-weight:800;
+color:#0f172a;
+margin-bottom:20px;
+}
+
+
+/* =========================
+JOB CARDS GRID
+========================= */
+
+#jobCards{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(340px,1fr));
+gap:28px;
+width:100%;
+}
+
+
+/* =========================
+JOB CARD
+========================= */
+
+.job-card{
+background:white;
+padding:28px;
+border-radius:16px;
+box-shadow:0 10px 30px rgba(0,0,0,0.08);
+transition:all .25s ease;
+display:flex;
+flex-direction:column;
+gap:10px;
+border:1px solid #f1f5f9;
+}
+
+.job-card:hover{
+transform:translateY(-6px);
+box-shadow:0 20px 45px rgba(0,0,0,0.15);
+}
+
+
+/* =========================
+JOB TEXT
+========================= */
+
+.job-title{
+font-size:26px;
+font-weight:800;
+color:#111827;
+}
+
+.company-name{
+font-size:14px;
+color:#64748b;
+}
+
+.job-info{
+font-size:14px;
+color:#374151;
+line-height:1.7;
+}
+
+.job-desc{
+font-size:14px;
+color:#4b5563;
+margin-top:6px;
+}
+
+
+/* =========================
+RESULT BUTTON
+========================= */
+
+.result-btn{
+background:linear-gradient(90deg,#6366f1,#8b5cf6);
+color:white;
+padding:12px;
+border-radius:8px;
+border:none;
+cursor:pointer;
+margin-top:14px;
+font-weight:600;
+transition:.2s;
+}
+
+.result-btn:hover{
+transform:scale(1.03);
+opacity:0.9;
+}
+
+
+/* =========================
+JOB FOOTER
+========================= */
+
+.job-footer{
+margin-top:12px;
+display:flex;
+justify-content:space-between;
+font-size:13px;
+color:#64748b;
+border-top:1px solid #f1f5f9;
+padding-top:10px;
+}
+
+
+/* =========================
+VIEW ALL JOB BUTTON
+========================= */
+.view-all-container{
+grid-column:1 / -1;
+display:flex;
+justify-content:center;
+margin-top:20px;
+}
+
+.view-all-btn{
+width:80%;
+max-width:1100px;
+padding:18px;
+font-size:20px;
+font-weight:700;
+border-radius:12px;
+border:none;
+background:linear-gradient(90deg,#0f172a,#1e293b);
+color:white;
+cursor:pointer;
+box-shadow:0 10px 30px rgba(0,0,0,0.15);
+transition:.25s;
+}
+
+.view-all-btn:hover{
+transform:scale(1.03);
+}
+
+
+/* =========================
+RESULT PAGE STATS
+========================= */
+
+.stat-card{
+background:#ffffff;
+padding:26px;
+border-radius:14px;
+box-shadow:0 10px 30px rgba(0,0,0,0.08);
+cursor:pointer;
+transition:all 0.25s ease;
+border:1px solid #e5e7eb;
+text-align:center;
+}
+
+.stat-card:hover{
+transform:translateY(-6px);
+box-shadow:0 18px 45px rgba(0,0,0,0.12);
+}
+
+.stat-title{
+font-size:16px;
+font-weight:700;
+letter-spacing:0.5px;
+color:#101011;
+margin-bottom:10px;
+text-transform:uppercase;
+}
+
+.stat-value{
+font-size:20px;
+font-weight:800;
+color:#175de9;
+}
+
+
+/* =========================
+FILTER INPUTS
+========================= */
+
+#jobResultPage input{
+background:white;
+border:1px solid #d1d5db;
+padding:10px 14px;
+border-radius:8px;
+font-size:14px;
+color:#111827;
+}
+
+#jobResultPage input::placeholder{
+color:#9ca3af;
+}
+
+#jobResultPage button{
+font-weight:600;
+}
+
+
+/* =========================
+TABLE WRAPPER
+========================= */
+
+.table-scroll{
+width:100%;
+overflow-x:auto;
+}
+
+
+/* =========================
+TABLE STYLE
+========================= */
+
+#jobResultPage table{
+width:100%;
+/*min-width:1600px;*/
+border-collapse:separate;
+border-spacing:0;
+border-radius:12px;
+overflow:hidden;
+}
+
+.table-scroll {
+  max-height: 60vh;   /* important */
+  overflow-y: auto;   /* scroll enable */
+}
+
+#jobResultPage thead{
+background:#f1f5f9;
+}
+
+#jobResultPage thead th{
+padding:14px;
+font-size:13px;
+font-weight:700;
+letter-spacing:0.5px;
+color:#334155;
+text-align:left;
+white-space:nowrap;
+}
+
+#jobResultPage tbody td{
+padding:14px;
+border-top:1px solid #f1f5f9;
+font-size:14px;
+color:#111827;
+line-height:1.4;
+white-space:normal;
+}
+
+#jobResultPage tbody tr:hover{
+background:#f8fafc;
+}
+
+
+/* =========================
+SKILL BADGE
+========================= */
+
+.skill-chip{
+background:#eef2ff;
+color:#4338ca;
+padding:4px 8px;
+border-radius:6px;
+font-size:12px;
+display:inline-block;
+margin:2px;
+}
+
+
+/* =========================
+SCORE BADGE
+========================= */
+
+.score-badge{
+background:#eef2ff;
+color:#4338ca;
+padding:4px 10px;
+border-radius:6px;
+font-weight:600;
+}
+
+
+/* =========================
+COLUMN WIDTH CONTROL
+========================= */
+
+
+#jobResultPage th:nth-child(2),
+#jobResultPage td:nth-child(2){min-width:160px;}
+
+#jobResultPage th:nth-child(3),
+#jobResultPage td:nth-child(3){min-width:220px;}
+
+#jobResultPage th:nth-child(4),
+#jobResultPage td:nth-child(4){min-width:140px;}
+
+#jobResultPage th:nth-child(5),
+#jobResultPage td:nth-child(5){min-width:200px;}
+
+#jobResultPage th:nth-child(6),
+#jobResultPage td:nth-child(6){min-width:180px;}
+
+#jobResultPage th:nth-child(7),
+#jobResultPage td:nth-child(7){min-width:120px;}
+
+#jobResultPage th:nth-child(8),
+#jobResultPage td:nth-child(8){min-width:180px;}
+
+#jobResultPage th:nth-child(9),
+#jobResultPage td:nth-child(9){min-width:140px;}
+
+#jobResultPage th:nth-child(10),
+#jobResultPage td:nth-child(10){min-width:260px;}
+
+#jobResultPage th:nth-child(11),
+#jobResultPage td:nth-child(11){min-width:260px;}
+
+#jobResultPage th:nth-child(12),
+#jobResultPage td:nth-child(12){min-width:120px;}
+
+#jobResultPage th:nth-child(13),
+#jobResultPage td:nth-child(13){min-width:180px;}
+
+#jobResultPage th:nth-child(14),
+#jobResultPage td:nth-child(14){min-width:160px;}
+
+#jobResultPage th:nth-child(15),
+#jobResultPage td:nth-child(15){min-width:240px;}
+
+.table-scroll{
+overflow-x:auto;
+width:100%;
+}
+th, td{
+padding:12px;
+text-align:left;
+vertical-align:top;
+word-break:normal;
+overflow-wrap:break-word;
+}
+td:nth-child(3){
+min-width:220px;
+}
+
+td:nth-child(10){
+min-width:260px;
+}
+
+td:nth-child(11){
+min-width:260px;
+}
+
+/* GLOBAL FONT */
+
+body{
+font-family: Inter, system-ui, -apple-system, sans-serif;
+font-size:15px;
+}
+
+/* SIDEBAR */
+
+.nav-btn{
+display:flex;
+align-items:center;
+gap:12px;
+width:100%;
+padding:12px 14px;
+border-radius:10px;
+font-size:15px;
+font-weight:500;
+color:#e5e7eb;
+transition:0.2s;
+}
+
+.nav-btn:hover{
+background:#1e293b;
+}
+
+.nav-btn.active{
+background:#1e293b;
+}
+
+/* SIDEBAR TITLE */
+
+.sidebar-title{
+font-size:20px;
+font-weight:600;
+letter-spacing:0.5px;
+}
+
+/* CARDS */
+
+.stat-card,
+.dashboard-graph-card,
+.dashboard-table-card,
+.bg-white{
+border-radius:14px;
+border:1px solid #e5e7eb;
+}
+
+/* BUTTONS */
+
+button{
+font-weight:500;
+}
+
+/* PRIMARY BUTTON */
+
+.btn-primary{
+background:#4f46e5;
+color:white;
+padding:8px 14px;
+border-radius:8px;
+}
+
+.btn-primary:hover{
+background:#4338ca;
+}
+
+/* TABLE */
+
+table{
+border-radius:10px;
+overflow:hidden;
+}
+
+thead{
+background:#f3f4f6;
+font-size:14px;
+}
+
+th{
+padding:10px;
+font-weight:600;
+}
+
+td{
+padding:10px;
+}
+
+/* INPUTS */
+
+input,
+select,
+textarea{
+border:1px solid #e5e7eb;
+border-radius:8px;
+padding:8px 10px;
+font-size:14px;
+}
+
+/* FILTER BAR */
+
+.filters-row input{
+min-width:140px;
+}
+
+/* HOVER EFFECT */
+
+.stat-card:hover,
+.bulk-card:hover{
+transform:translateY(-2px);
+box-shadow:0 6px 14px rgba(0,0,0,0.08);
+transition:0.2s;
+}
+
+/* GLOBAL FONT */
+
+body{
+font-family: Inter, system-ui, -apple-system, sans-serif;
+font-size:15px;
+}
+
+/* SIDEBAR */
+
+.nav-btn{
+display:flex;
+align-items:center;
+gap:12px;
+width:100%;
+padding:12px 14px;
+border-radius:10px;
+font-size:15px;
+font-weight:500;
+color:#e5e7eb;
+transition:0.2s;
+}
+
+.nav-btn:hover{
+background:#1e293b;
+}
+
+.nav-btn.active{
+background:#1e293b;
+}
+
+/* SIDEBAR TITLE */
+
+.sidebar-title{
+font-size:20px;
+font-weight:600;
+letter-spacing:0.5px;
+}
+
+/* CARDS */
+
+.stat-card,
+.dashboard-graph-card,
+.dashboard-table-card,
+.bg-white{
+border-radius:14px;
+border:1px solid #e5e7eb;
+}
+
+/* BUTTONS */
+
+button{
+font-weight:500;
+}
+
+/* PRIMARY BUTTON */
+
+.btn-primary{
+background:#4f46e5;
+color:white;
+padding:8px 14px;
+border-radius:8px;
+}
+
+.btn-primary:hover{
+background:#4338ca;
+}
+
+/* TABLE */
+
+table{
+border-radius:10px;
+overflow:hidden;
+}
+
+thead{
+background:#f3f4f6;
+font-size:14px;
+}
+
+th{
+padding:10px;
+font-weight:600;
+}
+
+td{
+padding:10px;
+}
+
+/* INPUTS */
+
+input,
+select,
+textarea{
+border:1px solid #e5e7eb;
+border-radius:8px;
+padding:8px 10px;
+font-size:14px;
+}
+
+/* FILTER BAR */
+
+.filters-row input{
+min-width:140px;
+}
+
+/* HOVER EFFECT */
+
+.stat-card:hover,
+.bulk-card:hover{
+transform:translateY(-2px);
+box-shadow:0 6px 14px rgba(0,0,0,0.08);
+transition:0.2s;
+}
+
+
+#shortlistTableMain tbody tr:nth-child(even){
+background:#f8fafc;
+}
+
+#shortlistTableMain tbody tr:nth-child(odd){
+background:#ffffff;
+}
+
+#shortlistTableMain tbody tr:hover{
+background:#eef2ff;
+transition:0.2s;
+}
+
+.table-scroll table{
+width: max-content;
+min-width: 100%;
+}
+
+.ats-table{
+width:100%;
+border-collapse:collapse;
+background:white;
+border-radius:10px;
+overflow:hidden;
+font-size:14px;
+box-shadow:0 4px 10px rgba(0,0,0,0.05);
+}
+
+.ats-table thead{
+background:#eef2ff;
+}
+
+.ats-table th{
+text-align:left;
+padding:14px 18px;
+font-weight:600;
+color:#374151;
+border-bottom:1px solid #e5e7eb;
+}
+
+.ats-table td{
+padding:14px 18px;
+border-bottom:1px solid #f1f5f9;
+color:#374151;
+}
+
+.ats-table tbody tr:hover{
+background:#f9fafb;
+transition:0.2s;
+}
+.ats-table{
+width:100%;
+border-collapse:collapse;
+background:white;
+border-radius:10px;
+overflow:hidden;
+font-size:14px;
+box-shadow:0 4px 10px rgba(0,0,0,0.05);
+}
+
+.ats-table thead{
+background:#eef2ff;
+}
+
+.ats-table th{
+text-align:left;
+padding:14px 18px;
+font-weight:600;
+color:#374151;
+border-bottom:1px solid #e5e7eb;
+}
+
+.ats-table td{
+padding:14px 18px;
+border-bottom:1px solid #f1f5f9;
+color:#374151;
+}
+
+.ats-table tbody tr:hover{
+background:#f9fafb;
+transition:0.2s;
+}
+
+#jobResultPage th:nth-child(1),
+#jobResultPage td:nth-child(1){
+    width:40px;
+    text-align:center;
+    padding-left:6px;
+    padding-right:6px;
+}
+
+#jobResultPage th:nth-child(1),
+#jobResultPage td:nth-child(1){
+    width:50px;
+    text-align:center;
+}
+
+.ats-table {
+  width:100%;
+  border-collapse:collapse;
+  background:white;
+  border-radius:12px;
+  overflow:hidden;
+  font-size:14px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.06);
+}
+
+.ats-table thead {
+  background:#eef2ff;
+}
+
+.ats-table th {
+  text-align:left;
+  padding:16px 18px;
+  font-weight:600;
+  color:#374151;
+}
+
+.ats-table td {
+  padding:16px 18px;
+  border-top:1px solid #f1f5f9;
+}
+
+.ats-table tbody tr:hover {
+  background:#f9fafb;
+}
+
+.stat-card-modern {
+  background: linear-gradient(145deg, #ffffff, #f8fafc);
+  border-radius: 16px;              /* thoda compact */
+  padding: 18px;                   /* reduced */
+  text-align: center;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.06);  /* softer shadow */
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card-modern:hover {
+  transform: translateY(-4px);     /* subtle hover */
+  box-shadow: 0 12px 25px rgba(99,102,241,0.18);
+}
+
+/* ICON FIX */
+.stat-icon {
+  font-size: 20px;                 /* reduced */
+  margin-bottom: 6px;
+}
+
+/* TITLE FIX */
+.stat-title-modern {
+  font-size: 11px;                 /* smaller */
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* VALUE FIX */
+.stat-value-modern {
+  font-size: 26px;                 /* main fix */
+  font-weight: 600;
+  color: #4f46e5;
+  margin-top: 4px;
+}
+
+.stat-value-modern.action {
+  font-size: 18px;                 /* smaller */
+  color: #2563eb;
+}
+
+.stat-card-modern.clickable {
+  cursor: pointer;
+}
+
+/* TOP LINE FIX */
+.stat-card-modern::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 15%;
+  width: 70%;                      /* centered */
+  height: 3px;
+  background: linear-gradient(to right, #6366f1, #8b5cf6);
+  border-radius: 10px;
+}
+
+
+
+/* ================= FILTER BAR ================= */
+.filter-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr; /* sab equal */
+
+  gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
+
+  background: #ffffff;
+  padding: 16px 18px;
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+
+  margin-bottom: 18px;
+}
+
+/* ================= GROUP ================= */
+.filter-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* ================= LABEL ================= */
+.filter-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #0f0f0f;
+
+  letter-spacing: 0.5px;
+  text-transform: uppercase;   /* pro look */
+
+  margin-bottom: 2px;
+}
+
+
+/* ================= INPUT + BOX ================= */
+.filter-group input,
+.skill-box {
+  height: 36px;
+  width: 100%;
+
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+
+  font-size: 13px;
+  background: white;
+
+  transition: 0.2s;
+}
+
+/* focus */
+.filter-group input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+}
+
+/* ================= SKILL ================= */
+.skill-group {
+  position: relative;
+}
+
+.skill-box {
+  cursor: pointer;
+}
+
+/* ================= DROPDOWN ================= */
+.skill-dropdown {
+  position: absolute;
+  top: 60px;
+  left: 0;
+  width: 220px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+  max-height: 180px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+/* FIXED ALIGNMENT */
+.skill-dropdown label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+/* hover effect */
+.skill-dropdown label:hover {
+  background: #f3f4f6;
+}
+
+/* checkbox small + clean */
+.skill-dropdown input {
+  width: 14px;
+  height: 14px;
+  accent-color: #4f46e5;
+}
+
+/* text wrap fix */
+.skill-dropdown label span {
+  flex: 1;
+}
+
+/* ================= BUTTON ================= */
+.button-group {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.button-group button {
+  height: 36px;
+  width: 100%;
+
+  background: #2563eb; /* same as customize button */
+  color: white;
+
+  padding: 0 18px;
+  border-radius: 8px;
+
+  font-size: 13px;
+  font-weight: 500;
+
+  transition: 0.2s;
+}
+
+.button-group button:hover {
+  background: #1d4ed8;
+}
+
+/* ================= HIDDEN ================= */
+.hidden {
+  display: none;
+}
+
+
+.action-btn {
+    background-color: #2563eb;
+    color: white;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+
+    min-width: 190px;
+    text-align: center;
+    transition: 0.2s ease;
+    cursor: pointer;
+}
+
+.action-btn:hover {
+    background-color: #1d4ed8;
+}
