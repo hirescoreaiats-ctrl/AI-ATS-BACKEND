@@ -49,6 +49,20 @@ API will be served through Caddy on ports `80` and `443`.
 
 For the full DigitalOcean guide, see `deploy/digitalocean-vps.md`.
 
+## Create Admin User
+
+Run this on the production VPS after `.env` is configured:
+
+```bash
+cd /var/www/hirescore-ai-backend
+source venv/bin/activate
+export ADMIN_EMAIL="admin@example.com"
+export ADMIN_NAME="Admin"
+read -s ADMIN_PASSWORD
+python scripts/create_admin_user.py
+unset ADMIN_PASSWORD
+```
+
 ## GitHub Push
 
 ```bash
