@@ -41,13 +41,13 @@ OPENAI_API_KEY=your-openai-key
 ## Run on VPS
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 docker compose exec api alembic upgrade head
 ```
 
-API will listen on port `8000`.
+API will be served through Caddy on ports `80` and `443`.
 
-For production, put Nginx/Caddy in front of it and enable HTTPS.
+For the full DigitalOcean guide, see `deploy/digitalocean-vps.md`.
 
 ## GitHub Push
 
