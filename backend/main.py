@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -190,7 +192,10 @@ app.include_router(organizations.router, prefix=settings.api_prefix)
 app.include_router(realtime.router, prefix=settings.api_prefix)
 app.include_router(talent.router, prefix=settings.api_prefix)
 app.include_router(uploads.router, prefix=settings.api_prefix)
-app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+
+frontend_dir = Path("frontend")
+if frontend_dir.exists():
+    app.mount("/frontend", StaticFiles(directory=str(frontend_dir)), name="frontend")
 
 
 @app.get("/")
