@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -112,7 +113,7 @@ def upload_resume_file(
     safe_filename = _validate_resume_blob(file_bytes, original_filename)
     content_type = mime_type or _resume_mime_type(safe_filename)
     pathname = f"resumes/{organization_id or 'default_org'}/{job_id}/{resume_id}_{safe_filename}"
-    token = _vercel_blob_token()
+    os.environ.setdefault("BLOB_READ_WRITE_TOKEN", _vercel_blob_token())
 
     try:
         from vercel.blob import BlobClient
@@ -131,7 +132,6 @@ def upload_resume_file(
             content_type=content_type,
             add_random_suffix=False,
             overwrite=False,
-            token=token,
         )
     except Exception as exc:
         logger.exception("Vercel Blob resume upload failed for %s", pathname)
