@@ -37,6 +37,7 @@ from backend.services.pipeline import analyze_resume_for_job
 from backend.services.scoring_service import score_candidate
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.storage import download_stored_file, is_remote_storage_uri, persist_resume_file
+from backend.services.storage_service import is_vercel_blob_uri
 from backend.services.sourcing import (
     TRACKED_APPLICATION_SOURCES,
     build_apply_links,
@@ -2113,8 +2114,6 @@ def _extract_folder_resume_text(file_path: Path) -> str:
         return extract_text_from_pdf(str(file_path))
     if suffix == ".docx":
         return extract_text_from_docx(str(file_path))
-    if suffix == ".txt":
-        return normalize_extracted_text(file_path.read_text(encoding="utf-8", errors="ignore"))
     return ""
 
 
@@ -2185,7 +2184,10 @@ def _save_folder_resume_application(db, job: Job, source_path: Path, original_fi
     if duplicate:
         return False, "duplicate skipped"
 
+    source_size = source_path.stat().st_size if source_path.exists() else None
     stored_path = _persist_folder_resume(source_path, job.id, display_name)
+    resume_file_key = str(stored_path).removeprefix("vercel_blob://") if is_vercel_blob_uri(str(stored_path)) else None
+    uploaded_at = datetime.utcnow() if resume_file_key else None
     score = parsed.get("rank_score") or parsed.get("final_score") or 0
     shortlist_threshold = job.shortlist_score or 70
     recommendation = parsed.get("recommendation")
@@ -2232,8 +2234,13 @@ def _save_folder_resume_application(db, job: Job, source_path: Path, original_fi
         skill_match_percent=parsed.get("skill_match_percent"),
         resume_text=text[:12000],
         resume_file_path=str(stored_path),
+        resume_file_key=resume_file_key,
         resume_original_filename=display_name,
         resume_content_type=mimetypes.guess_type(display_name)[0] or mimetypes.guess_type(str(source_path))[0] or "application/octet-stream",
+        original_filename=display_name,
+        file_size=source_size,
+        mime_type=mimetypes.guess_type(display_name)[0] or mimetypes.guess_type(str(source_path))[0] or "application/octet-stream",
+        uploaded_at=uploaded_at,
         explanation=_text_value(parsed.get("ai_recruiter_explanation")),
         application_source="folder",
         shortlisted=ai_shortlisted,
@@ -2277,7 +2284,7 @@ def sync_resume_folder(job_id: str):
         if not folder.exists() or not folder.is_dir():
             raise HTTPException(status_code=400, detail="Configure a valid resume folder first.")
 
-        allowed = {".pdf", ".docx", ".txt"}
+        allowed = {".pdf", ".docx"}
         files = sorted(path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in allowed)
         imported = 0
         skipped = 0
@@ -2316,7 +2323,7 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
         raise HTTPException(status_code=400, detail="Select at least one resume file.")
 
     settings = get_settings()
-    allowed = {".pdf", ".docx", ".txt"}
+    allowed = {".pdf", ".docx"}
     max_file_size = settings.upload_bytes_limit
     db = SessionLocal()
     temp_dir = Path(tempfile.mkdtemp(prefix=f"resume_folder_{job_id}_"))
