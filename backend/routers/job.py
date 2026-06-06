@@ -36,7 +36,7 @@ from backend.services.parsing_service import parse_resume_enterprise
 from backend.services.pipeline import analyze_resume_for_job
 from backend.services.scoring_service import score_candidate
 from backend.services.semantic_service import cosine_similarity_cached
-from backend.services.storage import download_stored_file, is_remote_storage_uri, persist_resume_file
+from backend.services.storage import download_stored_file, is_remote_storage_uri, materialize_resume_file, persist_resume_file
 from backend.services.storage_service import is_vercel_blob_uri
 from backend.services.sourcing import (
     TRACKED_APPLICATION_SOURCES,
@@ -534,8 +534,14 @@ def _candidate_safe_display(candidate: Resume):
 def _repair_stored_candidate_profile(candidate: Resume, job: Job, force: bool = False):
     if not force and not _stored_profile_needs_repair(candidate):
         return False
+    temp_file_path = ""
     try:
-        resume_file = _candidate_resume_file(candidate)
+        stored_path = getattr(candidate, "resume_file_path", None) or ""
+        if stored_path and is_remote_storage_uri(stored_path):
+            temp_file_path, _ = materialize_resume_file(stored_path, candidate.resume_original_filename)
+            resume_file = Path(temp_file_path)
+        else:
+            resume_file = _candidate_resume_file(candidate)
         fresh_text = ""
         if resume_file:
             fresh_text = (
@@ -601,10 +607,18 @@ def _repair_stored_candidate_profile(candidate: Resume, job: Job, force: bool = 
     except Exception:
         logger.exception("Stored candidate profile repair failed for %s", candidate.id)
         return False
+    finally:
+        if temp_file_path:
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                pass
 
 
 def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_map=None):
     resume_file = _candidate_resume_file(candidate)
+    stored_path = getattr(candidate, "resume_file_path", None) or ""
+    resume_available = bool(resume_file or (stored_path and is_remote_storage_uri(stored_path)))
     trust = _candidate_recruiter_trust(candidate, job)
     notes = sorted((note_map or {}).get(candidate.id, []), key=lambda note: note.created_at or datetime.min, reverse=True)
     tags = (tag_map or {}).get(candidate.id, [])
@@ -653,7 +667,7 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
         "latest_note": notes[0].body if notes else "",
         "tags": [{"tag": tag.tag, "color": tag.color} for tag in tags],
         "explanation": candidate.explanation,
-        "resume_available": bool(resume_file),
+        "resume_available": resume_available,
         "resume_original_filename": candidate.resume_original_filename,
         "resume_content_type": candidate.resume_content_type,
         "application_source": candidate.application_source or "direct",

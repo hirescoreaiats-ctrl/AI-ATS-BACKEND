@@ -1003,11 +1003,19 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         resume_text,
     )
     core_percent = core_match["core_skill_match_percent"]
+    direct_match_percent = round(((len(matched) + len(transferable) * 0.55) / required_count) * 100, 2)
 
     min_years = _safe_float(jd_profile.get("min_experience_years") or (jd_data or {}).get("min_experience_years"))
     max_years = _safe_float(jd_profile.get("max_experience_years") or (jd_data or {}).get("max_experience_years"))
     relevant_years = _safe_float(parsed.get("relevant_experience_years"))
     total_years = _safe_float(parsed.get("total_experience_years"))
+    if not missing and direct_match_percent >= 80 and core_percent >= 80:
+        coverage_floor = 75
+        if relevant_years >= max(min_years or 0, 1):
+            coverage_floor = 82
+        if (jd_profile.get("role_family") or "") == "data_analytics" and relevant_years >= max(min_years or 0, 1):
+            coverage_floor = 85
+        mandatory_coverage = max(mandatory_coverage, min(coverage_floor, direct_match_percent))
     if min_years:
         experience_fit_percent = min(100, round((relevant_years / min_years) * 100, 2))
     else:
