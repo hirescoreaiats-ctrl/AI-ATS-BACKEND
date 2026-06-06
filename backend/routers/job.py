@@ -2321,6 +2321,11 @@ def sync_resume_folder(job_id: str):
 async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="Select at least one resume file.")
+    if len(files) > 25:
+        raise HTTPException(
+            status_code=413,
+            detail="Upload at most 25 resumes per request. The dashboard uploads large folders in smaller requests.",
+        )
 
     settings = get_settings()
     allowed = {".pdf", ".docx"}
