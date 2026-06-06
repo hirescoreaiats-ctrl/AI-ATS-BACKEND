@@ -33,6 +33,9 @@ SKILL_SYNONYMS = {
     "aws": "AWS",
     "amazon web services": "AWS",
     "sql": "SQL",
+    "dax": "DAX",
+    "eda": "EDA",
+    "kpi": "KPI",
     "gcp": "Google Cloud",
     "azure cloud": "Azure",
     "attention to detail": "Attention to Detail",
@@ -63,6 +66,23 @@ SKILL_SYNONYMS = {
     "cpq": "Salesforce CPQ",
     "sales cloud": "Sales Cloud",
     "service cloud": "Service Cloud",
+    "experience cloud": "Experience Cloud",
+    "community cloud": "Experience Cloud",
+    "salesforce admin": "Salesforce Admin",
+    "salesforce administrator": "Salesforce Admin",
+    "data loader": "Data Loader",
+    "sfdx": "SFDX",
+    "salesforce dx": "SFDX",
+    "rest api": "REST API",
+    "restful": "REST API",
+    "advanced excel": "Advanced Excel",
+    "dashboard": "Dashboard",
+    "dashboard creation": "Dashboard",
+    "mis reporting": "MIS Reporting",
+    "kpi": "KPI",
+    "kpi reporting": "KPI Reporting",
+    "business reporting": "Business Reporting",
+    "reporting": "Reporting",
 }
 
 
@@ -110,6 +130,18 @@ SKILL_CATEGORIES = {
     "Salesforce CPQ": "CRM",
     "Sales Cloud": "CRM",
     "Service Cloud": "CRM",
+    "Experience Cloud": "CRM",
+    "Salesforce Admin": "CRM",
+    "Data Loader": "CRM",
+    "SFDX": "CRM",
+    "REST API": "Integration",
+    "Advanced Excel": "Analytics",
+    "Dashboard": "Analytics",
+    "MIS Reporting": "Analytics",
+    "KPI": "Analytics",
+    "KPI Reporting": "Analytics",
+    "Business Reporting": "Analytics",
+    "Reporting": "Analytics",
 }
 
 
@@ -126,10 +158,15 @@ KNOWN_SKILL_PATTERNS = [
     ("Salesforce CPQ", re.compile(r"\bsalesforce\s+cpq\b|\bcpq\b", re.I)),
     ("Sales Cloud", re.compile(r"\bsales\s+cloud\b", re.I)),
     ("Service Cloud", re.compile(r"\bservice\s+cloud\b", re.I)),
+    ("Experience Cloud", re.compile(r"\bexperience\s+cloud\b|\bcommunity\s+cloud\b", re.I)),
     ("Salesforce Admin", re.compile(r"\bsalesforce\s+admin(?:istrator)?\b", re.I)),
+    ("Data Loader", re.compile(r"\bdata\s+loader\b", re.I)),
+    ("SFDX", re.compile(r"\bsfdx\b|\bsalesforce\s+dx\b", re.I)),
+    ("REST API", re.compile(r"\brest\s+api\b|\brestful\b", re.I)),
     ("Google Apps Script", re.compile(r"\bgoogle\s+apps?\s+script\b", re.I)),
     ("Power Query", re.compile(r"\bpower\s+query\b", re.I)),
     ("Power BI", re.compile(r"\bpower\s*bi\b|\bpowerbi\b", re.I)),
+    ("Advanced Excel", re.compile(r"\badvanced\s+excel\b|\bpivot\s+tables?\b|\bvlookups?\b|\bxlookups?\b|\bmacros?\b|\bvba\b", re.I)),
     ("Excel", re.compile(r"\b(?:(?:ms|microsoft)\s+)?excel\b", re.I)),
     ("SQL", re.compile(r"\bsql(?:\s+queries|\s+query)?\b", re.I)),
     ("Python", re.compile(r"\bpython\b", re.I)),
@@ -145,6 +182,12 @@ KNOWN_SKILL_PATTERNS = [
     ("Data Cleaning", re.compile(r"\bdata\s+clean(?:ing)?\b|\bdata\s+validat(?:e|ion|ing)\b|\breconciliation\b|\bremediation\b", re.I)),
     ("Data Extraction", re.compile(r"\bdata\s+extract(?:ion)?\b|\bextract(?:ed|ion)?\b", re.I)),
     ("Data Visualization", re.compile(r"\bdata\s+visuali[sz]ation\b|\bdashboard(?:ing)?\b", re.I)),
+    ("Dashboard", re.compile(r"\bdashboards?\b|\bdashboard\s+creation\b", re.I)),
+    ("MIS Reporting", re.compile(r"\bmis\s+report(?:ing|s)?\b", re.I)),
+    ("KPI Reporting", re.compile(r"\bkpi\s+report(?:ing|s)?\b", re.I)),
+    ("KPI", re.compile(r"\bkpis?\b", re.I)),
+    ("Business Reporting", re.compile(r"\bbusiness\s+report(?:ing|s)?\b|\bad[-\s]?hoc\s+report(?:ing|s)?\b", re.I)),
+    ("Reporting", re.compile(r"\breport(?:ing|s)?\b", re.I)),
     ("Data Analysis", re.compile(r"\bdata\s+analys(?:is|tics)\b|\banalytics?\b", re.I)),
     ("Data Handling", re.compile(r"\bdata\s+handling\b", re.I)),
     ("Problem Solving", re.compile(r"\bproblem\s+solving\b", re.I)),
@@ -179,7 +222,21 @@ def normalize_skill_list(skills):
             seen.add(key)
             result.append(canonical)
 
-    return result
+    return _prune_overlapping_skills(result)
+
+
+def _prune_overlapping_skills(skills):
+    labels = {skill.lower() for skill in skills or []}
+    remove = set()
+
+    if "kpi reporting" in labels:
+        remove.add("kpi")
+    if any(label in labels for label in {"mis reporting", "kpi reporting", "business reporting"}):
+        remove.add("reporting")
+    if "data visualization" in labels:
+        remove.add("dashboard")
+
+    return [skill for skill in skills if skill.lower() not in remove]
 
 
 def known_skills_in_text(value):

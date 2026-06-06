@@ -86,6 +86,19 @@ def _evidence_for_skill(skill, text):
 
 def _skill_evidence_weight(evidence):
     depth = (evidence or {}).get("depth")
+    level = (evidence or {}).get("evidence_level")
+    if level:
+        return {
+            "professional_strong": 1.0,
+            "professional_weak": 0.78,
+            "project_strong": 0.76,
+            "project_weak": 0.52,
+            "skills_section_only": 0.36,
+            "certification_or_training_only": 0.22,
+            "keyword_only": 0.12,
+            "employer_name_only": 0.0,
+            "missing": 0.0,
+        }.get(level, 0.0)
     if depth == "work_experience_evidence":
         return 1.0
     if depth == "project_evidence":
@@ -101,6 +114,194 @@ def _skill_match(required, candidate_skills):
     direct = any(required.lower() == skill.lower() for skill in candidate_skills)
     equivalent = False if direct else any(equivalent_skill(skill, required) for skill in candidate_skills)
     return direct, equivalent
+
+
+def _skill_pattern(skill):
+    return re.compile(r"\b" + re.escape(str(skill or "").lower()).replace(r"\ ", r"\s+") + r"\b", re.I)
+
+
+def _skill_in_text(skill, text):
+    if not skill or not text:
+        return False
+    return bool(_skill_pattern(skill).search(str(text or "")))
+
+
+def _skill_snippet(skill, text):
+    if not skill or not text:
+        return ""
+    clean_text = re.sub(r"\s+", " ", str(text or "")).strip()
+    match = _skill_pattern(skill).search(clean_text)
+    if not match:
+        return ""
+    return clean_text[max(0, match.start() - 80): min(len(clean_text), match.end() + 150)].strip(" ,.;:-")
+
+
+def _strong_context(text):
+    return bool(re.search(
+        r"\b(built|developed|implemented|designed|automated|optimized|created|delivered|integrated|"
+        r"configured|customized|handled|managed|analy[sz]ed|reported|deployed|owned|led|improved|reduced|increased|"
+        r"\d+(?:%|k|,\d{3}| users?| records?| dashboards?| reports?))\b",
+        str(text or ""),
+        re.I,
+    ))
+
+
+def _training_context(text):
+    return bool(re.search(r"\b(certification|certificate|certified|course|training|trailhead|coursera|udemy|bootcamp|virtual internship)\b", str(text or ""), re.I))
+
+
+def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=None, equivalent=False):
+    parsed = parsed or {}
+    candidate_skills = normalize_skill_list(candidate_skills or parsed.get("key_skills", []))
+    direct_skill_list = any(required.lower() == skill.lower() for skill in candidate_skills)
+    equivalent_skill_list = equivalent or any(equivalent_skill(skill, required) for skill in candidate_skills)
+
+    company_texts = []
+    work_texts = []
+    for job in parsed.get("experience") or []:
+        if not isinstance(job, dict):
+            continue
+        company = str(job.get("company_name") or job.get("company") or "")
+        role = str(job.get("role") or "")
+        description = str(job.get("description") or "")
+        company_texts.append(company)
+        work_texts.append(" ".join([role, description]))
+
+    employer_hit = any(_skill_in_text(required, company) for company in company_texts)
+    work_hits = [text for text in work_texts if _skill_in_text(required, text)]
+    if work_hits:
+        strongest = max(work_hits, key=lambda item: 1 if _strong_context(item) else 0)
+        level = "professional_strong" if _strong_context(strongest) else "professional_weak"
+        return {
+            "skill": required,
+            "status": "partial" if equivalent_skill_list and not direct_skill_list else "matched",
+            "evidence_level": level,
+            "depth": "work_experience_evidence",
+            "evidence_text": _skill_snippet(required, strongest) or strongest[:260],
+            "source": "work_experience",
+            "weight": _skill_evidence_weight({"evidence_level": level}),
+            "employer_name_only": False,
+        }
+
+    project_records = []
+    for project in parsed.get("projects") or []:
+        if not isinstance(project, dict):
+            continue
+        name = str(project.get("name") or project.get("title") or "")
+        description = str(project.get("description") or project.get("summary") or "")
+        technologies = " ".join(str(item) for item in project.get("technologies") or project.get("tools") or [])
+        project_records.append((name, description, technologies))
+
+    for name, description, technologies in project_records:
+        if _skill_in_text(required, description):
+            level = "project_strong" if _strong_context(description) else "project_weak"
+            return {
+                "skill": required,
+                "status": "project_only",
+                "evidence_level": level,
+                "depth": "project_evidence",
+                "evidence_text": _skill_snippet(required, description) or description[:260],
+                "source": "project",
+                "weight": _skill_evidence_weight({"evidence_level": level}),
+                "employer_name_only": False,
+            }
+        if _skill_in_text(required, f"{name} {technologies}"):
+            level = "project_weak"
+            text = " ".join([name, technologies]).strip()
+            return {
+                "skill": required,
+                "status": "project_only",
+                "evidence_level": level,
+                "depth": "project_evidence",
+                "evidence_text": _skill_snippet(required, text) or text[:260],
+                "source": "project",
+                "weight": _skill_evidence_weight({"evidence_level": level}),
+                "employer_name_only": False,
+            }
+
+    certifications = " ".join(str(item) for item in parsed.get("certifications") or [])
+    education = " ".join(
+        " ".join(str(value or "") for value in item.values()) if isinstance(item, dict) else str(item)
+        for item in parsed.get("education") or []
+    )
+    training_text = " ".join([certifications, education])
+    if _skill_in_text(required, training_text):
+        return {
+            "skill": required,
+            "status": "training_only",
+            "evidence_level": "certification_or_training_only",
+            "depth": "certification_evidence",
+            "evidence_text": _skill_snippet(required, training_text) or training_text[:260],
+            "source": "certification_or_training",
+            "weight": _skill_evidence_weight({"evidence_level": "certification_or_training_only"}),
+            "employer_name_only": False,
+        }
+
+    if employer_hit and not _skill_in_text(required, " ".join(work_texts + [certifications, education])):
+        return {
+            "skill": required,
+            "status": "weak",
+            "evidence_level": "employer_name_only",
+            "depth": "employer_name_only",
+            "evidence_text": next((company for company in company_texts if _skill_in_text(required, company)), "")[:260],
+            "source": "company_name",
+            "weight": 0.0,
+            "employer_name_only": True,
+        }
+
+    if direct_skill_list:
+        return {
+            "skill": required,
+            "status": "weak",
+            "evidence_level": "skills_section_only",
+            "depth": "skills_section_only",
+            "evidence_text": required,
+            "source": "skills_section",
+            "weight": _skill_evidence_weight({"evidence_level": "skills_section_only"}),
+            "employer_name_only": False,
+        }
+
+    if equivalent_skill_list:
+        return {
+            "skill": required,
+            "status": "partial",
+            "evidence_level": "skills_section_only",
+            "depth": "skills_section_only",
+            "evidence_text": required,
+            "source": "skills_section_equivalent",
+            "weight": min(0.32, _skill_evidence_weight({"evidence_level": "skills_section_only"})),
+            "employer_name_only": False,
+        }
+
+    if _skill_in_text(required, resume_text):
+        context = _skill_snippet(required, resume_text)
+        if _training_context(context):
+            level = "certification_or_training_only"
+            status = "training_only"
+        else:
+            level = "keyword_only"
+            status = "weak"
+        return {
+            "skill": required,
+            "status": status,
+            "evidence_level": level,
+            "depth": level,
+            "evidence_text": context,
+            "source": "resume_text",
+            "weight": _skill_evidence_weight({"evidence_level": level}),
+            "employer_name_only": False,
+        }
+
+    return {
+        "skill": required,
+        "status": "missing",
+        "evidence_level": "missing",
+        "depth": "missing",
+        "evidence_text": "",
+        "source": "",
+        "weight": 0.0,
+        "employer_name_only": False,
+    }
 
 
 def _resume_evidence_skill_match(required, resume_text):
@@ -313,26 +514,26 @@ def calculate_experience_fit(parsed, jd_data, is_data_analyst=False):
     if not jd_min and not jd_max:
         return fit
 
-    comparison_years = relevant_years if relevant_years > 0 else years
+    comparison_years = relevant_years
     if jd_min and comparison_years < jd_min:
         fit["label"] = "under_experienced"
         fit["under_experienced"] = True
         fit["acceptable"] = comparison_years >= max(0, jd_min - 1)
         return fit
 
-    if jd_max and years > jd_max and transition_candidate:
+    if jd_max and years > jd_max and relevant_years <= jd_max and transition_candidate:
         fit["label"] = "transition_review"
         fit["acceptable"] = True
         return fit
 
-    if jd_max and years > jd_max:
-        over_by = years - jd_max
-        if (jd_max <= 3 and years >= 10) or over_by >= 7:
+    if jd_max and relevant_years > jd_max:
+        over_by = relevant_years - jd_max
+        if (jd_max <= 3 and relevant_years >= 10) or over_by >= 7:
             fit["label"] = "strong_overqualified"
             fit["strong_overqualified"] = True
             fit["overqualified"] = True
             fit["acceptable"] = False
-        elif (jd_max <= 3 and years >= 7) or over_by >= 4:
+        elif (jd_max <= 3 and relevant_years >= 7) or over_by >= 4:
             fit["label"] = "overqualified_review"
             fit["overqualified"] = True
             fit["acceptable"] = False
@@ -720,6 +921,29 @@ def _generic_recommendation(final_score, mandatory_coverage, confidence, caps, r
     return "in_review"
 
 
+def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_score, mandatory_coverage, seniority_fit):
+    flags = set(recruiter_flags or []) | set(risk_flags or [])
+    if "employer_name_only_match" in flags:
+        return "Low match"
+    if "missing_core_skill_groups" in flags or "missing_mandatory_skills" in flags:
+        return "Rejected - missing core skills" if recommendation == "rejected" else "Skill validation needed"
+    if seniority_fit == "under" and final_score >= 65:
+        return "Under-experienced but technically relevant"
+    if "seniority_experience_gap" in flags and final_score >= 65:
+        return "Strong technical match but below seniority"
+    if "training_only_exposure" in flags:
+        return "Training-only exposure"
+    if "project_only_exposure" in flags:
+        return "Project-only match"
+    if recommendation == "rejected":
+        return "Low match" if mandatory_coverage >= 25 else "Rejected - no relevant experience"
+    if recommendation == "shortlisted":
+        return "Strong match" if final_score >= 88 else "Good match"
+    if final_score >= 70:
+        return "Moderate match"
+    return "Review required"
+
+
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
     candidate_skills = normalize_skill_list(parsed.get("key_skills", []))
     required_skills = normalize_skill_list(jd_profile.get("must_have_skills") or expand_skill_requirements(jd_skills))
@@ -731,16 +955,35 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     evidence = {}
     mandatory_coverage_points = 0.0
     skill_evidence_depth = {}
+    matched_skill_evidence = []
+    employer_name_only_skills = []
     for required in required_skills:
         direct, equiv = _skill_match(required, candidate_skills)
-        skill_evidence = _evidence_for_skill(required, resume_text)
-        resume_hit = _resume_evidence_skill_match(required, resume_text) or bool(_contains_skill_text(required, resume_text))
-        if direct or resume_hit:
+        skill_evidence = _classify_skill_evidence(required, parsed, resume_text, candidate_skills, equivalent=equiv)
+        resume_hit = _resume_evidence_skill_match(required, resume_text)
+        if resume_hit and skill_evidence.get("evidence_level") in {"missing", "keyword_only"}:
+            skill_evidence = {
+                **skill_evidence,
+                "status": "matched",
+                "evidence_level": "professional_weak",
+                "depth": "work_experience_evidence",
+                "source": "resume_evidence",
+                "weight": max(skill_evidence.get("weight") or 0, 0.72),
+            }
+
+        weight = float(skill_evidence.get("weight") or 0)
+        status = skill_evidence.get("status") or "missing"
+        if skill_evidence.get("employer_name_only"):
+            _append_unique(employer_name_only_skills, [required])
+            _append_unique(missing, [required])
+        elif status != "missing" and weight > 0:
             _append_unique(matched, [required])
-            mandatory_coverage_points += max(_skill_evidence_weight(skill_evidence), 0.45 if direct else 0.0)
-        elif equiv:
+            mandatory_coverage_points += weight
+            matched_skill_evidence.append(skill_evidence)
+        elif equiv and not skill_evidence.get("employer_name_only"):
             _append_unique(transferable, [required])
-            mandatory_coverage_points += 0.40
+            mandatory_coverage_points += max(weight, 0.30)
+            matched_skill_evidence.append({**skill_evidence, "status": "partial", "weight": max(weight, 0.30)})
         else:
             _append_unique(missing, [required])
         evidence[required] = skill_evidence
@@ -816,6 +1059,14 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     seniority = (jd_profile.get("seniority_level") or "unknown").lower()
     missing_core_groups = core_match["missing_core_skill_groups"]
     parser_action = parsed.get("parser_quality_action")
+    if min_years and relevant_years < min_years:
+        seniority_fit = "under"
+    elif max_years and relevant_years > max_years:
+        seniority_fit = "over"
+    elif min_years or max_years:
+        seniority_fit = "within"
+    else:
+        seniority_fit = "unclear"
 
     def cap_at(limit, reason, flag=None, risk=None):
         nonlocal final_score
@@ -846,6 +1097,9 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
 
     if missing:
         _append_unique(risk_flags, ["missing_mandatory_skills"])
+    if employer_name_only_skills:
+        _append_unique(risk_flags, ["employer_name_only_match"])
+        _append_unique(recruiter_flags, ["employer_name_only_match"])
     if missing_core_groups:
         _append_unique(risk_flags, ["missing_core_skill_groups"])
     if parsed.get("experience_warnings"):
@@ -856,8 +1110,23 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         _append_unique(recruiter_flags, ["role_aligned"])
     if evidence_strength >= 60:
         _append_unique(recruiter_flags, ["strong_evidence"])
+        _append_unique(recruiter_flags, ["strong_professional_evidence"])
     if relevant_years and total_years and relevant_years < total_years * 0.5:
         _append_unique(recruiter_flags, ["partial_relevance"])
+    if _safe_float(parsed.get("project_only_exposure")) and not _safe_float(parsed.get("professional_role_experience_years")):
+        _append_unique(recruiter_flags, ["project_only_exposure"])
+        _append_unique(risk_flags, ["project_only_exposure"])
+    if _safe_float(parsed.get("training_or_certification_exposure")) and not relevant_years:
+        _append_unique(recruiter_flags, ["training_only_exposure"])
+        _append_unique(risk_flags, ["training_only_exposure"])
+    if seniority_fit == "under":
+        _append_unique(recruiter_flags, ["under_experienced"])
+        risk_flags = [flag for flag in risk_flags if flag != "over_experienced"]
+    elif seniority_fit == "over":
+        _append_unique(recruiter_flags, ["over_experienced"])
+        risk_flags = [flag for flag in risk_flags if flag != "under_experienced"]
+    elif seniority_fit == "within":
+        _append_unique(recruiter_flags, ["within_experience_range"])
 
     final_score = round(max(0, min(100, final_score)), 2)
     rank_score = round(min(100, final_score + min(5, confidence / 25 if not risk_flags else 0)), 2)
@@ -899,6 +1168,12 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "missing_skills": missing,
         "skill_evidence_depth": skill_evidence_depth,
         "skill_evidence": evidence,
+        "matched_skill_evidence": matched_skill_evidence,
+        "missing_or_weak_skills": [
+            item for item in evidence.values()
+            if item.get("status") in {"missing", "weak", "training_only"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only"}
+        ],
+        "employer_name_only_skills": employer_name_only_skills,
         "skill_match_percent": mandatory_coverage,
         "mandatory_skill_coverage": mandatory_coverage,
         "preferred_skill_coverage": round((len(preferred_matched) / max(len(preferred_skills), 1)) * 100, 2) if preferred_skills else 0,
@@ -909,6 +1184,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "seniority_level": parsed.get("seniority_level") or infer_seniority(parsed.get("designation"), relevant_years),
         "target_seniority_level": seniority,
         "recommendation": recommendation,
+        "label": _recommendation_label(recommendation, recruiter_flags, risk_flags, final_score, mandatory_coverage, seniority_fit),
         "score_caps_applied": caps,
         "recruiter_flags": recruiter_flags,
         "risk_flags": risk_flags,
@@ -924,10 +1200,50 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "experience_fit_percent": experience_fit_percent,
             "evidence_strength": evidence_strength,
             "skill_evidence_depth": skill_evidence_depth,
+            "matched_skill_evidence": matched_skill_evidence,
+            "employer_name_only_skills": employer_name_only_skills,
             "overqualified_penalty": overqualified_penalty,
             "experience_target_max_years": max_years or None,
             "experience_over_target_years": round(over_target_years, 2),
+            "seniority_fit": seniority_fit,
+            "domain_specific_experience_years": parsed.get("domain_specific_experience_years"),
+            "professional_role_experience_years": parsed.get("professional_role_experience_years"),
+            "training_or_certification_exposure": parsed.get("training_or_certification_exposure"),
+            "project_only_exposure": parsed.get("project_only_exposure"),
+            "current_title": parsed.get("current_title") or parsed.get("designation"),
+            "most_relevant_role": parsed.get("most_relevant_role"),
+            "target_role_alignment": parsed.get("target_role_alignment"),
+            "jd_aligned_work_evidence": parsed.get("jd_aligned_work_evidence") or [],
+            "jd_aligned_project_evidence": parsed.get("jd_aligned_project_evidence") or [],
+            "non_jd_projects": parsed.get("non_jd_projects") or [],
+            "missing_or_weak_skills": [
+                item for item in evidence.values()
+                if item.get("status") in {"missing", "weak", "training_only"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only"}
+            ],
             "score_caps_applied": caps,
+        },
+        "candidate_screening_summary": {
+            "candidate_name": parsed.get("full_name") or "",
+            "current_title": parsed.get("current_title") or parsed.get("designation") or "",
+            "most_relevant_title": parsed.get("most_relevant_role") or "",
+            "target_role_alignment": parsed.get("target_role_alignment") or "weak",
+            "total_experience_years": total_years,
+            "jd_relevant_experience_years": relevant_years,
+            "seniority_fit": seniority_fit,
+            "final_score": final_score,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "label": _recommendation_label(recommendation, recruiter_flags, risk_flags, final_score, mandatory_coverage, seniority_fit),
+            "matched_skills": matched_skill_evidence,
+            "missing_or_weak_skills": [
+                item for item in evidence.values()
+                if item.get("status") in {"missing", "weak", "training_only"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only"}
+            ],
+            "jd_aligned_work_evidence": parsed.get("jd_aligned_work_evidence") or [],
+            "jd_aligned_project_evidence": parsed.get("jd_aligned_project_evidence") or [],
+            "non_jd_projects": parsed.get("non_jd_projects") or [],
+            "risk_flags": risk_flags,
+            "parser_quality_flags": parsed.get("parser_quality_flags") or [],
         },
     }
 

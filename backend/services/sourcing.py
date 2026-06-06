@@ -14,7 +14,18 @@ from backend.models import Job
 
 
 logger = logging.getLogger(__name__)
-_openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
+_openai_client = None
+
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client:
+        return _openai_client
+    api_key = os.getenv("OPENAI_API_KEY") or get_settings().openai_api_key
+    if not api_key:
+        return None
+    _openai_client = OpenAI(api_key=api_key)
+    return _openai_client
 
 
 ALLOWED_APPLICATION_SOURCES = {
@@ -226,10 +237,29 @@ def _json_from_ai_response(content: str) -> dict:
     return {}
 
 
+def _stored_sourcing_posts(job: Job) -> dict[str, str]:
+    return {
+        "linkedin": (job.generated_linkedin_post or "").strip(),
+        "whatsapp": (job.generated_whatsapp_message or "").strip(),
+        "naukri": (job.generated_naukri_text or "").strip(),
+        "generic": (getattr(job, "generated_generic_post", None) or "").strip(),
+    }
+
+
+def _has_complete_sourcing_posts(job: Job) -> bool:
+    posts = _stored_sourcing_posts(job)
+    return all(posts.get(key) for key in ("linkedin", "whatsapp", "naukri", "generic"))
+
+
 def generate_ai_sourcing_posts(job: Job, db=None) -> dict:
     links = build_apply_links(job, db)
+    stored = _stored_sourcing_posts(job)
+    if all(stored.get(key) for key in ("linkedin", "whatsapp", "naukri", "generic")):
+        return {"generated": True, "cached": True, "apply_links": links, "generated_posts": stored}
+
     fallback = _fallback_ai_posts(job, links)
-    if not _openai_client:
+    client = _get_openai_client()
+    if not client:
         return {"generated": False, "apply_links": links, "generated_posts": fallback}
 
     jd_text = (job.jd_text or "").strip()
@@ -271,7 +301,7 @@ def generate_ai_sourcing_posts(job: Job, db=None) -> dict:
     )
 
     try:
-        response = _openai_client.chat.completions.create(
+        response = client.chat.completions.create(
             model=os.getenv("OPENAI_JOB_POST_MODEL", os.getenv("OPENAI_RECOMMENDATION_MODEL", "gpt-4o-mini")),
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -295,20 +325,29 @@ def generate_ai_sourcing_posts(job: Job, db=None) -> dict:
 
 def ensure_generated_sourcing_content(job: Job, db) -> dict[str, str]:
     links = build_apply_links(job, db)
-    job.generated_linkedin_post = generate_linkedin_post(job, links)
-    job.generated_whatsapp_message = generate_whatsapp_message(job, links)
-    job.generated_naukri_text = generate_naukri_text(job, links)
+    if _has_complete_sourcing_posts(job):
+        return links
+
+    payload = generate_ai_sourcing_posts(job, db)
+    posts = payload.get("generated_posts") or {}
+    fallback = _fallback_ai_posts(job, links)
+    job.generated_linkedin_post = posts.get("linkedin") or job.generated_linkedin_post or fallback["linkedin"]
+    job.generated_whatsapp_message = posts.get("whatsapp") or job.generated_whatsapp_message or fallback["whatsapp"]
+    job.generated_naukri_text = posts.get("naukri") or job.generated_naukri_text or fallback["naukri"]
+    job.generated_generic_post = posts.get("generic") or getattr(job, "generated_generic_post", None) or fallback["generic"]
     return links
 
 
 def sourcing_payload(job: Job, db=None) -> dict:
     links = build_apply_links(job, db)
+    fallback = _fallback_ai_posts(job, links)
     return {
         "apply_slug": job.apply_slug or job.id,
         "apply_links": links,
         "generated_posts": {
-            "linkedin": job.generated_linkedin_post or generate_linkedin_post(job, links),
-            "whatsapp": job.generated_whatsapp_message or generate_whatsapp_message(job, links),
-            "naukri": job.generated_naukri_text or generate_naukri_text(job, links),
+            "linkedin": job.generated_linkedin_post or fallback["linkedin"],
+            "whatsapp": job.generated_whatsapp_message or fallback["whatsapp"],
+            "naukri": job.generated_naukri_text or fallback["naukri"],
+            "generic": getattr(job, "generated_generic_post", None) or fallback["generic"],
         },
     }

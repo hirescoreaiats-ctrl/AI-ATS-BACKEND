@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import re
+from difflib import SequenceMatcher
 
 from backend.database import SessionLocal
 from backend.models import Job, Resume
@@ -16,8 +17,11 @@ from backend.services.parsing_service import parse_resume_enterprise
 from backend.ai.vector_search import enrich_candidate_embedding
 from backend.jd_engine import normalize_jd_skills
 from backend.services.candidate_intelligence import apply_resume_intelligence_fields, resume_intelligence_payload
+from backend.services.jd_enrichment import enrich_jd_for_scoring
 from backend.services.sourcing import build_apply_links, normalize_application_source, resolve_job_identifier
+from backend.core.config import get_settings
 from backend.services.storage import materialize_resume_file, persist_resume_file
+from backend.services.storage_service import upload_resume_file
 from backend.utils.upload_security import malware_scan, secure_upload_path, validate_upload
 from backend.core.security import require_roles
 
@@ -42,6 +46,26 @@ def _normalize_duplicate_phone(value: str | None) -> str:
     if len(digits) > 10 and digits.startswith("91"):
         digits = digits[-10:]
     return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _identity_mismatch_reason(form_name="", form_email="", form_phone="", parsed=None):
+    parsed = parsed or {}
+    reasons = []
+    parsed_email = (parsed.get("email") or "").strip().lower()
+    parsed_phone = _normalize_duplicate_phone(parsed.get("phone"))
+    form_email = (form_email or "").strip().lower()
+    form_phone = _normalize_duplicate_phone(form_phone)
+    if form_email and parsed_email and form_email != parsed_email:
+        reasons.append("email mismatch")
+    if form_phone and parsed_phone and form_phone != parsed_phone:
+        reasons.append("phone mismatch")
+    form_name_clean = re.sub(r"[^a-z]+", " ", str(form_name or "").lower()).strip()
+    parsed_name_clean = re.sub(r"[^a-z]+", " ", str(parsed.get("full_name") or "").lower()).strip()
+    if form_name_clean and parsed_name_clean:
+        similarity = SequenceMatcher(None, form_name_clean, parsed_name_clean).ratio()
+        if similarity < 0.58:
+            reasons.append("name mismatch")
+    return ", ".join(reasons)
 
 
 def _find_existing_application(db, job_id: str, email: str | None = "", phone: str | None = "", exclude_id: str | None = None):
@@ -213,6 +237,25 @@ def _process_resume_application_background(resume_id: str) -> None:
             _mark_resume_needs_review(db, resume, "Resume uploaded, but AI parsing failed. Recruiter review required.", resume_text)
             return
 
+        mismatch_reason = _identity_mismatch_reason(resume.form_full_name, resume.form_email, resume.form_phone, parsed)
+        if mismatch_reason:
+            _mark_resume_needs_review(
+                db,
+                resume,
+                f"Resume/result mismatch detected ({mismatch_reason}). Please re-parse correct resume.",
+                resume_text,
+            )
+            resume.parser_quality_action = "manual_review_required"
+            resume.parser_quality_flags = json.dumps([{
+                "code": "identity_mismatch",
+                "severity": "critical",
+                "message": "Resume/result mismatch detected. Please re-parse correct resume.",
+                "penalty": 100,
+            }], ensure_ascii=False)
+            resume.risk_flags = json.dumps(["identity_mismatch", "parser_quality_gate", "manual_review_required"], ensure_ascii=False)
+            db.commit()
+            return
+
         parsed_email = (parsed.get("email") or resume.form_email or resume.email or "").strip().lower()
         parsed_phone = (parsed.get("phone") or resume.form_phone or resume.phone or "").strip()
         duplicate = _find_existing_application(db, resume.job_id, parsed_email, parsed_phone, exclude_id=resume.id)
@@ -352,14 +395,44 @@ async def upload_resumes(
             duplicate_count += 1
             continue
 
-        file_path = secure_upload_path(file.filename)
+        resume_id = str(uuid.uuid4())
+        file_path = ""
+        stored_file_path = ""
+        blob_metadata = None
 
-        with open(file_path, "wb") as f:
-            f.write(contents)
-        malware_scan(file_path)
-        stored_file_path = persist_resume_file(file_path, file.filename, file.content_type, job_id)
+        if get_settings().use_vercel_blob_storage:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or "")[1]) as temp_file:
+                    temp_file.write(contents)
+                    file_path = temp_file.name
+                malware_scan(file_path)
+
+                blob_metadata = upload_resume_file(
+                    contents,
+                    file.filename,
+                    job_id,
+                    resume_id,
+                    organization_id=job.organization_id or "default_org",
+                    mime_type=file.content_type,
+                )
+                stored_file_path = blob_metadata.storage_uri
+                print(f"[storage] Vercel Blob resume uploaded key={blob_metadata.key} size={blob_metadata.file_size}")
+            finally:
+                if file_path:
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
+        else:
+            file_path = secure_upload_path(file.filename)
+            with open(file_path, "wb") as f:
+                f.write(contents)
+            malware_scan(file_path)
+            stored_file_path = persist_resume_file(file_path, file.filename, file.content_type, job_id)
+            file_path = ""
 
         resume_entry = Resume(
+            id=resume_id,
             job_id=job_id,
             organization_id=job.organization_id,
             full_name=form_full_name,
@@ -387,8 +460,14 @@ async def upload_resumes(
             duplicate_key=duplicate_key,
             duplicate_of_id=duplicate_of.id if duplicate_of else None,
             resume_file_path=stored_file_path,
+            resume_file_url=blob_metadata.url if blob_metadata else None,
+            resume_file_key=blob_metadata.key if blob_metadata else None,
             resume_original_filename=file.filename,
             resume_content_type=file.content_type,
+            original_filename=file.filename,
+            file_size=len(contents),
+            mime_type=blob_metadata.mime_type if blob_metadata else file.content_type,
+            uploaded_at=blob_metadata.uploaded_at if blob_metadata else None,
             explanation="Application received. AI screening is running in background.",
             shortlisted=False,
             shortlisted_auto=False,
@@ -672,20 +751,14 @@ async def bulk_analyze(
 
     results = []
 
-    from backend.jd_engine import extract_structured_jd
-
-    structured_jd = extract_structured_jd(jd_text)
-
-    jd_skills = normalize_jd_skills(
-        ",".join(structured_jd.get("required_skills", [])),
-        jd_text
-    )
+    enrichment = enrich_jd_for_scoring(jd_text)
+    jd_skills = enrichment.get("required_skills") or normalize_jd_skills([], jd_text)
 
     jd_data = {
-        "min_experience_years": structured_jd.get("min_experience_years", 0),
-        "education": structured_jd.get("education", ""),
-        "role": structured_jd.get("role", ""),
-        "preferred_skills": structured_jd.get("preferred_skills", [])
+        "min_experience_years": enrichment.get("min_experience_years", 0),
+        "education": enrichment.get("education", ""),
+        "role": enrichment.get("role", ""),
+        "preferred_skills": enrichment.get("preferred_skills", [])
     }
 
     for file in files:

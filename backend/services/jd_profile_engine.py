@@ -1,6 +1,6 @@
 import re
 
-from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups
+from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups, role_family_default_must_have
 from backend.services.taxonomy import expand_skill_requirements, known_skills_in_text, normalize_skill_list
 
 
@@ -125,6 +125,13 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
 
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
+    default_must_have = role_family_default_must_have(role_family)
+    if default_must_have and len(must_have) < 3:
+        must_have = normalize_skill_list(must_have + default_must_have)
+        nice_to_have = normalize_skill_list([
+            skill for skill in nice_to_have
+            if skill.lower() not in {item.lower() for item in must_have}
+        ])
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     hard, soft = _requirement_lines(jd_text)

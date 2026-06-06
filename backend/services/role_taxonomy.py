@@ -48,8 +48,50 @@ ROLE_FAMILIES = {
         },
     },
     "data_analytics": {
-        "patterns": [r"\bdata\s+analyst\b", r"\bmis\s+analyst\b", r"\bbi\s+analyst\b", r"\banalytics\b", r"\breporting\b"],
-        "skills": ["SQL", "Excel", "Power BI", "Tableau", "Dashboard", "MIS Reporting", "KPI", "Data Analysis"],
+        "patterns": [
+            r"\bdata\s+analyst\b",
+            r"\bmis\s+analyst\b",
+            r"\bbi\s+analyst\b",
+            r"\bbusiness\s+intelligence\s+analyst\b",
+            r"\breporting\s+analyst\b",
+            r"\bpower\s*bi\s+(?:analyst|developer)\b",
+            r"\banalytics\b",
+            r"\breporting\b",
+            r"\bdashboards?\b",
+        ],
+        "skills": [
+            "SQL",
+            "Excel",
+            "Power BI",
+            "Tableau",
+            "Dashboard",
+            "MIS Reporting",
+            "KPI",
+            "Data Analysis",
+            "Data Cleaning",
+            "Power Query",
+            "DAX",
+        ],
+        "default_must_have": ["SQL", "Excel", "Data Analysis", "Data Visualization", "Reporting"],
+        "default_core_groups": {
+            "querying": ["SQL"],
+            "spreadsheet": ["Excel", "Advanced Excel"],
+            "bi_tool": ["Power BI", "Tableau", "Looker"],
+            "reporting": ["MIS Reporting", "Dashboard", "KPI", "Business Reporting", "Reporting"],
+        },
+        "default_nice_to_have": [
+            "Power BI",
+            "Tableau",
+            "Power Query",
+            "DAX",
+            "Python",
+            "Pandas",
+            "Statistics",
+            "Data Cleaning",
+            "KPI",
+            "MIS Reporting",
+            "Business Reporting",
+        ],
         "core_groups": {
             "querying": ["SQL"],
             "spreadsheet": ["Excel", "Advanced Excel"],
@@ -95,8 +137,46 @@ ROLE_FAMILIES = {
         },
     },
     "salesforce_crm": {
-        "patterns": [r"\bsalesforce\b", r"\bsfdc\b", r"\bapex\b", r"\blwc\b", r"\bvisualforce\b"],
-        "skills": ["Salesforce", "Salesforce Development", "Apex", "Lightning Web Components", "SOQL", "Salesforce Flow", "Sales Cloud", "Service Cloud"],
+        "patterns": [
+            r"\bsalesforce\b",
+            r"\bsfdc\b",
+            r"\bforce\.com\b",
+            r"\bapex\b",
+            r"\blwc\b",
+            r"\blightning\s+web\s+components?\b",
+            r"\bvisualforce\b",
+            r"\bsalesforce\s+(?:developer|development|engineer|consultant)\b",
+        ],
+        "skills": [
+            "Salesforce",
+            "Salesforce Development",
+            "Apex",
+            "Lightning Web Components",
+            "SOQL",
+            "Salesforce Flow",
+            "Sales Cloud",
+            "Service Cloud",
+        ],
+        "default_must_have": ["Salesforce", "Salesforce Development", "Apex", "SOQL", "Lightning Web Components"],
+        "default_core_groups": {
+            "platform": ["Salesforce"],
+            "programming": ["Apex", "SOQL"],
+            "ui": ["Lightning Web Components", "Aura Components", "Visualforce"],
+        },
+        "default_nice_to_have": [
+            "Salesforce Flow",
+            "Sales Cloud",
+            "Service Cloud",
+            "Experience Cloud",
+            "Salesforce CPQ",
+            "Aura Components",
+            "Visualforce",
+            "JavaScript",
+            "REST API",
+            "Salesforce Admin",
+            "Data Loader",
+            "SFDX",
+        ],
         "core_groups": {
             "platform": ["Salesforce"],
             "programming": ["Apex", "SOQL"],
@@ -203,6 +283,18 @@ def role_family_core_groups(role_family):
     return dict((ROLE_FAMILIES.get(role_family) or {}).get("core_groups") or {})
 
 
+def role_family_default_must_have(role_family):
+    return normalize_skill_list((ROLE_FAMILIES.get(role_family) or {}).get("default_must_have") or [])
+
+
+def role_family_default_core_groups(role_family):
+    return dict((ROLE_FAMILIES.get(role_family) or {}).get("default_core_groups") or {})
+
+
+def role_family_default_nice_to_have(role_family):
+    return normalize_skill_list((ROLE_FAMILIES.get(role_family) or {}).get("default_nice_to_have") or [])
+
+
 def detect_role_family(text, skills=None):
     combined = f"{text or ''} {' '.join(str(item) for item in skills or [])}".lower()
     best_family = "other"
@@ -242,6 +334,10 @@ def dynamic_core_groups(role_family, jd_skills=None, jd_text=""):
                 mentions.append(skill)
         if mentions:
             selected[group] = normalize_skill_list(mentions)
+
+    default_groups = role_family_default_core_groups(role_family)
+    if default_groups and len(selected) < 3:
+        return default_groups
 
     if not selected and jd_skill_list:
         selected["jd_required_skills"] = jd_skill_list[:8]

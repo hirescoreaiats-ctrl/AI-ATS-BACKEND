@@ -11,15 +11,17 @@ import logging
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import tempfile
 from pathlib import Path
 from datetime import datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 import requests
 from sqlalchemy import func
+from cryptography.fernet import Fernet, InvalidToken
 
-from backend.jd_engine import extract_structured_jd, normalize_jd_skills
+from backend.jd_engine import normalize_jd_skills
 from backend.extractor import extract_text_from_docx, extract_text_from_pdf, normalize_extracted_text
 from backend.database import SessionLocal
 from backend.models import Assessment, CandidateAssessment, CandidateActivity, CandidateNote, CandidateStageHistory, CandidateTag, Interview, Job, Resume, User
@@ -28,12 +30,13 @@ from backend.experience_engine import process_experience
 from backend.services.candidate_intelligence import apply_resume_intelligence_fields, resume_intelligence_payload
 from backend.services.explanation_service import generate_recruiter_explanation
 from backend.services.experience_relevance import estimate_relevant_experience_v2
+from backend.services.jd_enrichment import enrich_jd_for_scoring
 from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.parsing_service import parse_resume_enterprise
 from backend.services.pipeline import analyze_resume_for_job
 from backend.services.scoring_service import score_candidate
 from backend.services.semantic_service import cosine_similarity_cached
-from backend.services.storage import download_supabase_file, is_supabase_uri, persist_resume_file
+from backend.services.storage import download_stored_file, is_remote_storage_uri, persist_resume_file
 from backend.services.sourcing import (
     TRACKED_APPLICATION_SOURCES,
     build_apply_links,
@@ -41,6 +44,7 @@ from backend.services.sourcing import (
     ensure_generated_sourcing_content,
     generate_ai_sourcing_posts,
     normalize_application_source,
+    resolve_public_base_url,
     resolve_job_identifier,
     sourcing_payload,
 )
@@ -828,26 +832,104 @@ def _candidate_recruiter_trust(candidate: Resume, job: Job | None = None):
     confidence = candidate.confidence_score or 0
     experience_meta = _candidate_experience_meta(candidate)
     experience_label = _format_candidate_experience(experience_meta)
+    intelligence = resume_intelligence_payload(candidate)
+
+    def _num(value):
+        try:
+            number = float(value)
+            return number if number >= 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    def _human_label(value):
+        return str(value or "").replace("_", " ").strip()
+
+    def _as_list(value):
+        if isinstance(value, list):
+            return value
+        if value in (None, ""):
+            return []
+        return [value]
+
+    matched_evidence = [
+        item for item in intelligence.get("matched_skill_evidence", [])
+        if isinstance(item, dict) and item.get("skill")
+    ]
+    weak_skills = [
+        item for item in intelligence.get("missing_or_weak_skills", [])
+        if isinstance(item, dict) and item.get("skill")
+    ]
+    relevant_years = _num(intelligence.get("relevant_experience_years"))
+    total_years = _num(candidate.total_experience_years)
+    professional_years = _num(intelligence.get("professional_role_experience_years"))
+    domain_years = _num(intelligence.get("domain_specific_experience_years"))
+    training_exposure = _num(intelligence.get("training_or_certification_exposure")) or 0
+    project_exposure = _num(intelligence.get("project_only_exposure")) or 0
+    target_alignment = _human_label(intelligence.get("target_role_alignment"))
+    most_relevant_title = intelligence.get("most_relevant_title")
+    work_evidence = intelligence.get("jd_aligned_work_evidence") or []
+    project_evidence = intelligence.get("jd_aligned_project_evidence") or []
+    parser_flags = _as_list(intelligence.get("parser_quality_flags"))
+    risk_flags = _as_list(intelligence.get("risk_flags"))
 
     evidence = []
-    if matched:
+    if matched_evidence:
+        evidence_bits = []
+        for item in matched_evidence[:6]:
+            level = _human_label(item.get("evidence_level") or item.get("status"))
+            evidence_bits.append(f"{item.get('skill')} ({level or 'resume evidence'})")
+        evidence.append(f"Matched skills with evidence: {', '.join(evidence_bits)}.")
+    elif matched:
         evidence.append(f"Matched skills: {', '.join(matched[:8])}.")
-    if experience_label != "Needs validation":
-        evidence.append(f"JD-related experience: {experience_label}.")
+
+    if relevant_years is not None:
+        exp_text = f"{relevant_years:g} years JD-related"
+        if total_years is not None and abs(total_years - relevant_years) > 0.25:
+            exp_text += f" ({total_years:g} total)"
+        if professional_years is not None and professional_years < relevant_years:
+            exp_text += f"; {professional_years:g} years professional evidence"
+        if training_exposure or project_exposure:
+            exp_text += "; includes training/project-only exposure"
+        if target_alignment:
+            exp_text += f"; target alignment: {target_alignment}"
+        evidence.append(f"Experience estimate: {exp_text}.")
+    elif experience_label != "Needs validation":
+        evidence.append(f"Experience estimate needs JD validation: {experience_label}.")
+
+    if work_evidence:
+        evidence.append(f"JD-aligned work evidence found in {len(work_evidence)} role section(s).")
+    if project_evidence:
+        evidence.append(f"JD-aligned project evidence found in {len(project_evidence)} project(s).")
     if candidate.last_company_name:
         evidence.append(f"Recent company: {candidate.last_company_name}.")
-    if candidate.designation:
-        evidence.append(f"Current/target role signal: {candidate.designation}.")
+    if candidate.designation or most_relevant_title:
+        if most_relevant_title and most_relevant_title != candidate.designation:
+            evidence.append(f"Role signal: current title {candidate.designation or 'not listed'}; most relevant title {most_relevant_title}.")
+        else:
+            evidence.append(f"Role signal: {candidate.designation or most_relevant_title}.")
     if candidate.ranking_reason:
         evidence.append(candidate.ranking_reason)
 
     risk_points = []
-    if missing:
+    if weak_skills:
+        weak_bits = []
+        for item in weak_skills[:6]:
+            level = _human_label(item.get("evidence_level") or item.get("status") or "missing")
+            weak_bits.append(f"{item.get('skill')} ({level})")
+        risk_points.append(f"Missing or weak skills: {', '.join(weak_bits)}.")
+    elif missing:
         risk_points.append(f"Missing or weak skills: {', '.join(missing[:8])}.")
     if required and skill_match < 60:
         risk_points.append("Mandatory skill coverage needs manual validation.")
     if confidence and confidence < 55:
         risk_points.append("AI confidence is moderate/low, review resume evidence before client submission.")
+    review_flags = [
+        _human_label(flag.get("flag") if isinstance(flag, dict) else flag)
+        for flag in parser_flags + risk_flags
+    ]
+    review_flags = [flag for flag in review_flags if flag]
+    if review_flags:
+        risk_points.append(f"Parser/review flags: {', '.join(review_flags[:5])}.")
     if not candidate.email and not candidate.form_email:
         risk_points.append("Candidate email is missing.")
 
@@ -1006,6 +1088,8 @@ def _candidate_resume_file(candidate: Resume):
 
     stored_path = getattr(candidate, "resume_file_path", None)
     if stored_path:
+        if is_remote_storage_uri(stored_path):
+            return None
         safe_file = _safe_upload_file(Path(stored_path), upload_root)
         if safe_file:
             return safe_file
@@ -1075,6 +1159,118 @@ def _first_match(pattern: str, text: str) -> str:
     return match.group(1).strip(" :-\n\t") if match else ""
 
 
+JD_LABELS = [
+    "job title",
+    "role",
+    "position",
+    "company",
+    "company name",
+    "department",
+    "team",
+    "function",
+    "location",
+    "job location",
+    "work mode",
+    "experience",
+    "experience required",
+    "required experience",
+    "employment type",
+    "job type",
+    "salary",
+    "salary range",
+    "ctc",
+    "compensation",
+    "package",
+    "hiring manager",
+    "application deadline",
+    "about the role",
+    "responsibilities",
+    "key responsibilities",
+    "requirements",
+    "skills",
+    "qualification",
+    "qualifications",
+]
+
+
+def _compact_jd_value(value: str, max_len: int = 90) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" :-\t\r\n|,;")
+    if not text:
+        return ""
+    stop_pattern = "|".join(re.escape(label) for label in JD_LABELS)
+    text = re.split(rf"\s*(?:\||;|,)?\s+(?:{stop_pattern})\s*[:\-]", text, maxsplit=1, flags=re.I)[0]
+    return text.strip(" :-\t\r\n|,;")[:max_len].strip()
+
+
+def _label_value(text: str, labels: list[str], max_len: int = 90) -> str:
+    if not text:
+        return ""
+
+    label_pattern = "|".join(re.escape(label) for label in labels)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in re.split(r"[\r\n]+", text)]
+    lines = [line for line in lines if line]
+
+    for line in lines:
+        match = re.match(rf"^(?:{label_pattern})\s*[:\-]\s*(.+)$", line, flags=re.I)
+        if match:
+            return _compact_jd_value(match.group(1), max_len)
+
+    for index, line in enumerate(lines[:-1]):
+        if re.fullmatch(rf"(?:{label_pattern})\s*[:\-]?", line, flags=re.I):
+            return _compact_jd_value(lines[index + 1], max_len)
+
+    match = re.search(rf"(?:^|\s)(?:{label_pattern})\s*[:\-]\s*([^\n\r]{{2,{max_len}}})", text, flags=re.I)
+    return _compact_jd_value(match.group(1), max_len) if match else ""
+
+
+def _is_bad_autofill_title(value: str) -> bool:
+    text = _compact_jd_value(value, 90)
+    lowered = text.lower()
+    if not text or len(text) < 3:
+        return True
+    if len(text.split()) > 8:
+        return True
+    if re.search(r"\b(?:experience|years?|minimum|min|required|employment|full[-\s]?time|part[-\s]?time|location|salary|ctc|package)\b", lowered):
+        return True
+    if re.search(r"[.!?]$", text):
+        return True
+    return False
+
+
+def _clean_autofill_title(*values: str) -> str:
+    for value in values:
+        clean = _compact_jd_value(value, 90)
+        if not _is_bad_autofill_title(clean):
+            return clean
+    return ""
+
+
+def _format_experience_required(value: str, fallback_years: float | int = 0) -> str:
+    text = _compact_jd_value(value, 80)
+    text = re.sub(r"^(?:required|minimum|min|experience|required experience)\s*[:\-]?\s*", "", text, flags=re.I).strip()
+
+    range_match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:-|\u2013|\u2014|to)\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)?\b", text, flags=re.I)
+    if range_match:
+        return f"{range_match.group(1)}-{range_match.group(2)} Years"
+
+    plus_match = re.search(r"\b(\d+(?:\.\d+)?)\s*\+\s*(?:years?|yrs?)?\b", text, flags=re.I)
+    if plus_match:
+        return f"{plus_match.group(1)}+ Years"
+
+    min_match = re.search(r"\b(?:minimum|min|at least|required)\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b", text, flags=re.I)
+    if min_match:
+        return f"{min_match.group(1)}+ Years"
+
+    years_match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b", text, flags=re.I)
+    if years_match:
+        return f"{years_match.group(1)}+ Years"
+
+    if fallback_years:
+        years = int(fallback_years) if float(fallback_years).is_integer() else fallback_years
+        return f"{years}+ Years"
+    return ""
+
+
 def _infer_work_mode(text: str) -> str:
     value = text or ""
     if re.search(r"\bremote\b|work\s+from\s+home|\bwfh\b", value, re.I):
@@ -1100,15 +1296,12 @@ def _infer_job_type(text: str) -> str:
 
 
 def _infer_salary(text: str) -> str:
-    return _first_match(
-        r"(?:salary|ctc|compensation|package)\s*[:\-]?\s*([^\n\r]{2,80})",
-        text,
-    )
+    return _label_value(text, ["Salary", "Salary Range", "CTC", "Compensation", "Package"], 80)
 
 
 def _infer_department(role: str, text: str) -> str:
-    explicit = _first_match(r"(?:department|function|team)\s*[:\-]?\s*([^\n\r]{2,60})", text)
-    if explicit:
+    explicit = _label_value(text, ["Department", "Function", "Team"], 60)
+    if explicit and len(explicit.strip(" .")) > 1 and not re.fullmatch(r"[a-z]\.?", explicit, flags=re.I):
         return explicit
     value = f"{role} {text}".lower()
     if any(token in value for token in ["developer", "engineer", "python", "java", "react", "backend", "frontend"]):
@@ -1146,25 +1339,30 @@ def _parse_jd_upload_text(filename: str, contents: bytes) -> str:
 
 
 def _jd_autofill_payload(jd_text: str) -> dict:
-    structured = extract_structured_jd(jd_text)
-    role = structured.get("role") or _first_match(r"(?:job\s*title|role|position)\s*[:\-]?\s*([^\n\r]{2,80})", jd_text)
-    location = structured.get("location") or _first_match(r"(?:location|job\s*location)\s*[:\-]?\s*([^\n\r]{2,80})", jd_text)
-    experience_years = structured.get("min_experience_years") or 0
-    explicit_experience = _first_match(
-        r"(?:experience|exp)\s*[:\-]?\s*([^\n\r]{2,60})",
-        jd_text,
-    )
-    experience_required = explicit_experience or (f"{experience_years}+ Years" if experience_years else "")
+    role_hint = _clean_autofill_title(_label_value(jd_text, ["Job Title", "Role", "Position"], 90))
+    enrichment = enrich_jd_for_scoring(jd_text, {"job_title": role_hint})
+    structured = enrichment.get("structured_jd") or {}
+    role = _clean_autofill_title(enrichment.get("role"), structured.get("role"), role_hint)
+    location = _compact_jd_value(structured.get("location") or _label_value(jd_text, ["Location", "Job Location"], 90), 90)
+    work_mode = _infer_work_mode(f"{location} {jd_text}")
+    if location and work_mode:
+        location = re.sub(rf"\s*/?\s*{re.escape(work_mode)}\s*$", "", location, flags=re.I).strip(" /,-")
+    experience_years = enrichment.get("min_experience_years") or 0
+    explicit_experience = _label_value(jd_text, ["Experience", "Experience Required", "Required Experience", "Exp"], 80)
+    experience_required = _format_experience_required(explicit_experience or jd_text, experience_years)
 
     return {
         "job_title": role,
         "department": _infer_department(role, jd_text),
         "location": location,
-        "work_mode": _infer_work_mode(jd_text),
+        "work_mode": work_mode,
         "job_type": _infer_job_type(jd_text),
         "salary_range": _infer_salary(jd_text),
         "experience_required": experience_required,
-        "required_skills": ", ".join(structured.get("required_skills") or []),
+        "required_skills": ", ".join(enrichment.get("required_skills") or []),
+        "preferred_skills": ", ".join(enrichment.get("preferred_skills") or []),
+        "role_family": enrichment.get("role_family") or "",
+        "seniority_level": enrichment.get("seniority_level") or "",
     }
 
 
@@ -1205,9 +1403,16 @@ def create_job(job: JobCreate):
     db = SessionLocal()
 
     try:
-        structured_jd = extract_structured_jd(job.jd_text)
+        enrichment = enrich_jd_for_scoring(
+            job.jd_text,
+            {
+                "job_title": job.job_title,
+                "role": job.job_title,
+                "experience_required": job.experience_required,
+            },
+        )
 
-        edu = structured_jd.get("education")
+        edu = enrichment.get("education")
         if isinstance(edu, list):
             edu = ",".join(edu)
 
@@ -1233,10 +1438,10 @@ def create_job(job: JobCreate):
             public_apply_enabled=job.public_apply_enabled,
             source_tracking_enabled=job.source_tracking_enabled,
 
-            role=structured_jd.get("role"),
-            required_skills=",".join(structured_jd.get("required_skills", [])),
-            preferred_skills=",".join(structured_jd.get("preferred_skills", [])),
-            min_experience_years=structured_jd.get("min_experience_years"),
+            role=enrichment.get("role") or job.job_title,
+            required_skills=",".join(enrichment.get("required_skills", [])),
+            preferred_skills=",".join(enrichment.get("preferred_skills", [])),
+            min_experience_years=enrichment.get("min_experience_years"),
             education=edu
         )
 
@@ -1342,18 +1547,20 @@ def generate_job_ai_posts(job_id: str):
         job.generated_linkedin_post = posts.get("linkedin") or job.generated_linkedin_post
         job.generated_whatsapp_message = posts.get("whatsapp") or job.generated_whatsapp_message
         job.generated_naukri_text = posts.get("naukri") or job.generated_naukri_text
+        job.generated_generic_post = posts.get("generic") or getattr(job, "generated_generic_post", None)
         db.commit()
         db.refresh(job)
 
         return {
             "job_id": job.id,
             "generated": bool(payload.get("generated")),
+            "cached": bool(payload.get("cached")),
             "apply_links": payload.get("apply_links") or build_apply_links(job, db),
             "generated_posts": {
                 "linkedin": job.generated_linkedin_post,
                 "whatsapp": job.generated_whatsapp_message,
                 "naukri": job.generated_naukri_text,
-                "generic": posts.get("generic") or "",
+                "generic": getattr(job, "generated_generic_post", None) or posts.get("generic") or "",
             },
         }
     finally:
@@ -1758,11 +1965,11 @@ def download_resume(resume_id: str):
             raise HTTPException(status_code=404, detail="Candidate not found")
 
         stored_path = candidate.resume_file_path or ""
-        if is_supabase_uri(stored_path):
+        if is_remote_storage_uri(stored_path):
             filename = candidate.resume_original_filename or "resume"
             db.commit()
             return StreamingResponse(
-                io.BytesIO(download_supabase_file(stored_path)),
+                io.BytesIO(download_stored_file(stored_path)),
                 media_type=candidate.resume_content_type or "application/octet-stream",
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
@@ -1911,7 +2118,7 @@ def _extract_folder_resume_text(file_path: Path) -> str:
     return ""
 
 
-def _copy_folder_resume_to_uploads(source_path: Path, job_id: str) -> Path:
+def _copy_folder_resume_to_uploads(source_path: Path, job_id: str, original_filename: str | None = None) -> Path:
     settings = get_settings()
     upload_root = Path(settings.upload_dir).resolve()
     target_dir = upload_root / "resume_folders" / job_id
@@ -1919,20 +2126,43 @@ def _copy_folder_resume_to_uploads(source_path: Path, job_id: str) -> Path:
     fingerprint = hashlib.sha256(
         f"{source_path.resolve()}|{source_path.stat().st_mtime_ns}|{source_path.stat().st_size}".encode()
     ).hexdigest()[:16]
-    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", source_path.name).strip(" .") or f"{fingerprint}{source_path.suffix}"
+    display_name = Path(original_filename or source_path.name).name
+    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", display_name).strip(" .") or f"{fingerprint}{source_path.suffix}"
     target_path = target_dir / f"{fingerprint}_{safe_name}"
     if not target_path.exists():
         shutil.copy2(source_path, target_path)
     return target_path
 
 
-def _persist_folder_resume(source_path: Path, job_id: str) -> str:
-    stored_path = _copy_folder_resume_to_uploads(source_path, job_id)
-    content_type = mimetypes.guess_type(str(source_path))[0] or "application/octet-stream"
-    return persist_resume_file(str(stored_path), source_path.name, content_type, job_id)
+def _persist_folder_resume(source_path: Path, job_id: str, original_filename: str | None = None) -> str:
+    stored_path = _copy_folder_resume_to_uploads(source_path, job_id, original_filename)
+    display_name = Path(original_filename or source_path.name).name
+    content_type = mimetypes.guess_type(display_name)[0] or mimetypes.guess_type(str(source_path))[0] or "application/octet-stream"
+    return persist_resume_file(str(stored_path), display_name, content_type, job_id)
 
 
-def _save_folder_resume_application(db, job: Job, source_path: Path) -> tuple[bool, str]:
+def _find_existing_folder_resume(db, job_id: str, duplicate_key: str, email: str = "", phone: str = "") -> Resume | None:
+    existing = db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == duplicate_key).first()
+    if existing:
+        return existing
+
+    email = (email or "").strip().lower()
+    if email:
+        existing = db.query(Resume).filter(Resume.job_id == job_id, func.lower(Resume.email) == email).first()
+        if existing:
+            return existing
+
+    phone = (phone or "").strip()
+    if phone:
+        existing = db.query(Resume).filter(Resume.job_id == job_id, Resume.phone == phone).first()
+        if existing:
+            return existing
+
+    return None
+
+
+def _save_folder_resume_application(db, job: Job, source_path: Path, original_filename: str | None = None) -> tuple[bool, str]:
+    display_name = Path(original_filename or source_path.name).name
     text = _extract_folder_resume_text(source_path)
     if not text.strip():
         return False, "text extraction failed"
@@ -1949,13 +2179,13 @@ def _save_folder_resume_application(db, job: Job, source_path: Path) -> tuple[bo
     candidate_email = (parsed.get("email") or "").strip().lower()
     candidate_phone = (parsed.get("phone") or "").strip()
     file_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
-    duplicate_key_source = f"{job.id}|{candidate_email or file_hash}|{candidate_phone or file_hash}"
+    duplicate_key_source = f"{job.id}|folder_file|{file_hash}"
     duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
-    duplicate = db.query(Resume).filter(Resume.job_id == job.id, Resume.duplicate_key == duplicate_key).first()
+    duplicate = _find_existing_folder_resume(db, job.id, duplicate_key, candidate_email, candidate_phone)
     if duplicate:
         return False, "duplicate skipped"
 
-    stored_path = _persist_folder_resume(source_path, job.id)
+    stored_path = _persist_folder_resume(source_path, job.id, display_name)
     score = parsed.get("rank_score") or parsed.get("final_score") or 0
     shortlist_threshold = job.shortlist_score or 70
     recommendation = parsed.get("recommendation")
@@ -2002,8 +2232,8 @@ def _save_folder_resume_application(db, job: Job, source_path: Path) -> tuple[bo
         skill_match_percent=parsed.get("skill_match_percent"),
         resume_text=text[:12000],
         resume_file_path=str(stored_path),
-        resume_original_filename=source_path.name,
-        resume_content_type=mimetypes.guess_type(str(source_path))[0] or "application/octet-stream",
+        resume_original_filename=display_name,
+        resume_content_type=mimetypes.guess_type(display_name)[0] or mimetypes.guess_type(str(source_path))[0] or "application/octet-stream",
         explanation=_text_value(parsed.get("ai_recruiter_explanation")),
         application_source="folder",
         shortlisted=ai_shortlisted,
@@ -2077,6 +2307,83 @@ def sync_resume_folder(job_id: str):
             "messages": messages[:50],
         }
     finally:
+        db.close()
+
+
+@router.post("/jobs/{job_id}/resume-folder/upload", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Select at least one resume file.")
+
+    settings = get_settings()
+    allowed = {".pdf", ".docx", ".txt"}
+    max_file_size = settings.upload_bytes_limit
+    db = SessionLocal()
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"resume_folder_{job_id}_"))
+
+    try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        imported = 0
+        skipped = 0
+        failed = 0
+        scanned = 0
+        messages = []
+
+        for upload in files:
+            original_name = Path(upload.filename or "resume").name
+            suffix = Path(original_name).suffix.lower()
+            if suffix not in allowed:
+                skipped += 1
+                messages.append({"file": original_name, "status": "unsupported file type"})
+                continue
+
+            contents = await upload.read()
+            scanned += 1
+            if not contents:
+                skipped += 1
+                messages.append({"file": original_name, "status": "empty file skipped"})
+                continue
+            if len(contents) > max_file_size:
+                skipped += 1
+                messages.append({"file": original_name, "status": f"file exceeds {settings.max_upload_mb}MB limit"})
+                continue
+
+            safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", original_name).strip(" .") or f"resume{suffix}"
+            fingerprint = hashlib.sha256(contents).hexdigest()[:16]
+            temp_path = temp_dir / f"{fingerprint}_{safe_name}"
+            temp_path.write_bytes(contents)
+
+            try:
+                created, reason = _save_folder_resume_application(db, job, temp_path, original_filename=original_name)
+                if created:
+                    imported += 1
+                else:
+                    skipped += 1
+                messages.append({"file": original_name, "status": reason})
+            except Exception as exc:
+                failed += 1
+                logger.exception("Resume folder upload import failed for %s", original_name)
+                messages.append({"file": original_name, "status": f"failed: {exc}"})
+
+        db.commit()
+        return {
+            "job_id": job.id,
+            "scanned": scanned,
+            "imported": imported,
+            "skipped": skipped,
+            "failed": failed,
+            "messages": messages[:50],
+        }
+    finally:
+        for upload in files:
+            try:
+                await upload.close()
+            except Exception:
+                pass
+        shutil.rmtree(temp_dir, ignore_errors=True)
         db.close()
 
 
@@ -3644,10 +3951,10 @@ FULL STORED RESUME TEXT
         db.close()
 
 
-def _candidate_email_body(name: str, job_title: str, company_name: str | None, hiring_manager: str | None) -> str:
+def _fallback_candidate_email_body(name: str, job_title: str, company_name: str | None, hiring_manager: str | None) -> str:
     company = company_name or "our company"
     sender = hiring_manager or "Recruiting Team"
-    fallback = (
+    return (
         f"Hi {name or 'Candidate'},\n\n"
         f"Thank you for applying for the {job_title or 'open'} role at {company}. "
         "We reviewed your profile and would like to move you to the next step in our hiring process.\n\n"
@@ -3657,6 +3964,12 @@ def _candidate_email_body(name: str, job_title: str, company_name: str | None, h
         "If you are interested, we will share the next steps and schedule details shortly.\n\n"
         f"Best regards,\n{sender}"
     )
+
+
+def _candidate_email_body(name: str, job_title: str, company_name: str | None, hiring_manager: str | None) -> str:
+    company = company_name or "our company"
+    sender = hiring_manager or "Recruiting Team"
+    fallback = _fallback_candidate_email_body(name, job_title, company_name, hiring_manager)
 
     if not client:
         return fallback
@@ -3684,7 +3997,276 @@ Keep it warm, concise, and clear.
         return fallback
 
 
-def _mark_mail_sent(job_id: str | None, email: str, db):
+def _send_system_email(to_email: str, subject: str, body: str) -> dict:
+    resend_key = os.getenv("RESEND_API_KEY")
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    sender = os.getenv("RESEND_FROM") or os.getenv("SMTP_FROM") or smtp_user
+
+    if resend_key:
+        res = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": sender or "onboarding@resend.dev",
+                "to": [to_email],
+                "subject": subject,
+                "html": f"<pre style='font-family:Arial,sans-serif;white-space:pre-wrap'>{body}</pre>",
+            },
+            timeout=20,
+        )
+        if res.status_code >= 300:
+            raise HTTPException(status_code=502, detail=f"Verification email failed: {res.text}")
+        return {"provider": "resend"}
+
+    if smtp_host and smtp_user and smtp_password and sender:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = sender
+        msg["To"] = to_email
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+        return {"provider": "smtp"}
+
+    raise HTTPException(
+        status_code=500,
+        detail="Email provider is not configured. Set RESEND_API_KEY/RESEND_FROM or SMTP credentials before verifying business sender mail.",
+    )
+
+
+def _smtp_cipher() -> Fernet:
+    key = base64.urlsafe_b64encode(hashlib.sha256(get_settings().jwt_secret.encode()).digest())
+    return Fernet(key)
+
+
+def _encrypt_smtp_password(value: str) -> str:
+    return _smtp_cipher().encrypt((value or "").encode()).decode()
+
+
+def _decrypt_smtp_password(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return _smtp_cipher().decrypt(value.encode()).decode()
+    except InvalidToken:
+        return ""
+
+
+def _send_smtp_message(
+    smtp_host: str,
+    smtp_port: int,
+    smtp_username: str,
+    smtp_password: str,
+    from_email: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    use_tls: bool = True,
+) -> None:
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+
+    with smtplib.SMTP(smtp_host, int(smtp_port or 587), timeout=20) as server:
+        if use_tls:
+            server.starttls()
+        server.login(smtp_username, smtp_password)
+        server.send_message(msg)
+
+
+def _send_with_user_smtp(user: User, to_email: str, subject: str, body: str) -> dict | None:
+    if not user or not user.outreach_sender_verified_at:
+        return None
+    if not (user.outreach_smtp_host and user.outreach_smtp_username and user.outreach_smtp_password_enc):
+        return None
+
+    password = _decrypt_smtp_password(user.outreach_smtp_password_enc)
+    if not password:
+        return None
+
+    sender_email = user.outreach_sender_email or user.outreach_smtp_username
+    _send_smtp_message(
+        user.outreach_smtp_host,
+        user.outreach_smtp_port or 587,
+        user.outreach_smtp_username,
+        password,
+        sender_email,
+        to_email,
+        subject,
+        body,
+        user.outreach_smtp_use_tls is not False,
+    )
+    return {"provider": "user_smtp", "sender_email": sender_email}
+
+
+def _is_verified_business_sender(db, sender_email: str) -> bool:
+    email = (sender_email or "").strip().lower()
+    if not email:
+        return False
+    user = db.query(User).filter(User.outreach_sender_email == email).first()
+    return bool(user and user.outreach_sender_verified_at)
+
+
+@router.post("/outreach-sender/configure-smtp", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def configure_outreach_sender_smtp(request: Request, data: dict = Body(...)):
+    sender_email = (data.get("email") or "").strip().lower()
+    smtp_host = (data.get("smtp_host") or "").strip()
+    smtp_port = int(data.get("smtp_port") or 587)
+    smtp_username = (data.get("smtp_username") or sender_email).strip()
+    smtp_password = (data.get("smtp_password") or "").strip()
+    use_tls = data.get("use_tls")
+    use_tls = True if use_tls is None else bool(use_tls)
+
+    if not sender_email or "@" not in sender_email:
+        raise HTTPException(status_code=400, detail="Valid company sender email is required")
+    if not smtp_host:
+        raise HTTPException(status_code=400, detail="SMTP host is required")
+    if not smtp_username:
+        raise HTTPException(status_code=400, detail="SMTP username is required")
+    if not smtp_password:
+        raise HTTPException(status_code=400, detail="SMTP password or app password is required")
+
+    db = SessionLocal()
+    try:
+        user = _user_from_request_token(request, db)
+        if not user:
+            raise HTTPException(status_code=401, detail="Login required to configure SMTP sender")
+
+        token = secrets.token_urlsafe(32)
+        user.outreach_sender_email = sender_email
+        user.outreach_sender_verified_at = None
+        user.outreach_sender_verification_token = token
+        user.outreach_sender_verification_expires_at = datetime.utcnow() + timedelta(hours=24)
+        user.outreach_smtp_host = smtp_host
+        user.outreach_smtp_port = smtp_port
+        user.outreach_smtp_username = smtp_username
+        user.outreach_smtp_password_enc = _encrypt_smtp_password(smtp_password)
+        user.outreach_smtp_use_tls = use_tls
+        db.commit()
+
+        verify_url = f"{resolve_public_base_url()}/outreach-sender/verify?token={urlencode({'t': token})[2:]}"
+        body = (
+            f"Hi {user.name or 'Recruiter'},\n\n"
+            f"We received a request to connect {sender_email} as your HireScore AI outreach sender.\n\n"
+            f"Click to authorize this sender:\n{verify_url}\n\n"
+            "This link expires in 24 hours.\n\n"
+            "HireScore AI"
+        )
+        _send_smtp_message(smtp_host, smtp_port, smtp_username, smtp_password, sender_email, sender_email, "Authorize HireScore AI business sender", body, use_tls)
+        return {"message": "Authorization email sent", "email": sender_email}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"SMTP authorization mail failed: {exc}")
+    finally:
+        db.close()
+
+
+@router.post("/outreach-sender/send-verification", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def send_outreach_sender_verification(request: Request, data: dict = Body(...)):
+    sender_email = (data.get("email") or "").strip().lower()
+    if not sender_email or "@" not in sender_email:
+        raise HTTPException(status_code=400, detail="Valid company sender email is required")
+
+    db = SessionLocal()
+    try:
+        user = _user_from_request_token(request, db)
+        if not user:
+            raise HTTPException(status_code=401, detail="Login required to verify sender email")
+
+        token = secrets.token_urlsafe(32)
+        user.outreach_sender_email = sender_email
+        user.outreach_sender_verified_at = None
+        user.outreach_sender_verification_token = token
+        user.outreach_sender_verification_expires_at = datetime.utcnow() + timedelta(hours=24)
+        db.commit()
+
+        verify_url = f"{resolve_public_base_url()}/outreach-sender/verify?token={urlencode({'t': token})[2:]}"
+        body = (
+            f"Hi {user.name or 'Recruiter'},\n\n"
+            f"Please verify that you control this outreach sender email: {sender_email}\n\n"
+            f"Verify sender:\n{verify_url}\n\n"
+            "If you did not request this, ignore this email.\n\n"
+            "HireScore AI"
+        )
+        provider = _send_system_email(sender_email, "Verify your HireScore AI outreach sender", body)
+        return {"message": "Verification email sent", "email": sender_email, **provider}
+    finally:
+        db.close()
+
+
+@router.get("/outreach-sender/verify")
+def verify_outreach_sender(token: str = Query(default=""), t: str = Query(default="")):
+    verification_token = token or t
+    if not verification_token:
+        raise HTTPException(status_code=400, detail="Verification token is required")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.outreach_sender_verification_token == verification_token).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Verification link is invalid")
+        if user.outreach_sender_verification_expires_at and user.outreach_sender_verification_expires_at < datetime.utcnow():
+            raise HTTPException(status_code=410, detail="Verification link has expired")
+
+        user.outreach_sender_verified_at = datetime.utcnow()
+        user.outreach_sender_verification_token = None
+        user.outreach_sender_verification_expires_at = None
+        db.commit()
+
+        frontend = get_settings().frontend_url.rstrip("/")
+        email = urlencode({"sender_verified": "1", "email": user.outreach_sender_email or ""})
+        return RedirectResponse(f"{frontend}/index.html?{email}")
+    finally:
+        db.close()
+
+
+@router.post("/mail-draft", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def generate_mail_draft(data: dict = Body(...)):
+    to_email = (data.get("email") or "").strip()
+    name = data.get("name") or "Candidate"
+    job_title = data.get("job_title") or "the role"
+    company_name = data.get("company_name")
+    hiring_manager = data.get("hiring_manager")
+
+    if to_email and "@" not in to_email:
+        raise HTTPException(status_code=400, detail="Candidate email is invalid")
+
+    subject = (data.get("subject") or f"{job_title} - Next Step").strip()
+    body = _candidate_email_body(name, job_title, company_name, hiring_manager)
+    return {
+        "subject": subject[:180],
+        "body": body,
+        "generated": bool(client),
+    }
+
+
+def _mark_mail_sent(job_id: str | None, email: str, db, candidate_id: str | None = None):
+    candidate = None
+    if candidate_id:
+        candidate = (
+            db.query(Resume)
+            .filter(Resume.id == candidate_id)
+            .filter(Resume.is_active == True)
+            .first()
+        )
+
+    if candidate:
+        candidate.mail_status = "Mail Sent"
+        candidate.response_status = candidate.response_status or "Pending"
+        candidate.status = "Communication"
+        candidate.stage = "communication"
+        db.commit()
+        return
+
     if not job_id or not email:
         return
 
@@ -4055,7 +4637,10 @@ def _get_or_create_assessment(job: Job, recruiter: User, db):
     duration_minutes = _assessment_duration_minutes()
     title = f"{job.job_title or job.role or 'Candidate'} Screening Test - {job.company_name or 'AI ATS'}"
     questions = _generate_assessment_questions(job, question_count)
-    form_data = _create_google_quiz_form(recruiter, title, questions, duration_minutes, db)
+    try:
+        form_data = _create_google_quiz_form(recruiter, title, questions, duration_minutes, db)
+    except Exception:
+        form_data = {"form_id": None, "form_url": None, "edit_url": None}
 
     assessment = Assessment(
         job_id=job.id,
@@ -4073,33 +4658,46 @@ def _get_or_create_assessment(job: Job, recruiter: User, db):
     return assessment, True
 
 
-def _assessment_email_body(candidate: Resume, job: Job, assessment: Assessment):
+def _assessment_test_url(candidate_test_id: str) -> str:
+    return f"{resolve_public_base_url()}/assessment-test/{candidate_test_id}"
+
+
+def _assessment_email_body(candidate: Resume, job: Job, assessment: Assessment, candidate_test: CandidateAssessment | None = None):
     name = candidate.full_name or candidate.form_full_name or "Candidate"
     company = job.company_name or "our company"
+    test_url = _assessment_test_url(candidate_test.id) if candidate_test else assessment.google_form_url
     return (
         f"Hi {name},\n\n"
         f"Thank you for confirming your interest in the {job.job_title or job.role or 'open'} role at {company}.\n\n"
-        f"Please complete this role-based screening test:\n{assessment.google_form_url}\n\n"
+        f"Please complete this role-based screening test:\n{test_url}\n\n"
         f"Test details:\n"
         f"- Questions: {assessment.question_count}\n"
         f"- Time limit: {assessment.duration_minutes} minutes\n"
         "- Use the same email address that received this invitation.\n"
-        "- Keep your camera/screen-proctoring setup ready if your organization uses a proctoring extension with Google Forms.\n\n"
+        "- Complete the test in one sitting and submit it before the deadline shared by the recruiter.\n\n"
         "Best regards,\nRecruiting Team"
     )
 
 
-def _send_assessment_email(recruiter: User, candidate: Resume, job: Job, assessment: Assessment, db):
+def _send_assessment_email(recruiter: User, candidate: Resume, job: Job, assessment: Assessment, db, candidate_test: CandidateAssessment | None = None):
     to_email = (candidate.email or candidate.form_email or "").strip()
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="Candidate email is missing or invalid.")
 
-    body = _assessment_email_body(candidate, job, assessment)
+    body = _assessment_email_body(candidate, job, assessment, candidate_test)
     subject = f"Screening test for {job.job_title or job.role or 'your application'}"
-    gmail_result = _send_with_recruiter_gmail(recruiter.email, to_email, subject, body, db)
+    smtp_result = _send_with_user_smtp(recruiter, to_email, subject, body)
+    if smtp_result:
+        return smtp_result
+
+    sender_email = recruiter.outreach_sender_email or recruiter.email
+    gmail_result = _send_with_recruiter_gmail(sender_email, to_email, subject, body, db)
     if gmail_result:
         return gmail_result
-    raise HTTPException(status_code=401, detail="Recruiter Gmail is not connected. Connect Gmail/Google before sending tests.")
+    raise HTTPException(
+        status_code=401,
+        detail="Recruiter sender is not connected. Connect business SMTP or Gmail/Google before sending tests.",
+    )
 
 
 def _parse_google_time(value: str | None):
@@ -4126,18 +4724,19 @@ def _extract_response_email(response: dict):
 
 
 def _sync_assessment_results_for_job(job_id: str, recruiter: User, db):
+    assessments = db.query(Assessment).filter(Assessment.job_id == job_id).all()
+    google_assessments = [assessment for assessment in assessments if assessment.google_form_id]
+    if not google_assessments:
+        return 0
+
     access_token = _refresh_google_token(recruiter, db)
     if not access_token:
-        raise HTTPException(status_code=401, detail="Connect Google again before syncing test results.")
+        raise HTTPException(status_code=401, detail="Connect Google again before syncing Google Forms test results.")
 
-    assessments = db.query(Assessment).filter(Assessment.job_id == job_id).all()
     updated = 0
     pass_percent = _assessment_pass_percent()
 
-    for assessment in assessments:
-        if not assessment.google_form_id:
-            continue
-
+    for assessment in google_assessments:
         res = requests.get(
             f"https://forms.googleapis.com/v1/forms/{assessment.google_form_id}/responses",
             headers={"Authorization": f"Bearer {access_token}"},
@@ -4318,33 +4917,173 @@ def send_assessment_test(request: Request, data: dict = Body(...)):
         ).first()
 
         if existing_send:
+            existing_url = _assessment_test_url(existing_send.id)
             return {
                 "message": "Test already sent to candidate",
                 "assessment_created": created,
                 "test_status": existing_send.status,
-                "form_url": assessment.google_form_url,
+                "form_url": existing_url,
+                "test_url": existing_url,
                 "edit_url": assessment.google_form_edit_url,
             }
-
-        _send_assessment_email(recruiter, candidate, job, assessment, db)
 
         candidate_test = CandidateAssessment(
             job_id=job.id,
             candidate_id=candidate.id,
             assessment_id=assessment.id,
             sent_to_email=(candidate.email or candidate.form_email or "").strip().lower(),
-            status="Test Sent",
+            status="Sending",
         )
         db.add(candidate_test)
+        db.flush()
+
+        try:
+            send_result = _send_assessment_email(recruiter, candidate, job, assessment, db, candidate_test)
+        except Exception:
+            db.rollback()
+            raise
+
+        candidate_test.status = "Test Sent"
         db.commit()
 
+        test_url = _assessment_test_url(candidate_test.id)
         return {
             "message": "Test sent successfully",
             "assessment_created": created,
             "test_status": "Test Sent",
-            "form_url": assessment.google_form_url,
+            "form_url": test_url,
+            "test_url": test_url,
             "edit_url": assessment.google_form_edit_url,
+            "provider": send_result.get("provider"),
+            "from": send_result.get("sender_email") or recruiter.outreach_sender_email or recruiter.email,
         }
+    finally:
+        db.close()
+
+
+def _load_assessment_bundle(db, candidate_test_id: str):
+    candidate_test = db.query(CandidateAssessment).filter(CandidateAssessment.id == candidate_test_id).first()
+    if not candidate_test:
+        raise HTTPException(status_code=404, detail="Assessment link is invalid")
+
+    assessment = db.query(Assessment).filter(Assessment.id == candidate_test.assessment_id).first()
+    candidate = db.query(Resume).filter(Resume.id == candidate_test.candidate_id).first()
+    job = db.query(Job).filter(Job.id == candidate_test.job_id).first()
+    if not assessment or not candidate or not job:
+        raise HTTPException(status_code=404, detail="Assessment details are missing")
+
+    try:
+        questions = json.loads(assessment.questions_json or "[]")
+    except Exception:
+        questions = []
+    if not questions:
+        questions = _fallback_assessment_questions(job, assessment.question_count or _assessment_question_count())
+
+    return candidate_test, assessment, candidate, job, questions
+
+
+@router.get("/assessment-test/{candidate_test_id}")
+def open_local_assessment(candidate_test_id: str):
+    db = SessionLocal()
+    try:
+        candidate_test, assessment, candidate, job, questions = _load_assessment_bundle(db, candidate_test_id)
+        if candidate_test.status == "Test Done":
+            return HTMLResponse(
+                "<!doctype html><html><head><title>Assessment submitted</title>"
+                "<style>body{font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;padding:40px}"
+                ".box{max-width:720px;margin:auto;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:28px;box-shadow:0 18px 50px rgba(15,23,42,.12)}</style>"
+                "</head><body><div class='box'><h1>Assessment already submitted</h1>"
+                "<p>Thank you. Your response has already been received by the recruiter.</p></div></body></html>"
+            )
+
+        title = html.escape(assessment.title or f"{job.job_title or job.role or 'Screening'} Test")
+        candidate_name = html.escape(candidate.full_name or candidate.form_full_name or "Candidate")
+        duration = int(assessment.duration_minutes or 30)
+        question_html = []
+        for index, item in enumerate(questions):
+            question = html.escape(str(item.get("question") or f"Question {index + 1}"))
+            options = item.get("options") if isinstance(item.get("options"), list) else []
+            option_html = []
+            for option_index, option in enumerate(options[:4]):
+                option_text = html.escape(str(option))
+                option_html.append(
+                    f"<label class='option'><input required type='radio' name='q{index}' value='{option_index}'>"
+                    f"<span>{option_text}</span></label>"
+                )
+            question_html.append(
+                f"<section class='question'><h3>{index + 1}. {question}</h3>{''.join(option_html)}</section>"
+            )
+
+        return HTMLResponse(
+            "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{title}</title>"
+            "<style>"
+            "body{margin:0;font-family:Arial,sans-serif;background:#eef4ff;color:#0f172a}"
+            ".wrap{max-width:900px;margin:0 auto;padding:28px 16px 52px}"
+            ".hero,.question{background:#fff;border:1px solid #dbeafe;border-radius:14px;box-shadow:0 16px 45px rgba(15,23,42,.10)}"
+            ".hero{padding:26px;margin-bottom:18px}.hero span{font-size:12px;font-weight:800;color:#2563eb;text-transform:uppercase;letter-spacing:.08em}"
+            "h1{margin:8px 0 10px;font-size:30px}.meta{color:#64748b;font-weight:700;line-height:1.6}"
+            ".question{padding:22px;margin:14px 0}.question h3{font-size:18px;margin:0 0 14px;line-height:1.45}"
+            ".option{display:flex;gap:10px;align-items:flex-start;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin:10px 0;cursor:pointer}"
+            ".option:hover{border-color:#93c5fd;background:#f8fbff}.option span{font-weight:700;line-height:1.45}"
+            "button{border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:900;font-size:16px;padding:14px 22px;box-shadow:0 12px 28px rgba(37,99,235,.25);cursor:pointer}"
+            ".actions{display:flex;justify-content:flex-end;margin-top:22px}"
+            "</style></head><body><main class='wrap'>"
+            f"<div class='hero'><span>HireScore AI Assessment</span><h1>{title}</h1>"
+            f"<p class='meta'>Candidate: {candidate_name}<br>Questions: {len(questions)}<br>Time limit: {duration} minutes</p></div>"
+            f"<form method='post' action='/assessment-test/{html.escape(candidate_test_id)}'>"
+            f"{''.join(question_html)}<div class='actions'><button type='submit'>Submit Assessment</button></div></form>"
+            "</main></body></html>"
+        )
+    finally:
+        db.close()
+
+
+@router.post("/assessment-test/{candidate_test_id}")
+async def submit_local_assessment(candidate_test_id: str, request: Request):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    answers = parse_qs(raw_body)
+
+    db = SessionLocal()
+    try:
+        candidate_test, assessment, candidate, job, questions = _load_assessment_bundle(db, candidate_test_id)
+        if candidate_test.status == "Test Done":
+            return RedirectResponse(f"/assessment-test/{candidate_test_id}", status_code=303)
+
+        score = 0
+        for index, item in enumerate(questions):
+            selected = (answers.get(f"q{index}") or [""])[0]
+            try:
+                selected_index = int(selected)
+            except ValueError:
+                selected_index = -1
+            options = item.get("options") if isinstance(item.get("options"), list) else []
+            selected_value = str(options[selected_index]) if 0 <= selected_index < len(options) else ""
+            if selected_value == str(item.get("answer") or ""):
+                score += 1
+
+        max_score = float(len(questions) or assessment.question_count or 1)
+        percentage = round((float(score) / max_score) * 100, 2) if max_score else 0
+        result_status = "Passed" if percentage >= _assessment_pass_percent() else "Needs Review"
+
+        candidate_test.response_id = f"local-{candidate_test.id}"
+        candidate_test.score = float(score)
+        candidate_test.max_score = max_score
+        candidate_test.percentage = percentage
+        candidate_test.result_status = result_status
+        candidate_test.completed_at = datetime.utcnow()
+        candidate_test.status = "Test Done"
+        if result_status == "Passed" and not candidate_test.interview_status:
+            candidate_test.interview_status = "Ready"
+        db.commit()
+
+        return HTMLResponse(
+            "<!doctype html><html><head><title>Assessment submitted</title>"
+            "<style>body{font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;padding:40px}"
+            ".box{max-width:720px;margin:auto;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:28px;box-shadow:0 18px 50px rgba(15,23,42,.12)}</style>"
+            "</head><body><div class='box'><h1>Assessment submitted</h1>"
+            "<p>Thank you. Your response has been submitted successfully.</p></div></body></html>"
+        )
     finally:
         db.close()
 
@@ -4488,13 +5227,15 @@ def schedule_interview_slot(data: dict = Body(...)):
         raise HTTPException(status_code=400, detail="meeting_url is required")
     if not re.match(r"^https?://", meeting_url, re.I):
         raise HTTPException(status_code=400, detail="meeting_url must start with http:// or https://")
+    if not scheduled_at_value:
+        raise HTTPException(status_code=400, detail="Interview date and time is required")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", scheduled_at_value):
+        raise HTTPException(status_code=400, detail="scheduled_at must include date and time, for example 2026-06-06T15:30")
 
-    scheduled_at = None
-    if scheduled_at_value:
-        try:
-            scheduled_at = datetime.fromisoformat(scheduled_at_value.replace("Z", "+00:00")).replace(tzinfo=None)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="scheduled_at is invalid")
+    try:
+        scheduled_at = datetime.fromisoformat(scheduled_at_value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="scheduled_at is invalid")
 
     db = SessionLocal()
     try:
@@ -4553,9 +5294,66 @@ def schedule_interview_slot(data: dict = Body(...)):
         db.close()
 
 
+@router.post("/complete-interview-slot", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def complete_interview_slot(data: dict = Body(...)):
+    candidate_id = data.get("candidate_id")
+    job_id = data.get("job_id")
+    feedback = (data.get("feedback") or "").strip()
+
+    if not candidate_id:
+        raise HTTPException(status_code=400, detail="candidate_id is required")
+    if not job_id:
+        raise HTTPException(status_code=400, detail="job_id is required")
+
+    db = SessionLocal()
+    try:
+        candidate = db.query(Resume).filter(
+            Resume.id == candidate_id,
+            Resume.job_id == job_id,
+            Resume.stage == "interview_scheduling",
+            Resume.is_active == True,
+        ).first()
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Interview candidate not found")
+
+        interview = db.query(Interview).filter(
+            Interview.candidate_id == candidate.id,
+            Interview.job_id == job_id,
+        ).order_by(Interview.created_at.desc()).first()
+        if not interview:
+            raise HTTPException(status_code=404, detail="Scheduled interview not found")
+
+        interview.status = "completed"
+        candidate.status = "Interview Completed"
+
+        candidate_test = db.query(CandidateAssessment).filter(
+            CandidateAssessment.candidate_id == candidate.id,
+            CandidateAssessment.job_id == job_id,
+        ).order_by(CandidateAssessment.completed_at.desc(), CandidateAssessment.sent_at.desc()).first()
+        if candidate_test:
+            candidate_test.interview_status = "Completed"
+
+        _record_candidate_workflow_event(
+            db,
+            candidate,
+            activity_type="interview_completed",
+            title="Interview completed",
+            body=feedback or "Recruiter marked the interview as completed.",
+        )
+        db.commit()
+        return {
+            "message": "Interview marked completed",
+            "id": interview.id,
+            "status": "Completed",
+        }
+    finally:
+        db.close()
+
+
 @router.post("/send-mail", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def send_mail(data: dict = Body(...)):
     to_email = (data.get("email") or "").strip()
+    candidate_id = (data.get("candidate_id") or "").strip()
     name = data.get("name") or "Candidate"
     job_id = data.get("job_id")
     job_title = data.get("job_title") or "the role"
@@ -4563,12 +5361,14 @@ def send_mail(data: dict = Body(...)):
     hiring_manager = data.get("hiring_manager")
     recruiter_email = (data.get("recruiter_email") or "").strip()
     recruiter_name = data.get("recruiter_name") or hiring_manager
+    custom_subject = (data.get("subject") or "").strip()
+    custom_body = (data.get("body") or "").strip()
 
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="Valid candidate email is required")
 
-    email_body = _candidate_email_body(name, job_title, company_name, hiring_manager)
-    subject = f"{job_title} - Next Step"
+    email_body = custom_body[:10000] if custom_body else _fallback_candidate_email_body(name, job_title, company_name, hiring_manager)
+    subject = (custom_subject or f"{job_title} - Next Step")[:180]
 
     resend_key = os.getenv("RESEND_API_KEY")
     smtp_host = os.getenv("SMTP_HOST")
@@ -4583,17 +5383,24 @@ def send_mail(data: dict = Body(...)):
             try:
                 google_user = _find_outreach_google_user(db, recruiter_email)
                 has_gmail_token = bool(google_user and (google_user.google_access_token or google_user.google_refresh_token))
+                has_user_smtp = bool(
+                    google_user
+                    and google_user.outreach_sender_verified_at
+                    and google_user.outreach_smtp_host
+                    and google_user.outreach_smtp_username
+                    and google_user.outreach_smtp_password_enc
+                )
             finally:
                 db.close()
-            if not has_gmail_token:
+            if not has_gmail_token and not has_user_smtp:
                 raise HTTPException(
                     status_code=401,
-                    detail="Recruiter Gmail is not connected. Sign in with Google again and approve Gmail send permission.",
+                    detail="Recruiter sender is not connected. Connect Google Workspace/Gmail or configure and authorize business SMTP from the dashboard.",
                 )
         else:
             raise HTTPException(
                 status_code=500,
-                detail="Email provider is not configured. Set RESEND_API_KEY and RESEND_FROM, SMTP credentials, or sign in with Google.",
+                detail="Email provider is not configured. Connect Google Workspace/Gmail or configure business SMTP from the dashboard.",
             )
 
     try:
@@ -4601,7 +5408,7 @@ def send_mail(data: dict = Body(...)):
         try:
             gmail_result = _send_with_recruiter_gmail(recruiter_email, to_email, subject, email_body, db)
             if gmail_result:
-                _mark_mail_sent(job_id, to_email, db)
+                _mark_mail_sent(job_id, to_email, db, candidate_id)
                 return {
                     "message": "Mail sent",
                     "provider": "gmail",
@@ -4612,6 +5419,23 @@ def send_mail(data: dict = Body(...)):
                     "gmail_message": gmail_result,
                     "ai_preview": email_body,
                 }
+            smtp_user_result = _send_with_user_smtp(_find_outreach_google_user(db, recruiter_email), to_email, subject, email_body)
+            if smtp_user_result:
+                _mark_mail_sent(job_id, to_email, db, candidate_id)
+                return {
+                    "message": "Mail sent",
+                    "provider": "business_smtp",
+                    "email": to_email,
+                    "from": smtp_user_result.get("sender_email") or recruiter_email,
+                    "reply_to": smtp_user_result.get("sender_email") or recruiter_email,
+                    "recruiter_name": recruiter_name,
+                    "ai_preview": email_body,
+                }
+            if recruiter_email and not _is_verified_business_sender(db, recruiter_email):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Business sender email is not verified. Send and approve the verification email before sending candidate mail.",
+                )
         finally:
             db.close()
 
@@ -4652,7 +5476,7 @@ def send_mail(data: dict = Body(...)):
 
         db = SessionLocal()
         try:
-            _mark_mail_sent(job_id, to_email, db)
+            _mark_mail_sent(job_id, to_email, db, candidate_id)
         finally:
             db.close()
 

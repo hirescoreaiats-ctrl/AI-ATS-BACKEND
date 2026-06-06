@@ -535,7 +535,8 @@ def google_callback(code: str, state: str = None):
     db = SessionLocal()
 
     requested_email = state_payload.get("email")
-    if purpose == "gmail_connect" and requested_email and requested_email.lower() != email.lower():
+    strict_sender_match = state_payload.get("strict_sender_match", True)
+    if purpose == "gmail_connect" and strict_sender_match and requested_email and requested_email.lower() != email.lower():
         db.close()
         return RedirectResponse(
             f"{FRONTEND_URL.rstrip('/')}/index.html?error=gmail_email_mismatch"
@@ -646,7 +647,7 @@ def paid_signup_complete(pending_signup_token: str, access_code: str = None, pla
 
 
 @router.get("/gmail-connect")
-def gmail_connect(email: str = None, app_email: str = None):
+def gmail_connect(email: str = None, app_email: str = None, strict_sender: str = "1"):
     if not _google_oauth_configured():
         return RedirectResponse(
             f"{FRONTEND_URL.rstrip('/')}/index.html?error=google_not_configured"
@@ -657,6 +658,7 @@ def gmail_connect(email: str = None, app_email: str = None):
             "purpose": "gmail_connect",
             "email": email or "",
             "app_user_email": app_email or "",
+            "strict_sender_match": str(strict_sender).lower() not in ("0", "false", "no"),
             "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=10),
         },
         SECRET,

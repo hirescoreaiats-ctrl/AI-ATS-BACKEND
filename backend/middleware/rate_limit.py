@@ -24,6 +24,9 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
+        if settings.rate_limit_per_minute <= 0:
+            return await call_next(request)
+
         now = time.time()
         key = request.client.host if request.client else "unknown"
         if self.redis:

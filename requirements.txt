@@ -9,6 +9,8 @@ python-multipart
 pyjwt
 bcrypt
 requests
+boto3
+vercel
 sentence-transformers
 scikit-learn
 pydantic
@@ -22,3 +24,4 @@ pytesseract
 rapidocr-onnxruntime
 onnxruntime
 openai
+cryptography

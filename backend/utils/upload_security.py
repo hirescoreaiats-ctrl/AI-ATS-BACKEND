@@ -12,9 +12,10 @@ from fastapi import HTTPException, UploadFile, status
 from backend.core.config import get_settings
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 ALLOWED_MIME_TYPES = {
     "application/pdf",
+    "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/octet-stream",
 }
@@ -32,7 +33,7 @@ def validate_upload(file: UploadFile, size_bytes: int) -> None:
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only PDF and DOCX resumes are allowed",
+            detail="Only PDF, DOC, and DOCX resumes are allowed",
         )
     if file.content_type and file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
@@ -42,7 +43,7 @@ def validate_upload(file: UploadFile, size_bytes: int) -> None:
     if size_bytes > settings.upload_bytes_limit:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Resume exceeds {settings.max_upload_mb}MB limit",
+            detail=f"Resume exceeds {settings.resume_upload_limit_mb}MB limit",
         )
 
 

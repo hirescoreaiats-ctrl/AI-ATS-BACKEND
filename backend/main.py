@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +33,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
+    allow_origin_regex=settings.allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -116,8 +115,14 @@ def ensure_resume_columns():
         add_column("resumes", resume_columns, "scoring_breakdown", "TEXT")
         add_column("resumes", resume_columns, "jd_profile_json", "TEXT")
         add_column("resumes", resume_columns, "resume_file_path", "TEXT")
+        add_column("resumes", resume_columns, "resume_file_url", "TEXT")
+        add_column("resumes", resume_columns, "resume_file_key", "TEXT")
         add_column("resumes", resume_columns, "resume_original_filename", "VARCHAR")
         add_column("resumes", resume_columns, "resume_content_type", "VARCHAR")
+        add_column("resumes", resume_columns, "original_filename", "VARCHAR")
+        add_column("resumes", resume_columns, "file_size", "INTEGER")
+        add_column("resumes", resume_columns, "mime_type", "VARCHAR")
+        add_column("resumes", resume_columns, "uploaded_at", datetime_definition)
         add_column("resumes", resume_columns, "application_source", "VARCHAR DEFAULT 'direct'")
         add_column("resumes", resume_columns, "apply_tracking_url", "TEXT")
 
@@ -134,6 +139,7 @@ def ensure_resume_columns():
         add_column("jobs", job_columns, "generated_linkedin_post", "TEXT")
         add_column("jobs", job_columns, "generated_whatsapp_message", "TEXT")
         add_column("jobs", job_columns, "generated_naukri_text", "TEXT")
+        add_column("jobs", job_columns, "generated_generic_post", "TEXT")
         add_column("jobs", job_columns, "resume_folder_path", "TEXT")
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_jobs_apply_slug ON jobs (apply_slug)"))
 
@@ -147,6 +153,14 @@ def ensure_resume_columns():
         add_column("users", user_columns, "google_refresh_token", "TEXT")
         add_column("users", user_columns, "google_token_expires_at", datetime_definition)
         add_column("users", user_columns, "outreach_sender_email", "VARCHAR")
+        add_column("users", user_columns, "outreach_sender_verified_at", datetime_definition)
+        add_column("users", user_columns, "outreach_sender_verification_token", "VARCHAR")
+        add_column("users", user_columns, "outreach_sender_verification_expires_at", datetime_definition)
+        add_column("users", user_columns, "outreach_smtp_host", "VARCHAR")
+        add_column("users", user_columns, "outreach_smtp_port", "INTEGER")
+        add_column("users", user_columns, "outreach_smtp_username", "VARCHAR")
+        add_column("users", user_columns, "outreach_smtp_password_enc", "TEXT")
+        add_column("users", user_columns, "outreach_smtp_use_tls", boolean_true_definition)
         add_column("users", user_columns, "auth_provider", "VARCHAR")
         add_column("users", user_columns, "role", "VARCHAR DEFAULT 'recruiter'")
         add_column("users", user_columns, "organization_id", "VARCHAR")
@@ -192,10 +206,7 @@ app.include_router(organizations.router, prefix=settings.api_prefix)
 app.include_router(realtime.router, prefix=settings.api_prefix)
 app.include_router(talent.router, prefix=settings.api_prefix)
 app.include_router(uploads.router, prefix=settings.api_prefix)
-
-frontend_dir = Path("frontend")
-if frontend_dir.exists():
-    app.mount("/frontend", StaticFiles(directory=str(frontend_dir)), name="frontend")
+app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
 
 
 @app.get("/")
