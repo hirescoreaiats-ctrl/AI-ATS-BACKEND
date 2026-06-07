@@ -153,6 +153,22 @@ def upload_resume_file(
 def download_vercel_blob_file(storage_uri_or_key: str) -> bytes:
     key = storage_uri_or_key.removeprefix(VERCEL_BLOB_URI_PREFIX)
     token = _vercel_blob_token()
+    os.environ.setdefault("BLOB_READ_WRITE_TOKEN", token)
+    try:
+        from vercel.blob import BlobClient
+
+        client = BlobClient()
+        result = client.get(key, access="private", timeout=60, use_cache=False)
+        content = getattr(result, "content", None)
+        if content is None and isinstance(result, dict):
+            content = result.get("content")
+        if content is None:
+            content = bytes(result)
+        if content:
+            return content
+    except Exception:
+        logger.exception("Vercel Blob SDK download failed for key=%s; trying signed private URL fallback", key)
+
     url = _vercel_private_url(key)
     if not url:
         raise RuntimeError("BLOB_STORE_ID is required to download private Vercel Blob files")

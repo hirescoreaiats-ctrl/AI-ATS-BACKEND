@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import re
+import logging
 from difflib import SequenceMatcher
 
 from backend.database import SessionLocal
@@ -29,6 +30,7 @@ from backend.core.security import require_roles
 
 router = APIRouter()
 LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "recruiter", "hiring_manager"))]
+logger = logging.getLogger(__name__)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -217,7 +219,17 @@ def _process_resume_application_background(resume_id: str) -> None:
 
         try:
             text = _extract_resume_text_from_file_path(resume.resume_file_path or "")
-        except Exception:
+        except Exception as exc:
+            logger.exception("Resume text extraction failed for resume_id=%s path=%s", resume.id, resume.resume_file_path)
+            resume.risk_flags = json.dumps(["resume_file_download_or_extract_failed"], ensure_ascii=False)
+            resume.parser_quality_action = "manual_review_required"
+            resume.parser_quality_flags = json.dumps([{
+                "code": "resume_file_download_or_extract_failed",
+                "severity": "critical",
+                "message": f"Could not download or extract resume file: {type(exc).__name__}",
+                "penalty": 100,
+            }], ensure_ascii=False)
+            db.commit()
             text = ""
 
         if not text.strip():
@@ -240,7 +252,17 @@ def _process_resume_application_background(resume_id: str) -> None:
                 jd_skills,
                 jd_data,
             )
-        except Exception:
+        except Exception as exc:
+            logger.exception("Resume AI parsing/scoring failed for resume_id=%s", resume.id)
+            resume.risk_flags = json.dumps(["resume_ai_parse_failed"], ensure_ascii=False)
+            resume.parser_quality_action = "manual_review_required"
+            resume.parser_quality_flags = json.dumps([{
+                "code": "resume_ai_parse_failed",
+                "severity": "critical",
+                "message": f"AI parse/scoring failed: {type(exc).__name__}",
+                "penalty": 100,
+            }], ensure_ascii=False)
+            db.commit()
             parsed, exp_data, score_data = None, {}, {}
 
         if not parsed:
