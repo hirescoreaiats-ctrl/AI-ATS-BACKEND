@@ -73,6 +73,15 @@ def _text_value(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _frontend_page_url(path: str, query: dict | None = None) -> str:
+    frontend = (get_settings().frontend_url or "").rstrip("/") or "http://127.0.0.1:5500"
+    clean_path = "/" + str(path or "").lstrip("/")
+    url = f"{frontend}{clean_path}"
+    if query:
+        url = f"{url}?{urlencode(query)}"
+    return url
+
+
 def _email_from_request_token(request: Request) -> str:
     try:
         token = bearer_token(request)
@@ -1508,10 +1517,19 @@ def apply_page(job_identifier: str, source: str | None = Query(default=None)):
             db.refresh(job)
 
         safe_source = normalize_application_source(source)
-        query = urlencode({"job_id": job.apply_slug or job.id, "source": safe_source})
-        return RedirectResponse(url=f"/frontend/apply.html?{query}", status_code=302)
+        return RedirectResponse(url=_frontend_page_url("apply.html", {"job_id": job.apply_slug or job.id, "source": safe_source}), status_code=302)
     finally:
         db.close()
+
+
+@router.get("/frontend/apply.html")
+def legacy_backend_apply_page_redirect(job_id: str | None = Query(default=None), source: str | None = Query(default=None)):
+    query = {}
+    if job_id:
+        query["job_id"] = job_id
+    if source:
+        query["source"] = normalize_application_source(source)
+    return RedirectResponse(url=_frontend_page_url("apply.html", query), status_code=302)
 
 
 # ---------------- PUBLIC JOB (JSON API) ----------------
