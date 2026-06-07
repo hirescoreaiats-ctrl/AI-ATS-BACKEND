@@ -20,6 +20,7 @@ from backend.services.canonical_parser import parse_resume_document
 from backend.ai.vector_search import enrich_candidate_embedding
 from backend.jd_engine import normalize_jd_skills
 from backend.services.candidate_intelligence import apply_resume_intelligence_fields, resume_intelligence_payload
+from backend.services.document_classifier import classify_resume_document
 from backend.services.jd_enrichment import enrich_jd_for_scoring
 from backend.services.sourcing import build_apply_links, normalize_application_source, resolve_job_identifier
 from backend.core.config import get_settings
@@ -134,6 +135,27 @@ def _extract_resume_text_from_upload(filename: str, contents: bytes) -> str:
             os.remove(temp_path)
         except OSError:
             pass
+
+
+def _preclassify_upload_resume(filename: str, contents: bytes):
+    suffix = os.path.splitext(filename or "")[1].lower()
+    if suffix not in {".pdf", ".docx"}:
+        return None
+    try:
+        text = _extract_resume_text_from_upload(filename, contents)
+    except Exception:
+        logger.exception("Resume upload pre-classification extraction failed: filename=%s", filename)
+        return None
+    classification = classify_resume_document(text, filename=filename)
+    logger.info(
+        "Resume upload pre-classified: filename=%s label=%s positive=%s negative=%s reason=%s",
+        filename,
+        classification.label,
+        classification.positive_signals,
+        classification.negative_signals,
+        classification.reason,
+    )
+    return classification
 
 
 @router.post("/parse-resume-autofill")
@@ -535,23 +557,51 @@ async def upload_resumes(
 
     processed_count = 0
     duplicate_count = 0
+    skipped_count = 0
+    upload_messages = []
     processed_resume_ids = []
+    seen_duplicate_keys = set()
 
     for file in files:
         contents = await file.read()
         validate_upload(file, len(contents))
 
+        classification = _preclassify_upload_resume(file.filename or "", contents)
+        if classification and not classification.is_resume:
+            skipped_count += 1
+            upload_messages.append({
+                "file": file.filename,
+                "status": "skipped_non_resume",
+                "reason": classification.reason,
+            })
+            logger.warning(
+                "Resume upload skipped non-resume document: job_id=%s filename=%s reason=%s",
+                job_id,
+                file.filename,
+                classification.reason,
+            )
+            continue
+
         candidate_email = (form_email or "").strip().lower()
         candidate_phone = (form_phone or "").strip()
-        identity_source = candidate_email or candidate_phone or f"{file.filename}|{len(contents)}"
+        file_hash = hashlib.sha256(contents).hexdigest()
+        identity_source = candidate_email or candidate_phone or f"file|{file_hash}"
         duplicate_key_source = f"{job_id}|{identity_source}"
         duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
+        file_duplicate_key = hashlib.sha256(f"{job_id}|file|{file_hash}".encode()).hexdigest()
+        if duplicate_key in seen_duplicate_keys or file_duplicate_key in seen_duplicate_keys:
+            duplicate_count += 1
+            upload_messages.append({"file": file.filename, "status": "duplicate skipped"})
+            logger.info("Resume upload duplicate skipped within request: job_id=%s filename=%s", job_id, file.filename)
+            continue
         duplicate_of = (
             _find_existing_application(db, job_id, candidate_email, candidate_phone)
             or db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == duplicate_key, Resume.is_active == True).first()
+            or db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == file_duplicate_key, Resume.is_active == True).first()
         )
         if duplicate_of:
             duplicate_count += 1
+            upload_messages.append({"file": file.filename, "status": "duplicate skipped"})
             continue
 
         resume_id = str(uuid.uuid4())
@@ -660,6 +710,8 @@ async def upload_resumes(
             stored_file_path,
         )
         processed_resume_ids.append(resume_entry.id)
+        seen_duplicate_keys.add(duplicate_key)
+        seen_duplicate_keys.add(file_duplicate_key)
         processed_count += 1
 
     db.commit()
@@ -698,11 +750,15 @@ async def upload_resumes(
             "message": "Application already submitted for this job.",
             "total_resumes": 0,
             "duplicates": duplicate_count,
+            "skipped": skipped_count,
+            "messages": upload_messages[:50],
             "processing": False,
         }
 
     if processed_count == 0:
-        raise HTTPException(status_code=422, detail="No resume could be saved. Please upload a PDF or DOCX resume.")
+        first_reason = (upload_messages[0] or {}).get("reason") if upload_messages else ""
+        detail = first_reason or "No resume could be saved. Please upload a PDF or DOCX resume."
+        raise HTTPException(status_code=422, detail=detail)
 
     processing_failures = processing_results.count(False) if process_inline else 0
     if process_inline and processing_failures:
@@ -714,6 +770,8 @@ async def upload_resumes(
         "message": message,
         "total_resumes": processed_count,
         "duplicates": duplicate_count,
+        "skipped": skipped_count,
+        "messages": upload_messages[:50],
         "processing": not process_inline,
         "processing_mode": processing_mode,
         "processing_failures": processing_failures,

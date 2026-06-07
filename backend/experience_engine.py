@@ -188,8 +188,8 @@ def process_experience(experience_list):
             "last_working_date": None
         }
 
-    # latest job detection
-    processed.sort(key=lambda x: x["end"], reverse=True)
+    # latest job detection: current roles win, then latest end/start dates.
+    processed.sort(key=lambda x: (1 if x.get("is_current") else 0, x["end"], x["start"]), reverse=True)
 
     latest_job = next((job for job in processed if job.get("company_name")), processed[0])
 

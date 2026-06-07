@@ -29,6 +29,7 @@ from backend.models import Assessment, CandidateAssessment, CandidateActivity, C
 from backend.domain_engine import detect_domain
 from backend.experience_engine import process_experience
 from backend.services.candidate_intelligence import apply_resume_intelligence_fields, resume_intelligence_payload
+from backend.services.document_classifier import classify_resume_document
 from backend.services.explanation_service import generate_recruiter_explanation
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_enrichment import enrich_jd_for_scoring
@@ -2169,6 +2170,26 @@ def _extract_folder_resume_text(file_path: Path) -> str:
     return ""
 
 
+def _folder_document_classification(file_path: Path):
+    if file_path.suffix.lower() not in {".pdf", ".docx"}:
+        return None
+    try:
+        text = _extract_folder_resume_text(file_path)
+    except Exception:
+        logger.exception("Folder resume pre-classification extraction failed: file=%s", file_path)
+        return None
+    classification = classify_resume_document(text, filename=file_path.name)
+    logger.info(
+        "Folder resume pre-classified: file=%s label=%s positive=%s negative=%s reason=%s",
+        file_path.name,
+        classification.label,
+        classification.positive_signals,
+        classification.negative_signals,
+        classification.reason,
+    )
+    return classification
+
+
 def _copy_folder_resume_to_uploads(source_path: Path, job_id: str, original_filename: str | None = None) -> Path:
     settings = get_settings()
     upload_root = Path(settings.upload_dir).resolve()
@@ -2217,6 +2238,10 @@ def _save_folder_resume_application(db, job: Job, source_path: Path, original_fi
     text = _extract_folder_resume_text(source_path)
     if not text.strip():
         return False, "text extraction failed"
+    classification = classify_resume_document(text, filename=display_name)
+    if not classification.is_resume:
+        logger.warning("Folder resume skipped non-resume document: job_id=%s file=%s reason=%s", job.id, display_name, classification.reason)
+        return False, "non-resume skipped"
 
     jd_skills = normalize_jd_skills(job.required_skills or "", job.jd_text or "")
     jd_data = {
@@ -2362,6 +2387,17 @@ def sync_resume_folder(job_id: str):
                 if len(contents) > settings.upload_bytes_limit:
                     skipped += 1
                     messages.append({"file": file_path.name, "status": f"file exceeds {settings.max_upload_mb}MB limit"})
+                    continue
+                classification = _folder_document_classification(file_path)
+                if classification and not classification.is_resume:
+                    skipped += 1
+                    messages.append({"file": file_path.name, "status": "non-resume skipped", "reason": classification.reason})
+                    logger.warning(
+                        "Folder sync skipped non-resume document: job_id=%s file=%s reason=%s",
+                        job.id,
+                        file_path.name,
+                        classification.reason,
+                    )
                     continue
                 duplicate_key_source = f"{job.id}|folder_file|{hashlib.sha256(contents).hexdigest()}"
                 duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
@@ -2516,6 +2552,17 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
 
             try:
                 malware_scan(str(temp_path))
+                classification = _folder_document_classification(temp_path)
+                if classification and not classification.is_resume:
+                    skipped += 1
+                    messages.append({"file": original_name, "status": "non-resume skipped", "reason": classification.reason})
+                    logger.warning(
+                        "Folder upload skipped non-resume document: job_id=%s file=%s reason=%s",
+                        job.id,
+                        original_name,
+                        classification.reason,
+                    )
+                    continue
                 duplicate_key_source = f"{job.id}|folder_file|{hashlib.sha256(contents).hexdigest()}"
                 duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
                 duplicate = _find_existing_folder_resume(db, job.id, duplicate_key)

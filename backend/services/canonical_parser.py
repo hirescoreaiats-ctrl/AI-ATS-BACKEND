@@ -34,6 +34,21 @@ def _safe_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _unsafe_person_name(value: Any) -> bool:
+    text = _safe_text(value)
+    if not text:
+        return False
+    if len(text) > 70 or len(text.split()) > 5:
+        return True
+    return bool(re.search(
+        r"\b(objective|career objective|preferred full name|job title|company name|department|"
+        r"hiring manager|application form|position applied|resume|profile|summary|skills?|"
+        r"education|experience|projects?|contact)\b",
+        text,
+        re.I,
+    ))
+
+
 def _text_extraction_quality(text: str) -> dict:
     normalized = normalize_extracted_text(text or "")
     words = re.findall(r"\w+", normalized)
@@ -154,6 +169,14 @@ def parse_resume_document(text: str, job_context: dict | None = None, mode: str 
     parsed = parse_resume_enterprise(normalized_text, ai_parse_override=ai_parse_override)
     parsed["email"] = validate_email(parsed.get("email")) or ""
     parsed["phone"] = validate_phone(parsed.get("phone")) or ""
+    if _unsafe_person_name(parsed.get("full_name")):
+        flags = set(parsed.get("parser_flags") or [])
+        flags.add("name_needs_review")
+        parsed["parser_flags"] = sorted(flags)
+        confidence = dict(parsed.get("field_confidence") or {})
+        confidence["name"] = min(float(confidence.get("name") or 0.25), 0.25)
+        parsed["field_confidence"] = confidence
+        parsed["full_name"] = ""
 
     exp_data = process_experience(parsed.get("experience", []))
     raw_parsed = copy.deepcopy(parsed)

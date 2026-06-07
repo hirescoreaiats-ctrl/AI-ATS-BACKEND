@@ -14,11 +14,16 @@ def anyio_backend():
 
 
 class FakeUploadFile:
-    filename = "candidate.pdf"
-    content_type = "application/pdf"
+    _counter = 0
+
+    def __init__(self, filename="candidate.pdf", content=None):
+        FakeUploadFile._counter += 1
+        self.filename = filename
+        self.content_type = "application/pdf"
+        self.content = content if content is not None else f"%PDF resume bytes {FakeUploadFile._counter}".encode()
 
     async def read(self):
-        return b"%PDF resume bytes"
+        return self.content
 
 
 class FakeBackgroundTasks:
@@ -164,6 +169,17 @@ def fake_settings():
     )
 
 
+def fake_blob_metadata(resume_id="resume-candidate"):
+    return SimpleNamespace(
+        storage_uri=f"vercel_blob://resumes/org-1/job-1/{resume_id}.pdf",
+        url="private-url",
+        key=f"resumes/org-1/job-1/{resume_id}.pdf",
+        file_size=17,
+        mime_type="application/pdf",
+        uploaded_at=datetime.utcnow(),
+    )
+
+
 @pytest.mark.anyio
 async def test_upload_resumes_processes_inline_by_default(monkeypatch):
     db = FakeUploadDB()
@@ -177,6 +193,7 @@ async def test_upload_resumes_processes_inline_by_default(monkeypatch):
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
     monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: None)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -213,6 +230,7 @@ async def test_upload_resumes_can_use_background_mode(monkeypatch):
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
     monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: None)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -250,6 +268,7 @@ async def test_folder_upload_queues_processing_to_avoid_request_timeout(monkeypa
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
     monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: None)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -284,6 +303,7 @@ async def test_folder_upload_accepts_100_resumes(monkeypatch):
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
     monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: None)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -306,6 +326,60 @@ async def test_folder_upload_accepts_100_resumes(monkeypatch):
     assert len(db.added) == 100
     assert all(row.processing_status == "pending" for row in db.added)
     assert all(row.status == "Pending Processing" for row in db.added)
+
+
+@pytest.mark.anyio
+async def test_upload_resumes_skips_duplicate_file_hash_within_same_request(monkeypatch):
+    db = FakeUploadDB()
+
+    monkeypatch.setenv("FOLDER_RESUME_PROCESSING_MODE", "queued")
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
+    monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: None)
+    monkeypatch.setattr(resume_router, "upload_resume_file", lambda *args, **kwargs: fake_blob_metadata())
+    monkeypatch.setattr(resume_router, "_queue_resume_processing_batch", lambda resume_ids: None)
+
+    duplicate_content = b"%PDF same resume bytes"
+    result = await resume_router.upload_resumes(
+        "job-1",
+        FakeBackgroundTasks(),
+        files=[
+            FakeUploadFile(filename="candidate-a.pdf", content=duplicate_content),
+            FakeUploadFile(filename="candidate-a-copy.pdf", content=duplicate_content),
+        ],
+        **folder_upload_kwargs(),
+    )
+
+    assert result["total_resumes"] == 1
+    assert result["duplicates"] == 1
+    assert len(db.added) == 1
+
+
+@pytest.mark.anyio
+async def test_upload_resumes_rejects_non_resume_document_before_row_creation(monkeypatch):
+    db = FakeUploadDB()
+    classification = SimpleNamespace(
+        is_resume=False,
+        reason="Document looks like a JD/application form, not a candidate resume.",
+    )
+
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: classification)
+
+    with pytest.raises(HTTPException) as exc:
+        await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=[FakeUploadFile()], **upload_kwargs())
+
+    assert exc.value.status_code == 422
+    assert "JD/application form" in exc.value.detail
+    assert db.added == []
 
 
 @pytest.mark.anyio

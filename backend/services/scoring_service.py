@@ -253,11 +253,11 @@ def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=Non
         return {
             "skill": required,
             "status": "weak",
-            "evidence_level": "skills_section_only",
-            "depth": "skills_section_only",
+            "evidence_level": "keyword_only",
+            "depth": "keyword_only",
             "evidence_text": required,
             "source": "skills_section",
-            "weight": _skill_evidence_weight({"evidence_level": "skills_section_only"}),
+            "weight": _skill_evidence_weight({"evidence_level": "keyword_only"}),
             "employer_name_only": False,
         }
 
@@ -265,11 +265,11 @@ def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=Non
         return {
             "skill": required,
             "status": "partial",
-            "evidence_level": "skills_section_only",
-            "depth": "skills_section_only",
+            "evidence_level": "keyword_only",
+            "depth": "keyword_only",
             "evidence_text": required,
             "source": "skills_section_equivalent",
-            "weight": min(0.32, _skill_evidence_weight({"evidence_level": "skills_section_only"})),
+            "weight": min(0.12, _skill_evidence_weight({"evidence_level": "keyword_only"})),
             "employer_name_only": False,
         }
 

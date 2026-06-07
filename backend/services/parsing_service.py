@@ -89,7 +89,9 @@ def _looks_like_section_or_role_name(value):
     if len(text) > 70 or len(text.split()) > 5:
         return True
     return bool(re.search(
-        r"\b(data analyst|data analytics experience|business analyst|bi analyst|profile|summary|about me|skills|technical skills|education|projects?|experience|contact|resume|curriculum vitae)\b",
+        r"\b(data analyst|data analytics experience|business analyst|bi analyst|profile|summary|about me|objective|career objective|"
+        r"skills|technical skills|education|projects?|experience|contact|resume|curriculum vitae|preferred full name|"
+        r"job title|company name|department|hiring manager|application form|position applied)\b",
         text,
         re.I,
     ))

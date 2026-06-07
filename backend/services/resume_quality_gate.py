@@ -7,7 +7,8 @@ SECTION_NOISE_PATTERN = re.compile(
     r"education|experience|work experience|professional experience|employment history|"
     r"technical skills|technical tools|projects?|certifications?|"
     r"other professional experience|microsoft word|powerpoint|outlook|"
-    r"grade|feelings|childhood|outcomes"
+    r"grade|feelings|childhood|outcomes|objective|career objective|preferred full name|"
+    r"job title|company name|department|hiring manager|application form|position applied"
     r")\b",
     re.I,
 )
