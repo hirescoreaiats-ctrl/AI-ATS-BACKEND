@@ -2,6 +2,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from backend.models import Job, Resume
 from backend.routers import resume as resume_router
@@ -64,6 +65,33 @@ class FakeUploadDB:
         self.closed = True
 
 
+class FakeProgressDB:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def query(self, model):
+        if model is Resume:
+            return FakeProgressQuery(self.rows)
+        return FakeProgressQuery(None)
+
+    def close(self):
+        pass
+
+
+class FakeProgressQuery:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def first(self):
+        return self.rows
+
+
 class FakeProcessingDB:
     def __init__(self, resume, job):
         self.resume = resume
@@ -117,13 +145,23 @@ def upload_kwargs():
         "portfolio": None,
         "application_source": None,
         "apply_tracking_url": None,
+        "folder_total_count": None,
     }
 
 
 def folder_upload_kwargs():
     values = upload_kwargs()
     values["application_source"] = "folder"
+    values["folder_total_count"] = 1
     return values
+
+
+def fake_settings():
+    return SimpleNamespace(
+        use_vercel_blob_storage=True,
+        max_resume_upload_count=100,
+        resume_processing_batch_size=3,
+    )
 
 
 @pytest.mark.anyio
@@ -138,7 +176,7 @@ async def test_upload_resumes_processes_inline_by_default(monkeypatch):
     monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
-    monkeypatch.setattr(resume_router, "get_settings", lambda: SimpleNamespace(use_vercel_blob_storage=True))
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -174,7 +212,7 @@ async def test_upload_resumes_can_use_background_mode(monkeypatch):
     monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
-    monkeypatch.setattr(resume_router, "get_settings", lambda: SimpleNamespace(use_vercel_blob_storage=True))
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -211,7 +249,7 @@ async def test_folder_upload_queues_processing_to_avoid_request_timeout(monkeypa
     monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
     monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
     monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
-    monkeypatch.setattr(resume_router, "get_settings", lambda: SimpleNamespace(use_vercel_blob_storage=True))
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
     monkeypatch.setattr(
         resume_router,
         "upload_resume_file",
@@ -233,6 +271,90 @@ async def test_folder_upload_queues_processing_to_avoid_request_timeout(monkeypa
     assert result["processing"] is True
     assert processed_ids == []
     assert queued_ids == [db.added[0].id]
+
+
+@pytest.mark.anyio
+async def test_folder_upload_accepts_100_resumes(monkeypatch):
+    db = FakeUploadDB()
+
+    monkeypatch.setenv("FOLDER_RESUME_PROCESSING_MODE", "queued")
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
+    monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(
+        resume_router,
+        "upload_resume_file",
+        lambda *args, **kwargs: SimpleNamespace(
+            storage_uri="vercel_blob://resumes/org-1/job-1/resume_candidate.pdf",
+            url="private-url",
+            key="resumes/org-1/job-1/resume_candidate.pdf",
+            file_size=17,
+            mime_type="application/pdf",
+            uploaded_at=datetime.utcnow(),
+        ),
+    )
+    monkeypatch.setattr(resume_router, "_queue_resume_processing_batch", lambda resume_ids: None)
+
+    kwargs = folder_upload_kwargs()
+    kwargs["folder_total_count"] = 100
+    result = await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=[FakeUploadFile() for _ in range(100)], **kwargs)
+
+    assert result["total_resumes"] == 100
+    assert len(db.added) == 100
+    assert all(row.processing_status == "pending" for row in db.added)
+    assert all(row.status == "Pending Processing" for row in db.added)
+
+
+@pytest.mark.anyio
+async def test_folder_upload_rejects_101_resumes(monkeypatch):
+    db = FakeUploadDB()
+
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+
+    kwargs = folder_upload_kwargs()
+    kwargs["folder_total_count"] = 101
+    with pytest.raises(HTTPException) as exc:
+        await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=[FakeUploadFile()], **kwargs)
+
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "Maximum 100 resumes can be synced at once."
+
+
+def test_processing_batch_queues_all_resumes_with_batch_size(monkeypatch):
+    queued = []
+
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_queue_resume_processing", lambda resume_id: queued.append(resume_id))
+
+    resume_router._queue_resume_processing_batch(["r1", "r2", "r3", "r4"])
+
+    assert queued == ["r1", "r2", "r3", "r4"]
+
+
+def test_resume_processing_progress_counts(monkeypatch):
+    rows = [
+        Resume(job_id="job-1", processing_status="pending", status="Pending Processing", is_active=True),
+        Resume(job_id="job-1", processing_status="processing", status="Processing", is_active=True),
+        Resume(job_id="job-1", processing_status="completed", status="Shortlisted", is_active=True),
+        Resume(job_id="job-1", processing_status="failed", status="Needs Review", is_active=True),
+    ]
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: FakeProgressDB(rows))
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: SimpleNamespace(id="job-1"))
+
+    result = resume_router.resume_processing_progress("job-1")
+
+    assert result["total"] == 4
+    assert result["pending"] == 1
+    assert result["processing"] == 1
+    assert result["completed"] == 1
+    assert result["failed"] == 1
+    assert result["needs_review"] == 1
+    assert result["percent"] == 50
 
 
 def test_processing_updates_candidate_when_extraction_succeeds(monkeypatch):
@@ -284,4 +406,4 @@ def test_processing_updates_candidate_when_extraction_succeeds(monkeypatch):
     assert resume.email == "asha@example.com"
     assert resume.rank_score == 82
     assert resume.status == "Shortlisted"
-    assert db.commits == 1
+    assert db.commits == 2

@@ -57,6 +57,8 @@ class Settings:
     upload_dir: str = field(default_factory=lambda: os.getenv("UPLOAD_DIR", "uploads"))
     max_upload_mb: float = field(default_factory=lambda: float(os.getenv("MAX_UPLOAD_MB", "20")))
     max_resume_size_mb: float | None = field(default_factory=lambda: float(os.getenv("MAX_RESUME_SIZE_MB")) if os.getenv("MAX_RESUME_SIZE_MB") else None)
+    max_resume_upload_count: int = field(default_factory=lambda: int(os.getenv("MAX_RESUME_UPLOAD_COUNT", "100")))
+    resume_processing_batch_size: int = field(default_factory=lambda: max(1, min(5, int(os.getenv("RESUME_PROCESSING_BATCH_SIZE", "3")))))
     storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "local").strip().lower())
     supabase_url: str | None = field(default_factory=lambda: os.getenv("SUPABASE_URL"))
     supabase_service_role_key: str | None = field(default_factory=lambda: os.getenv("SUPABASE_SERVICE_ROLE_KEY"))

@@ -132,6 +132,10 @@ def ensure_resume_columns():
         add_column("resumes", resume_columns, "file_size", "INTEGER")
         add_column("resumes", resume_columns, "mime_type", "VARCHAR")
         add_column("resumes", resume_columns, "uploaded_at", datetime_definition)
+        add_column("resumes", resume_columns, "processing_status", "VARCHAR DEFAULT 'completed'")
+        add_column("resumes", resume_columns, "processing_error", "TEXT")
+        add_column("resumes", resume_columns, "processing_started_at", datetime_definition)
+        add_column("resumes", resume_columns, "processing_completed_at", datetime_definition)
         add_column("resumes", resume_columns, "application_source", "VARCHAR DEFAULT 'direct'")
         add_column("resumes", resume_columns, "apply_tracking_url", "TEXT")
 

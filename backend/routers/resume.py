@@ -8,6 +8,7 @@ import tempfile
 import re
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from difflib import SequenceMatcher
 
 from backend.database import SessionLocal
@@ -32,9 +33,8 @@ from backend.core.security import require_roles
 router = APIRouter()
 LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "recruiter", "hiring_manager"))]
 logger = logging.getLogger(__name__)
-_resume_processing_executor = ThreadPoolExecutor(
-    max_workers=max(1, int(os.getenv("RESUME_PROCESSING_WORKERS", "2")))
-)
+_batch_size = get_settings().resume_processing_batch_size
+_resume_processing_executor = ThreadPoolExecutor(max_workers=_batch_size)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -194,6 +194,23 @@ def _queue_resume_processing(resume_id: str) -> None:
     _resume_processing_executor.submit(_process_resume_application_background, resume_id)
 
 
+def _queue_resume_processing_batch(resume_ids: list[str]) -> None:
+    if not resume_ids:
+        return
+    batch_size = get_settings().resume_processing_batch_size
+    logger.info("Resume processing batch queued: total=%s batch_size=%s", len(resume_ids), batch_size)
+    for index in range(0, len(resume_ids), batch_size):
+        chunk = resume_ids[index:index + batch_size]
+        logger.info(
+            "Resume processing batch started: batch_number=%s batch_size=%s resume_ids=%s",
+            (index // batch_size) + 1,
+            len(chunk),
+            chunk,
+        )
+        for resume_id in chunk:
+            _queue_resume_processing(resume_id)
+
+
 def _extract_resume_text_from_file_path(file_path: str, resume_id: str = "", original_filename: str | None = None) -> str:
     logger.info("Resume processing file materialize started: resume_id=%s path=%s", resume_id, file_path)
     local_path, should_cleanup = materialize_resume_file(file_path, original_filename=original_filename)
@@ -230,6 +247,9 @@ def _mark_resume_needs_review(db, resume: Resume, reason: str, resume_text: str 
     resume.ranking_reason = reason
     resume.ai_confidence_reason = reason
     resume.explanation = reason
+    resume.processing_status = "failed"
+    resume.processing_error = reason
+    resume.processing_completed_at = datetime.utcnow()
     resume.status = "Needs Review"
     resume.stage = "review"
     db.commit()
@@ -252,6 +272,12 @@ def _process_resume_application_background(resume_id: str) -> bool:
             resume.job_id,
             resume.resume_file_path,
         )
+        resume.processing_status = "processing"
+        resume.processing_error = None
+        resume.processing_started_at = datetime.utcnow()
+        resume.processing_completed_at = None
+        resume.status = "Processing"
+        db.commit()
 
         job = db.query(Job).filter(Job.id == resume.job_id).first()
         if not job:
@@ -355,6 +381,9 @@ def _process_resume_application_background(resume_id: str) -> bool:
             resume.ranking_reason = "Duplicate application skipped. Candidate already applied for this job."
             resume.ai_confidence_reason = resume.ranking_reason
             resume.explanation = resume.ranking_reason
+            resume.processing_status = "completed"
+            resume.processing_error = None
+            resume.processing_completed_at = datetime.utcnow()
             db.commit()
             logger.info("Resume processing completed as duplicate: resume_id=%s duplicate_of_id=%s", resume.id, duplicate.id)
             return True
@@ -410,6 +439,9 @@ def _process_resume_application_background(resume_id: str) -> bool:
         resume.shortlisted_manual = False
         resume.status = status
         resume.stage = stage
+        resume.processing_status = "completed"
+        resume.processing_error = None
+        resume.processing_completed_at = datetime.utcnow()
 
         try:
             enrich_candidate_embedding(resume)
@@ -466,6 +498,7 @@ async def upload_resumes(
     portfolio: str = Form(None),
     application_source: str = Form(None),
     apply_tracking_url: str = Form(None),
+    folder_total_count: int = Form(None),
 
     files: List[UploadFile] = File(...)
 ):
@@ -481,6 +514,21 @@ async def upload_resumes(
     safe_application_source = normalize_application_source(application_source)
     if job.source_tracking_enabled is False:
         safe_application_source = "direct"
+    max_resume_upload_count = get_settings().max_resume_upload_count
+    if safe_application_source == "folder":
+        requested_count = folder_total_count or len(files)
+        if requested_count > max_resume_upload_count:
+            db.close()
+            raise HTTPException(status_code=413, detail=f"Maximum {max_resume_upload_count} resumes can be synced at once.")
+        logger.info(
+            "Folder sync upload started: job_id=%s requested_count=%s batch_size=%s",
+            job_id,
+            requested_count,
+            get_settings().resume_processing_batch_size,
+        )
+    elif len(files) > max_resume_upload_count:
+        db.close()
+        raise HTTPException(status_code=413, detail=f"Maximum {max_resume_upload_count} resumes can be uploaded at once.")
     safe_tracking_url = (apply_tracking_url or "").strip()
     if not safe_tracking_url:
         safe_tracking_url = build_apply_links(job, db).get(safe_application_source) or build_apply_links(job, db)["main"]
@@ -579,8 +627,8 @@ async def upload_resumes(
             rank_score=0,
             fit_band="Processing",
             ai_recommendation="processing",
-            ranking_reason="Application received. AI screening is running in background.",
-            ai_confidence_reason="Application received. AI screening is running in background.",
+            ranking_reason="Application received. AI screening is pending.",
+            ai_confidence_reason="Application received. AI screening is pending.",
             duplicate_key=duplicate_key,
             duplicate_of_id=duplicate_of.id if duplicate_of else None,
             resume_file_path=stored_file_path,
@@ -592,11 +640,13 @@ async def upload_resumes(
             file_size=len(contents),
             mime_type=blob_metadata.mime_type if blob_metadata else file.content_type,
             uploaded_at=blob_metadata.uploaded_at if blob_metadata else None,
-            explanation="Application received. AI screening is running in background.",
+            processing_status="pending",
+            processing_error=None,
+            explanation="Application received. AI screening is pending.",
             shortlisted=False,
             shortlisted_auto=False,
             shortlisted_manual=False,
-            status="Processing",
+            status="Pending Processing" if safe_application_source == "folder" else "Processing",
             stage="applied",
             is_active=True,
         )
@@ -638,8 +688,7 @@ async def upload_resumes(
         for resume_id in processed_resume_ids:
             processing_results.append(_process_resume_application_background(resume_id))
     elif processing_mode == "queued":
-        for resume_id in processed_resume_ids:
-            _queue_resume_processing(resume_id)
+        _queue_resume_processing_batch(processed_resume_ids)
     else:
         for resume_id in processed_resume_ids:
             background_tasks.add_task(_process_resume_application_background, resume_id)
@@ -908,6 +957,37 @@ async def upload_resumes(
         "message": "Resumes processed successfully",
         "total_resumes": processed_count
     }
+
+
+@router.get("/resume-processing-progress/{job_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def resume_processing_progress(job_id: str):
+    db = SessionLocal()
+    try:
+        job = resolve_job_identifier(job_id, db)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        rows = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_active == True).all()
+        total = len(rows)
+        pending = sum(1 for row in rows if (row.processing_status or "").lower() == "pending")
+        processing = sum(1 for row in rows if (row.processing_status or "").lower() == "processing")
+        failed = sum(1 for row in rows if (row.processing_status or "").lower() == "failed")
+        completed = sum(1 for row in rows if (row.processing_status or "").lower() == "completed")
+        needs_review = sum(1 for row in rows if (row.status or "").lower() == "needs review" or (row.processing_status or "").lower() == "failed")
+        done = completed + failed
+        percent = int(round((done / total) * 100)) if total else 0
+        return {
+            "job_id": job.id,
+            "total": total,
+            "pending": pending,
+            "processing": processing,
+            "completed": completed,
+            "failed": failed,
+            "needs_review": needs_review,
+            "percent": percent,
+        }
+    finally:
+        db.close()
 
 
 # ---------------- BULK RESUME ANALYZER ----------------

@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlencode
@@ -38,7 +39,7 @@ from backend.services.scoring_service import score_candidate
 from backend.services.scoring_context import apply_job_jd_snapshot, apply_job_scoring_snapshot, job_jd_hash
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.storage import download_stored_file, is_remote_storage_uri, materialize_resume_file, persist_resume_file
-from backend.services.storage_service import is_vercel_blob_uri
+from backend.services.storage_service import is_vercel_blob_uri, upload_resume_file
 from backend.services.sourcing import (
     TRACKED_APPLICATION_SOURCES,
     build_apply_links,
@@ -53,6 +54,7 @@ from backend.services.sourcing import (
 from backend.core.config import get_settings
 from backend.core.security import bearer_token, create_candidate_tracking_token, decode_candidate_tracking_token, decode_token, require_roles
 from backend.utils.sanitize import sanitize_text
+from backend.utils.upload_security import malware_scan
 
 router = APIRouter()
 LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "recruiter", "hiring_manager"))]
@@ -686,6 +688,10 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
         "resume_content_type": candidate.resume_content_type,
         "application_source": candidate.application_source or "direct",
         "apply_tracking_url": candidate.apply_tracking_url,
+        "processing_status": candidate.processing_status,
+        "processing_error": candidate.processing_error,
+        "processing_started_at": candidate.processing_started_at.isoformat() if candidate.processing_started_at else None,
+        "processing_completed_at": candidate.processing_completed_at.isoformat() if candidate.processing_completed_at else None,
         "status": candidate.status,
         "stage": candidate.stage,
         "mail_status": candidate.mail_status,
@@ -2322,6 +2328,8 @@ def configure_resume_folder(job_id: str, payload: ResumeFolderRequest):
 
 @router.post("/jobs/{job_id}/resume-folder/sync", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def sync_resume_folder(job_id: str):
+    from backend.routers.resume import _queue_resume_processing_batch
+
     db = SessionLocal()
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
@@ -2331,26 +2339,101 @@ def sync_resume_folder(job_id: str):
         if not folder.exists() or not folder.is_dir():
             raise HTTPException(status_code=400, detail="Configure a valid resume folder first.")
 
-        allowed = {".pdf", ".docx"}
+        settings = get_settings()
+        allowed = {".pdf", ".docx", ".doc"}
         files = sorted(path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in allowed)
+        if len(files) > settings.max_resume_upload_count:
+            raise HTTPException(status_code=413, detail=f"Maximum {settings.max_resume_upload_count} resumes can be synced at once.")
         imported = 0
         skipped = 0
         failed = 0
         messages = []
+        created_resume_ids = []
+        logger.info(
+            "Folder sync started: job_id=%s folder=%s total_files=%s batch_size=%s",
+            job.id,
+            folder,
+            len(files),
+            settings.resume_processing_batch_size,
+        )
         for file_path in files:
             try:
-                created, reason = _save_folder_resume_application(db, job, file_path)
-                if created:
-                    imported += 1
-                else:
+                contents = file_path.read_bytes()
+                if len(contents) > settings.upload_bytes_limit:
                     skipped += 1
-                messages.append({"file": file_path.name, "status": reason})
+                    messages.append({"file": file_path.name, "status": f"file exceeds {settings.max_upload_mb}MB limit"})
+                    continue
+                duplicate_key_source = f"{job.id}|folder_file|{hashlib.sha256(contents).hexdigest()}"
+                duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
+                duplicate = _find_existing_folder_resume(db, job.id, duplicate_key)
+                if duplicate:
+                    skipped += 1
+                    messages.append({"file": file_path.name, "status": "duplicate skipped"})
+                    continue
+
+                resume_id = str(uuid.uuid4())
+                blob_metadata = None
+                if settings.use_vercel_blob_storage:
+                    blob_metadata = upload_resume_file(
+                        contents,
+                        file_path.name,
+                        job.id,
+                        resume_id,
+                        organization_id=job.organization_id or "default_org",
+                        mime_type=mimetypes.guess_type(file_path.name)[0],
+                    )
+                    stored_path = blob_metadata.storage_uri
+                    resume_file_key = blob_metadata.key
+                    uploaded_at = blob_metadata.uploaded_at
+                else:
+                    stored_path = _persist_folder_resume(file_path, job.id, file_path.name)
+                    resume_file_key = str(stored_path).removeprefix("vercel_blob://") if is_vercel_blob_uri(str(stored_path)) else None
+                    uploaded_at = datetime.utcnow() if resume_file_key else None
+
+                resume_entry = Resume(
+                    id=resume_id,
+                    job_id=job.id,
+                    organization_id=job.organization_id,
+                    duplicate_key=duplicate_key,
+                    final_score=0,
+                    rank_score=0,
+                    fit_band="Processing",
+                    ai_recommendation="processing",
+                    ranking_reason="Folder resume uploaded. AI screening is pending.",
+                    ai_confidence_reason="Folder resume uploaded. AI screening is pending.",
+                    resume_file_path=str(stored_path),
+                    resume_file_url=blob_metadata.url if blob_metadata else None,
+                    resume_file_key=resume_file_key,
+                    resume_original_filename=file_path.name,
+                    resume_content_type=mimetypes.guess_type(file_path.name)[0] or "application/octet-stream",
+                    original_filename=file_path.name,
+                    file_size=len(contents),
+                    mime_type=blob_metadata.mime_type if blob_metadata else (mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"),
+                    uploaded_at=uploaded_at,
+                    processing_status="pending",
+                    processing_error=None,
+                    explanation="Folder resume uploaded. AI screening is pending.",
+                    application_source="folder",
+                    status="Pending Processing",
+                    stage="applied",
+                    shortlisted=False,
+                    shortlisted_auto=False,
+                    shortlisted_manual=False,
+                    is_active=True,
+                )
+                db.add(resume_entry)
+                db.flush()
+                created_resume_ids.append(resume_entry.id)
+                imported += 1
+                messages.append({"file": file_path.name, "status": "queued"})
+                logger.info("Folder Resume row created: resume_id=%s job_id=%s file=%s", resume_entry.id, job.id, file_path.name)
             except Exception as exc:
                 failed += 1
                 logger.exception("Resume folder import failed for %s", file_path)
                 messages.append({"file": file_path.name, "status": f"failed: {exc}"})
 
         db.commit()
+        _queue_resume_processing_batch(created_resume_ids)
         return {
             "job_id": job.id,
             "folder": str(folder.resolve()),
@@ -2358,6 +2441,8 @@ def sync_resume_folder(job_id: str):
             "imported": imported,
             "skipped": skipped,
             "failed": failed,
+            "processing": True,
+            "processing_mode": "queued",
             "messages": messages[:50],
         }
     finally:
@@ -2368,14 +2453,17 @@ def sync_resume_folder(job_id: str):
 async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="Select at least one resume file.")
-    if len(files) > 25:
+    settings = get_settings()
+    max_resume_upload_count = settings.max_resume_upload_count
+    if len(files) > max_resume_upload_count:
         raise HTTPException(
             status_code=413,
-            detail="Upload at most 25 resumes per request. The dashboard uploads large folders in smaller requests.",
+            detail=f"Maximum {max_resume_upload_count} resumes can be synced at once.",
         )
 
-    settings = get_settings()
-    allowed = {".pdf", ".docx"}
+    from backend.routers.resume import _queue_resume_processing_batch
+
+    allowed = {".pdf", ".docx", ".doc"}
     max_file_size = settings.upload_bytes_limit
     db = SessionLocal()
     temp_dir = Path(tempfile.mkdtemp(prefix=f"resume_folder_{job_id}_"))
@@ -2390,12 +2478,23 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
         failed = 0
         scanned = 0
         messages = []
+        created_resume_ids = []
+        unsupported_files = []
+
+        logger.info(
+            "Folder sync started: job_id=%s total_files=%s max_count=%s batch_size=%s",
+            job_id,
+            len(files),
+            max_resume_upload_count,
+            settings.resume_processing_batch_size,
+        )
 
         for upload in files:
             original_name = Path(upload.filename or "resume").name
             suffix = Path(original_name).suffix.lower()
             if suffix not in allowed:
                 skipped += 1
+                unsupported_files.append(original_name)
                 messages.append({"file": original_name, "status": "unsupported file type"})
                 continue
 
@@ -2416,24 +2515,97 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
             temp_path.write_bytes(contents)
 
             try:
-                created, reason = _save_folder_resume_application(db, job, temp_path, original_filename=original_name)
-                if created:
-                    imported += 1
-                else:
+                malware_scan(str(temp_path))
+                duplicate_key_source = f"{job.id}|folder_file|{hashlib.sha256(contents).hexdigest()}"
+                duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
+                duplicate = _find_existing_folder_resume(db, job.id, duplicate_key)
+                if duplicate:
                     skipped += 1
-                messages.append({"file": original_name, "status": reason})
+                    messages.append({"file": original_name, "status": "duplicate skipped"})
+                    continue
+
+                resume_id = str(uuid.uuid4())
+                blob_metadata = None
+                if settings.use_vercel_blob_storage:
+                    blob_metadata = upload_resume_file(
+                        contents,
+                        original_name,
+                        job.id,
+                        resume_id,
+                        organization_id=job.organization_id or "default_org",
+                        mime_type=upload.content_type,
+                    )
+                    stored_path = blob_metadata.storage_uri
+                    resume_file_key = blob_metadata.key
+                    uploaded_at = blob_metadata.uploaded_at
+                    logger.info("Folder resume stored to Vercel Blob: resume_id=%s key=%s", resume_id, resume_file_key)
+                else:
+                    stored_path = _persist_folder_resume(temp_path, job.id, original_name)
+                    resume_file_key = str(stored_path).removeprefix("vercel_blob://") if is_vercel_blob_uri(str(stored_path)) else None
+                    uploaded_at = datetime.utcnow() if resume_file_key else None
+
+                resume_entry = Resume(
+                    id=resume_id,
+                    job_id=job.id,
+                    organization_id=job.organization_id,
+                    duplicate_key=duplicate_key,
+                    final_score=0,
+                    rank_score=0,
+                    fit_band="Processing",
+                    ai_recommendation="processing",
+                    ranking_reason="Folder resume uploaded. AI screening is pending.",
+                    ai_confidence_reason="Folder resume uploaded. AI screening is pending.",
+                    resume_file_path=str(stored_path),
+                    resume_file_url=blob_metadata.url if blob_metadata else None,
+                    resume_file_key=resume_file_key,
+                    resume_original_filename=original_name,
+                    resume_content_type=upload.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream",
+                    original_filename=original_name,
+                    file_size=len(contents),
+                    mime_type=(blob_metadata.mime_type if blob_metadata else (upload.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream")),
+                    uploaded_at=uploaded_at,
+                    processing_status="pending",
+                    processing_error=None,
+                    explanation="Folder resume uploaded. AI screening is pending.",
+                    application_source="folder",
+                    status="Pending Processing",
+                    stage="applied",
+                    shortlisted=False,
+                    shortlisted_auto=False,
+                    shortlisted_manual=False,
+                    is_active=True,
+                )
+                db.add(resume_entry)
+                db.flush()
+                created_resume_ids.append(resume_entry.id)
+                imported += 1
+                messages.append({"file": original_name, "status": "queued"})
+                logger.info("Folder Resume row created: resume_id=%s job_id=%s file=%s", resume_entry.id, job.id, original_name)
             except Exception as exc:
                 failed += 1
                 logger.exception("Resume folder upload import failed for %s", original_name)
                 messages.append({"file": original_name, "status": f"failed: {exc}"})
 
         db.commit()
+        logger.info(
+            "Folder sync upload stored rows: job_id=%s scanned=%s imported=%s skipped=%s failed=%s unsupported=%s",
+            job.id,
+            scanned,
+            imported,
+            skipped,
+            failed,
+            unsupported_files,
+        )
+        _queue_resume_processing_batch(created_resume_ids)
         return {
             "job_id": job.id,
             "scanned": scanned,
             "imported": imported,
             "skipped": skipped,
             "failed": failed,
+            "processing": True,
+            "processing_mode": "queued",
+            "unsupported_files": unsupported_files[:50],
             "messages": messages[:50],
         }
     finally:

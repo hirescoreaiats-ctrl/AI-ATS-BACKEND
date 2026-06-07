@@ -162,6 +162,10 @@ class Resume(Base):
     file_size = Column(Integer, nullable=True)
     mime_type = Column(String, nullable=True)
     uploaded_at = Column(DateTime, nullable=True)
+    processing_status = Column(String, default="completed", index=True)
+    processing_error = Column(Text, nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
+    processing_completed_at = Column(DateTime, nullable=True)
     explanation = Column(Text, nullable=True)
     explanation_generated_at = Column(DateTime, nullable=True)
 
