@@ -7,6 +7,7 @@ import json
 import tempfile
 import re
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 
 from backend.database import SessionLocal
@@ -31,6 +32,9 @@ from backend.core.security import require_roles
 router = APIRouter()
 LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "recruiter", "hiring_manager"))]
 logger = logging.getLogger(__name__)
+_resume_processing_executor = ThreadPoolExecutor(
+    max_workers=max(1, int(os.getenv("RESUME_PROCESSING_WORKERS", "2")))
+)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -183,6 +187,11 @@ def _resume_processing_mode() -> str:
     if legacy_inline is not None and legacy_inline.strip().lower() in {"0", "false", "no", "background"}:
         return "background"
     return "inline"
+
+
+def _queue_resume_processing(resume_id: str) -> None:
+    logger.info("Resume processing queued: resume_id=%s", resume_id)
+    _resume_processing_executor.submit(_process_resume_application_background, resume_id)
 
 
 def _extract_resume_text_from_file_path(file_path: str, resume_id: str = "", original_filename: str | None = None) -> str:
@@ -613,6 +622,10 @@ async def upload_resumes(
     db.close()
 
     processing_mode = _resume_processing_mode()
+    if safe_application_source == "folder" and processing_mode == "inline":
+        processing_mode = (os.getenv("FOLDER_RESUME_PROCESSING_MODE") or "queued").strip().lower()
+        if processing_mode not in {"queued", "inline", "background"}:
+            processing_mode = "queued"
     process_inline = processing_mode == "inline"
     processing_results = []
     logger.info(
@@ -624,6 +637,9 @@ async def upload_resumes(
     if process_inline:
         for resume_id in processed_resume_ids:
             processing_results.append(_process_resume_application_background(resume_id))
+    elif processing_mode == "queued":
+        for resume_id in processed_resume_ids:
+            _queue_resume_processing(resume_id)
     else:
         for resume_id in processed_resume_ids:
             background_tasks.add_task(_process_resume_application_background, resume_id)

@@ -120,6 +120,12 @@ def upload_kwargs():
     }
 
 
+def folder_upload_kwargs():
+    values = upload_kwargs()
+    values["application_source"] = "folder"
+    return values
+
+
 @pytest.mark.anyio
 async def test_upload_resumes_processes_inline_by_default(monkeypatch):
     db = FakeUploadDB()
@@ -190,6 +196,43 @@ async def test_upload_resumes_can_use_background_mode(monkeypatch):
     assert processed_ids == []
     assert len(background_tasks.tasks) == 1
     assert background_tasks.tasks[0][1] == (db.added[0].id,)
+
+
+@pytest.mark.anyio
+async def test_folder_upload_queues_processing_to_avoid_request_timeout(monkeypatch):
+    db = FakeUploadDB()
+    queued_ids = []
+    processed_ids = []
+
+    monkeypatch.delenv("RESUME_PROCESSING_MODE", raising=False)
+    monkeypatch.delenv("FOLDER_RESUME_PROCESSING_MODE", raising=False)
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
+    monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
+    monkeypatch.setattr(resume_router, "get_settings", lambda: SimpleNamespace(use_vercel_blob_storage=True))
+    monkeypatch.setattr(
+        resume_router,
+        "upload_resume_file",
+        lambda *args, **kwargs: SimpleNamespace(
+            storage_uri="vercel_blob://resumes/org-1/job-1/resume_candidate.pdf",
+            url="private-url",
+            key="resumes/org-1/job-1/resume_candidate.pdf",
+            file_size=17,
+            mime_type="application/pdf",
+            uploaded_at=datetime.utcnow(),
+        ),
+    )
+    monkeypatch.setattr(resume_router, "_queue_resume_processing", lambda resume_id: queued_ids.append(resume_id))
+    monkeypatch.setattr(resume_router, "_process_resume_application_background", lambda resume_id: processed_ids.append(resume_id) or True)
+
+    result = await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=[FakeUploadFile()], **folder_upload_kwargs())
+
+    assert result["processing_mode"] == "queued"
+    assert result["processing"] is True
+    assert processed_ids == []
+    assert queued_ids == [db.added[0].id]
 
 
 def test_processing_updates_candidate_when_extraction_succeeds(monkeypatch):
