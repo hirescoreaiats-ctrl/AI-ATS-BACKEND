@@ -22,6 +22,7 @@ from backend.services.sourcing import build_apply_links, normalize_application_s
 from backend.core.config import get_settings
 from backend.services.storage import materialize_resume_file, persist_resume_file
 from backend.services.storage_service import upload_resume_file
+from backend.services.scoring_context import apply_job_scoring_snapshot
 from backend.utils.upload_security import malware_scan, secure_upload_path, validate_upload
 from backend.core.security import require_roles
 
@@ -315,6 +316,7 @@ def _process_resume_application_background(resume_id: str) -> None:
         resume.missing_skills = ",".join(parsed.get("missing_skills", []))
         resume.skill_match_percent = parsed.get("skill_match_percent")
         apply_resume_intelligence_fields(resume, parsed)
+        apply_job_scoring_snapshot(resume, job, parsed.get("jd_profile_json"))
         resume.resume_text = resume_text
         resume.explanation = _text_value(parsed.get("ai_recruiter_explanation"))
         resume.shortlisted = ai_shortlisted
@@ -724,6 +726,7 @@ async def upload_resumes(
     is_active=True
 )
         apply_resume_intelligence_fields(resume_entry, parsed)
+        apply_job_scoring_snapshot(resume_entry, job, parsed.get("jd_profile_json"))
         enrich_candidate_embedding(resume_entry)
         db.add(resume_entry)
 

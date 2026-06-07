@@ -869,7 +869,7 @@ def calibrate_final_score(parsed, jd_text, jd_data, required_skills, resume_text
     return score_data
 
 
-def _project_work_evidence_strength(parsed, resume_text, matched_skills):
+def _project_work_evidence_strength(parsed, resume_text, matched_skills, role_family="other"):
     project_text = []
     for project in parsed.get("projects") or []:
         if isinstance(project, dict):
@@ -885,7 +885,16 @@ def _project_work_evidence_strength(parsed, resume_text, matched_skills):
         for job in parsed.get("experience", []) if isinstance(job, dict)
     )
     text = " ".join(project_text + [work_text, resume_text or ""]).lower()
-    action_hits = len(set(re.findall(r"\b(built|developed|implemented|designed|automated|analyzed|managed|deployed|optimized|created|delivered)\b", text, re.I)))
+    role_family = (role_family or "other").lower()
+    if role_family == "data_analytics":
+        action_pattern = r"\b(built|developed|implemented|designed|automated|analyzed|managed|deployed|optimized|created|delivered|reported|visualized|cleaned|extracted)\b"
+    elif role_family in {"software_backend", "software_frontend", "full_stack", "mobile_development", "devops_cloud"}:
+        action_pattern = r"\b(built|developed|implemented|designed|automated|deployed|optimized|created|delivered|tested|integrated|maintained|debugged)\b"
+    elif role_family in {"sales_business_development", "hr_recruitment", "customer_support"}:
+        action_pattern = r"\b(managed|coordinated|sourced|screened|closed|converted|communicated|negotiated|delivered|supported|onboarded|tracked)\b"
+    else:
+        action_pattern = r"\b(built|developed|implemented|designed|automated|managed|created|delivered|supported|coordinated|improved|owned)\b"
+    action_hits = len(set(re.findall(action_pattern, text, re.I)))
     skill_hits = sum(1 for skill in matched_skills or [] if skill and re.search(r"\b" + re.escape(str(skill).lower()).replace(r"\ ", r"\s+") + r"\b", text, re.I))
     quantified = len(re.findall(r"\b\d+(?:%|k|,\d{3}| users?| records?| reports?| dashboards?| clients?)\b", text, re.I))
     return min(100, round(action_hits * 8 + skill_hits * 7 + min(quantified, 5) * 6, 2))
@@ -1031,7 +1040,12 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             experience_fit_percent = max(25, experience_fit_percent - overqualified_penalty)
 
     role_relevance = _safe_float(parsed.get("role_relevance_score"))
-    evidence_strength = _project_work_evidence_strength(parsed, resume_text, matched + transferable + preferred_matched)
+    evidence_strength = _project_work_evidence_strength(
+        parsed,
+        resume_text,
+        matched + transferable + preferred_matched,
+        jd_profile.get("role_family") or "other",
+    )
     education_fit = _generic_education_fit(parsed, jd_data or {})
     semantic_raw = parsed.get("semantic_score")
     if semantic_raw is None:

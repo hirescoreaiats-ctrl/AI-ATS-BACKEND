@@ -46,6 +46,8 @@ class Job(Base):
     generated_naukri_text = Column(Text, nullable=True)
     generated_generic_post = Column(Text, nullable=True)
     resume_folder_path = Column(Text, nullable=True)
+    jd_hash = Column(String, nullable=True, index=True)
+    jd_profile_json = Column(Text, nullable=True)
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -139,6 +141,8 @@ class Resume(Base):
     risk_flags = Column(Text, nullable=True)
     scoring_breakdown = Column(Text, nullable=True)
     jd_profile_json = Column(Text, nullable=True)
+    score_job_id = Column(String, nullable=True, index=True)
+    score_jd_hash = Column(String, nullable=True, index=True)
 
     # 🔹 AI Explanation
     resume_text = Column(Text, nullable=True)

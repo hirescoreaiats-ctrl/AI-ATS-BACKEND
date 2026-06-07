@@ -35,6 +35,7 @@ from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.parsing_service import parse_resume_enterprise
 from backend.services.pipeline import analyze_resume_for_job
 from backend.services.scoring_service import score_candidate
+from backend.services.scoring_context import apply_job_jd_snapshot, apply_job_scoring_snapshot, job_jd_hash
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.storage import download_stored_file, is_remote_storage_uri, materialize_resume_file, persist_resume_file
 from backend.services.storage_service import is_vercel_blob_uri
@@ -603,6 +604,7 @@ def _repair_stored_candidate_profile(candidate: Resume, job: Job, force: bool = 
         candidate.missing_skills = ",".join(parsed.get("missing_skills", []))
         candidate.skill_match_percent = parsed.get("skill_match_percent")
         apply_resume_intelligence_fields(candidate, parsed)
+        apply_job_scoring_snapshot(candidate, job, parsed.get("jd_profile_json"))
         return True
     except Exception:
         logger.exception("Stored candidate profile repair failed for %s", candidate.id)
@@ -624,6 +626,9 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
     tags = (tag_map or {}).get(candidate.id, [])
     safe_meta = _candidate_safe_display(candidate)
     experience_meta = _candidate_experience_meta(candidate)
+    current_jd_hash = job_jd_hash(job)
+    score_job_id = getattr(candidate, "score_job_id", None)
+    score_jd_hash = getattr(candidate, "score_jd_hash", None)
     payload = {
         "resume_id": candidate.id,
         "id": candidate.id,
@@ -682,6 +687,13 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
         "profile_extraction_quality": safe_meta["profile_extraction_quality"],
     }
     payload.update(resume_intelligence_payload(candidate))
+    payload.update({
+        "score_job_id": score_job_id,
+        "score_jd_hash": score_jd_hash,
+        "current_jd_hash": current_jd_hash,
+        "stale_score": bool((score_job_id and score_job_id != job.id) or not score_jd_hash or score_jd_hash != current_jd_hash),
+        "score_delta_stale": bool(payload.get("stale_score")),
+    })
     return payload
 
 
@@ -776,7 +788,7 @@ def _rescore_candidate_from_stored_fields(candidate: Resume, job: Job):
         "experience": [{
             "company_name": candidate.last_company_name or "",
             "role": candidate.designation or "",
-            "description": candidate.ranking_reason or "",
+            "description": candidate.resume_text or "",
         }],
         "resume_quality_score": candidate.resume_quality_score or 70,
         "domain": candidate.domain,
@@ -823,6 +835,7 @@ def _rescore_candidate_from_stored_fields(candidate: Resume, job: Job):
     candidate.missing_skills = ",".join(parsed.get("missing_skills", []))
     candidate.skill_match_percent = parsed.get("skill_match_percent")
     apply_resume_intelligence_fields(candidate, parsed)
+    apply_job_scoring_snapshot(candidate, job, jd_profile)
     return score_data
 
 
@@ -922,8 +935,6 @@ def _candidate_recruiter_trust(candidate: Resume, job: Job | None = None):
             evidence.append(f"Role signal: current title {candidate.designation or 'not listed'}; most relevant title {most_relevant_title}.")
         else:
             evidence.append(f"Role signal: {candidate.designation or most_relevant_title}.")
-    if candidate.ranking_reason:
-        evidence.append(candidate.ranking_reason)
 
     risk_points = []
     if weak_skills:
@@ -1462,6 +1473,7 @@ def create_job(job: JobCreate):
 
         db.add(new_job)
         db.flush()
+        apply_job_jd_snapshot(new_job, enrichment.get("jd_profile"))
         links = ensure_generated_sourcing_content(new_job, db)
         db.commit()
         db.refresh(new_job)
@@ -2267,6 +2279,7 @@ def _save_folder_resume_application(db, job: Job, source_path: Path, original_fi
         is_active=True,
     )
     apply_resume_intelligence_fields(resume_entry, parsed)
+    apply_job_scoring_snapshot(resume_entry, job, parsed.get("jd_profile_json"))
     db.add(resume_entry)
     return True, "imported"
 
@@ -2662,6 +2675,24 @@ def edit_job(job_id: str, job_data: JobUpdate):
 
     if job_data.jd_text:
         job.jd_text = job_data.jd_text
+        enrichment = enrich_jd_for_scoring(
+            job.jd_text,
+            {
+                "job_title": job.job_title,
+                "role": job.job_title,
+                "experience_required": job.experience_required,
+            },
+        )
+        job.role = enrichment.get("role") or job.role or job.job_title
+        job.required_skills = ",".join(enrichment.get("required_skills", [])) or job.required_skills
+        job.preferred_skills = ",".join(enrichment.get("preferred_skills", [])) or job.preferred_skills
+        job.min_experience_years = enrichment.get("min_experience_years")
+        edu = enrichment.get("education")
+        if isinstance(edu, list):
+            edu = ",".join(edu)
+        job.education = edu or job.education
+
+    apply_job_jd_snapshot(job)
 
     db.commit()
     db.close()
@@ -2725,6 +2756,8 @@ def get_job_detail(job_identifier: str):
             "hiring_manager": job.hiring_manager,
             "jd_text": job.jd_text,
             "required_skills": job.required_skills,
+            "jd_hash": job_jd_hash(job),
+            "jd_profile_json": job.jd_profile_json,
             "public_apply_enabled": job.public_apply_enabled if job.public_apply_enabled is not None else True,
             "source_tracking_enabled": job.source_tracking_enabled if job.source_tracking_enabled is not None else True,
             "applications_by_source": source_counts,

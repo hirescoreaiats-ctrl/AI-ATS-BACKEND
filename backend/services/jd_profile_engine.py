@@ -155,12 +155,14 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
     default_must_have = role_family_default_must_have(role_family)
-    if default_must_have and len(must_have) < 3:
+    defaults_applied = False
+    if default_must_have and len(must_have) < 3 and role_family_confidence >= 70:
         must_have = normalize_skill_list(must_have + default_must_have)
         nice_to_have = normalize_skill_list([
             skill for skill in nice_to_have
             if skill.lower() not in {item.lower() for item in must_have}
         ])
+        defaults_applied = True
     must_have, demoted_must_have = _split_analytics_must_have(role_family, role_title, jd_text, must_have)
     if demoted_must_have:
         nice_to_have = normalize_skill_list(nice_to_have + [
@@ -187,4 +189,5 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "domain_context": role_family if role_family != "other" else "",
         "hard_requirements": hard,
         "soft_requirements": soft,
+        "defaults_applied": defaults_applied,
     }
