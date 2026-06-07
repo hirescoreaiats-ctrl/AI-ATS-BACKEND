@@ -174,15 +174,36 @@ async def parse_resume_autofill(file: UploadFile = File(...)):
 # ---------------- APPLY LINK RESUME UPLOAD ----------------
 
 
-def _extract_resume_text_from_file_path(file_path: str) -> str:
-    local_path, should_cleanup = materialize_resume_file(file_path)
+def _resume_processing_mode() -> str:
+    mode = (os.getenv("RESUME_PROCESSING_MODE") or "").strip().lower()
+    if mode in {"inline", "background"}:
+        return mode
+
+    legacy_inline = os.getenv("PROCESS_RESUMES_INLINE")
+    if legacy_inline is not None and legacy_inline.strip().lower() in {"0", "false", "no", "background"}:
+        return "background"
+    return "inline"
+
+
+def _extract_resume_text_from_file_path(file_path: str, resume_id: str = "", original_filename: str | None = None) -> str:
+    logger.info("Resume processing file materialize started: resume_id=%s path=%s", resume_id, file_path)
+    local_path, should_cleanup = materialize_resume_file(file_path, original_filename=original_filename)
+    logger.info(
+        "Resume processing file materialized: resume_id=%s local_path=%s cleanup=%s",
+        resume_id,
+        local_path,
+        should_cleanup,
+    )
     try:
         lower = (local_path or "").lower()
         if lower.endswith(".pdf"):
-            return extract_text_from_pdf(local_path)
-        if lower.endswith(".docx"):
-            return extract_text_from_docx(local_path)
-        return ""
+            text = extract_text_from_pdf(local_path)
+        elif lower.endswith(".docx"):
+            text = extract_text_from_docx(local_path)
+        else:
+            text = ""
+        logger.info("Resume text extracted: resume_id=%s length=%s", resume_id, len(text or ""))
+        return text
     finally:
         if should_cleanup:
             try:
@@ -203,22 +224,37 @@ def _mark_resume_needs_review(db, resume: Resume, reason: str, resume_text: str 
     resume.status = "Needs Review"
     resume.stage = "review"
     db.commit()
+    logger.warning("Resume marked Needs Review: resume_id=%s reason=%s", resume.id, reason)
 
 
-def _process_resume_application_background(resume_id: str) -> None:
+def _process_resume_application_background(resume_id: str) -> bool:
     db = SessionLocal()
+    resume = None
     try:
+        logger.info("Resume processing started: resume_id=%s", resume_id)
         resume = db.query(Resume).filter(Resume.id == resume_id).first()
         if not resume:
-            return
+            logger.warning("Resume processing skipped; row not found: resume_id=%s", resume_id)
+            return False
+
+        logger.info(
+            "Resume processing loaded row: resume_id=%s job_id=%s file_path=%s",
+            resume.id,
+            resume.job_id,
+            resume.resume_file_path,
+        )
 
         job = db.query(Job).filter(Job.id == resume.job_id).first()
         if not job:
             _mark_resume_needs_review(db, resume, "Application received, but matching job was not found.")
-            return
+            return False
 
         try:
-            text = _extract_resume_text_from_file_path(resume.resume_file_path or "")
+            text = _extract_resume_text_from_file_path(
+                resume.resume_file_path or "",
+                resume_id=resume.id,
+                original_filename=resume.original_filename or resume.resume_original_filename,
+            )
         except Exception as exc:
             logger.exception("Resume text extraction failed for resume_id=%s path=%s", resume.id, resume.resume_file_path)
             resume.risk_flags = json.dumps(["resume_file_download_or_extract_failed"], ensure_ascii=False)
@@ -234,7 +270,7 @@ def _process_resume_application_background(resume_id: str) -> None:
 
         if not text.strip():
             _mark_resume_needs_review(db, resume, "Resume uploaded, but text could not be extracted. Recruiter review required.")
-            return
+            return False
 
         resume_text = text[:12000]
         jd_skills = normalize_jd_skills(job.required_skills or "", job.jd_text or "")
@@ -246,11 +282,20 @@ def _process_resume_application_background(resume_id: str) -> None:
         }
 
         try:
+            logger.info("Resume parsing/scoring started: resume_id=%s job_id=%s", resume.id, job.id)
             parsed, exp_data, score_data = analyze_resume_for_job(
                 text,
                 job.jd_text or "",
                 jd_skills,
                 jd_data,
+            )
+            logger.info(
+                "Resume parsing/scoring completed: resume_id=%s name=%s email=%s rank_score=%s final_score=%s",
+                resume.id,
+                parsed.get("full_name") if parsed else None,
+                parsed.get("email") if parsed else None,
+                parsed.get("rank_score") if parsed else None,
+                parsed.get("final_score") if parsed else None,
             )
         except Exception as exc:
             logger.exception("Resume AI parsing/scoring failed for resume_id=%s", resume.id)
@@ -267,7 +312,7 @@ def _process_resume_application_background(resume_id: str) -> None:
 
         if not parsed:
             _mark_resume_needs_review(db, resume, "Resume uploaded, but AI parsing failed. Recruiter review required.", resume_text)
-            return
+            return False
 
         mismatch_reason = _identity_mismatch_reason(resume.form_full_name, resume.form_email, resume.form_phone, parsed)
         if mismatch_reason:
@@ -286,7 +331,7 @@ def _process_resume_application_background(resume_id: str) -> None:
             }], ensure_ascii=False)
             resume.risk_flags = json.dumps(["identity_mismatch", "parser_quality_gate", "manual_review_required"], ensure_ascii=False)
             db.commit()
-            return
+            return False
 
         parsed_email = (parsed.get("email") or resume.form_email or resume.email or "").strip().lower()
         parsed_phone = (parsed.get("phone") or resume.form_phone or resume.phone or "").strip()
@@ -302,7 +347,8 @@ def _process_resume_application_background(resume_id: str) -> None:
             resume.ai_confidence_reason = resume.ranking_reason
             resume.explanation = resume.ranking_reason
             db.commit()
-            return
+            logger.info("Resume processing completed as duplicate: resume_id=%s duplicate_of_id=%s", resume.id, duplicate.id)
+            return True
 
         recommendation = parsed.get("recommendation")
         score = parsed.get("rank_score") or parsed.get("final_score") or 0
@@ -362,8 +408,30 @@ def _process_resume_application_background(resume_id: str) -> None:
             pass
 
         db.commit()
-    except Exception:
+        logger.info(
+            "Resume DB candidate updated: resume_id=%s name=%s email=%s score=%s status=%s stage=%s",
+            resume.id,
+            resume.full_name,
+            resume.email,
+            resume.rank_score or resume.final_score,
+            resume.status,
+            resume.stage,
+        )
+        return True
+    except Exception as exc:
+        logger.exception("Resume processing failed with exception: resume_id=%s", resume_id)
         db.rollback()
+        try:
+            failed_resume = db.query(Resume).filter(Resume.id == resume_id).first()
+            if failed_resume:
+                _mark_resume_needs_review(
+                    db,
+                    failed_resume,
+                    f"Resume processing failed: {type(exc).__name__}. Check backend logs for details.",
+                )
+        except Exception:
+            logger.exception("Failed to mark resume Needs Review after processing exception: resume_id=%s", resume_id)
+        return False
     finally:
         db.close()
 
@@ -450,7 +518,13 @@ async def upload_resumes(
                     mime_type=file.content_type,
                 )
                 stored_file_path = blob_metadata.storage_uri
-                print(f"[storage] Vercel Blob resume uploaded key={blob_metadata.key} size={blob_metadata.file_size}")
+                logger.info(
+                    "Resume file stored: resume_id=%s job_id=%s storage=vercel_blob key=%s size=%s",
+                    resume_id,
+                    job_id,
+                    blob_metadata.key,
+                    blob_metadata.file_size,
+                )
             finally:
                 if file_path:
                     try:
@@ -463,6 +537,13 @@ async def upload_resumes(
                 f.write(contents)
             malware_scan(file_path)
             stored_file_path = persist_resume_file(file_path, file.filename, file.content_type, job_id)
+            logger.info(
+                "Resume file stored: resume_id=%s job_id=%s storage=local path=%s size=%s",
+                resume_id,
+                job_id,
+                stored_file_path,
+                len(contents),
+            )
             file_path = ""
 
         resume_entry = Resume(
@@ -512,16 +593,37 @@ async def upload_resumes(
         )
         db.add(resume_entry)
         db.flush()
+        logger.info(
+            "Resume candidate row created: resume_id=%s job_id=%s filename=%s file_path=%s",
+            resume_entry.id,
+            job_id,
+            file.filename,
+            stored_file_path,
+        )
         processed_resume_ids.append(resume_entry.id)
         processed_count += 1
 
     db.commit()
+    logger.info(
+        "Resume upload transaction committed: job_id=%s created=%s duplicates=%s",
+        job_id,
+        processed_count,
+        duplicate_count,
+    )
     db.close()
 
-    process_inline = os.getenv("PROCESS_RESUMES_INLINE", "true").strip().lower() not in {"0", "false", "no"}
+    processing_mode = _resume_processing_mode()
+    process_inline = processing_mode == "inline"
+    processing_results = []
+    logger.info(
+        "Resume upload processing dispatch: job_id=%s mode=%s resume_ids=%s",
+        job_id,
+        processing_mode,
+        processed_resume_ids,
+    )
     if process_inline:
         for resume_id in processed_resume_ids:
-            _process_resume_application_background(resume_id)
+            processing_results.append(_process_resume_application_background(resume_id))
     else:
         for resume_id in processed_resume_ids:
             background_tasks.add_task(_process_resume_application_background, resume_id)
@@ -537,11 +639,19 @@ async def upload_resumes(
     if processed_count == 0:
         raise HTTPException(status_code=422, detail="No resume could be saved. Please upload a PDF or DOCX resume.")
 
+    processing_failures = processing_results.count(False) if process_inline else 0
+    if process_inline and processing_failures:
+        message = f"Application received, but {processing_failures} resume(s) need manual review. Check backend logs."
+    else:
+        message = "Application processed successfully." if process_inline else "Application submitted. AI screening is running in background."
+
     return {
-        "message": "Application processed successfully." if process_inline else "Application submitted. AI screening is running in background.",
+        "message": message,
         "total_resumes": processed_count,
         "duplicates": duplicate_count,
         "processing": not process_inline,
+        "processing_mode": processing_mode,
+        "processing_failures": processing_failures,
     }
 
     jd_text = job.jd_text
