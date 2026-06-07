@@ -1,6 +1,6 @@
 import re
 
-from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups, role_family_default_must_have
+from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups, role_family_default_must_have, role_family_default_nice_to_have
 from backend.services.taxonomy import SKILL_CATEGORIES, expand_skill_requirements, known_skills_in_text, normalize_skill_list
 
 
@@ -111,6 +111,38 @@ def _split_analytics_must_have(role_family, role_title, jd_text, must_have):
     return filtered, demoted
 
 
+def _split_full_stack_requirements(role_family, role_title, jd_text, must_have, nice_to_have):
+    if role_family != "full_stack":
+        return normalize_skill_list(must_have), normalize_skill_list(nice_to_have)
+
+    text = f"{role_title or ''}\n{jd_text or ''}".lower()
+    must = normalize_skill_list(must_have)
+    nice = normalize_skill_list(nice_to_have)
+    analytics_requested = bool(re.search(r"\b(data\s+visuali[sz]ation|analytics\s+dashboard|bi\s+dashboard|reporting\s+dashboard)\b", text, re.I))
+    demote = {
+        "Data Visualization",
+        "Data Analysis",
+        "Data Cleaning",
+        "Reporting",
+        "Dashboard",
+        "KPI",
+        "KPI Reporting",
+        "MIS Reporting",
+        "Business Reporting",
+    }
+    if analytics_requested:
+        demote.discard("Dashboard")
+        demote.discard("Data Visualization")
+
+    filtered = [skill for skill in must if skill not in demote]
+    demoted = [skill for skill in must if skill in demote]
+    default_required = role_family_default_must_have("full_stack")
+    default_nice = role_family_default_nice_to_have("full_stack")
+    filtered = normalize_skill_list(filtered + default_required)
+    nice = normalize_skill_list(nice + demoted + [skill for skill in default_nice if skill.lower() not in {item.lower() for item in filtered}])
+    return filtered, nice
+
+
 def _requirement_lines(jd_text=""):
     hard = []
     soft = []
@@ -169,6 +201,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             skill for skill in demoted_must_have
             if skill.lower() not in {item.lower() for item in must_have}
         ])
+    must_have, nice_to_have = _split_full_stack_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):

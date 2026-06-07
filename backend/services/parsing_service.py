@@ -90,8 +90,8 @@ def _looks_like_section_or_role_name(value):
         return True
     return bool(re.search(
         r"\b(data analyst|data analytics experience|business analyst|bi analyst|profile|summary|about me|objective|career objective|"
-        r"skills|technical skills|education|projects?|experience|contact|resume|curriculum vitae|preferred full name|"
-        r"job title|company name|department|hiring manager|application form|position applied)\b",
+        r"skills|technical skills|education|projects?|experience|contact|email|e-mail|resume|curriculum vitae|cv|preferred full name|"
+        r"job title|company name|department|hiring manager|application form|position applied|developer\s+at|engineer\s+at)\b|@",
         text,
         re.I,
     ))

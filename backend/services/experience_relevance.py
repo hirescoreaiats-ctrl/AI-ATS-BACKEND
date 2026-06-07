@@ -109,6 +109,20 @@ SALESFORCE_DEV_SPECIFIC_RE = re.compile(
 SENIOR_ROLE_RE = re.compile(r"\b(senior|sr\.?|lead|principal|architect|manager|tech\s+lead)\b", re.I)
 INTERNSHIP_RE = re.compile(r"\b(intern|internship|trainee|training|certification|trailhead)\b", re.I)
 
+FULL_STACK_ROLE_RE = re.compile(
+    r"\b(full[-\s]?stack|mern|mean|web\s+developer|software\s+engineer|software\s+developer|"
+    r"frontend|front[-\s]?end|backend|back[-\s]?end)\b",
+    re.I,
+)
+
+FULL_STACK_SIGNAL_RE = re.compile(
+    r"\b(react|next(?:\.js)?|vue(?:\.js)?|angular|node(?:\.js)?|express(?:\.js)?|django|fastapi|"
+    r"laravel|spring\s+boot|java|rest\s+api|api|apis|graphql|authentication|authorization|"
+    r"frontend|front[-\s]?end|backend|back[-\s]?end|database|mongodb|mysql|postgres(?:ql)?|sql|"
+    r"html|css|tailwind|bootstrap|docker|aws|azure|vercel|netlify|digital\s*ocean|git)\b",
+    re.I,
+)
+
 
 def estimate_salesforce_experience_years(parsed, resume_text=""):
     sf_years = 0.0
@@ -357,6 +371,15 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             role_title_score = 100
         elif role_family == "salesforce_crm" and SALESFORCE_ROLE_RE.search(role):
             role_title_score = 100
+        elif role_family == "full_stack":
+            full_stack_signals = {match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}
+            direct_full_stack_role = bool(FULL_STACK_ROLE_RE.search(role))
+            if re.search(r"\b(full[-\s]?stack|mern|mean)\b", role, re.I):
+                role_title_score = 100
+            elif direct_full_stack_role and len(full_stack_signals) >= 2:
+                role_title_score = max(role_title_score, 90)
+            elif direct_full_stack_role:
+                role_title_score = max(role_title_score, 72)
 
         block_skills = normalize_skill_list(known_skills_in_text(block_text))
         skill_hits = []
@@ -375,6 +398,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             domain_hits += 1
         if skill_hits:
             domain_hits += 1
+        if role_family == "full_stack" and len({match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}) >= 3:
+            domain_hits += 2
         domain_match_score = min(100, domain_hits * 35)
 
         seniority_signal_score = _seniority_block_score(job, target_seniority)

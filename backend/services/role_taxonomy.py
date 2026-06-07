@@ -31,12 +31,39 @@ ROLE_FAMILIES = {
         },
     },
     "full_stack": {
-        "patterns": [r"\bfull[-\s]?stack\b", r"\bmern\b", r"\bmean\b"],
-        "skills": ["JavaScript", "React", "Node.js", "Express", "SQL", "MongoDB"],
+        "patterns": [
+            r"\bfull[-\s]?stack\b",
+            r"\bfull\s+stack\s+web\s+developer\b",
+            r"\bweb\s+developer\b",
+            r"\bmern\b",
+            r"\bmean\b",
+            r"\breact\b.*\bnode\b|\bnode\b.*\breact\b",
+        ],
+        "skills": [
+            "JavaScript", "TypeScript", "React", "Next.js", "Vue", "Angular", "HTML", "CSS",
+            "Node.js", "Express", "Django", "FastAPI", "PHP", "Laravel", "Spring Boot",
+            "REST API", "MongoDB", "MySQL", "PostgreSQL", "SQL", "Git", "Docker", "AWS",
+        ],
+        "default_must_have": ["JavaScript", "React", "Node.js", "REST API", "MongoDB", "SQL", "Git"],
+        "default_core_groups": {
+            "frontend": ["React", "Next.js", "Vue", "Angular"],
+            "frontend_foundation": ["HTML", "CSS", "JavaScript", "TypeScript"],
+            "backend": ["Node.js", "Express", "Django", "FastAPI", "PHP", "Laravel", "Java", "Spring Boot"],
+            "database": ["MongoDB", "MySQL", "PostgreSQL", "SQL"],
+            "api_auth": ["REST API", "GraphQL", "JWT", "OAuth"],
+            "deployment_tools": ["Git", "GitHub", "Docker", "AWS", "DigitalOcean", "Vercel", "Netlify", "CI/CD"],
+        },
+        "default_nice_to_have": [
+            "TypeScript", "Next.js", "Docker", "CI/CD", "AWS", "Vercel", "Netlify",
+            "DigitalOcean", "JWT", "OAuth", "Postman", "Tailwind CSS", "Bootstrap",
+        ],
         "core_groups": {
-            "frontend": ["React", "Angular", "Vue", "JavaScript"],
-            "backend": ["Node.js", "Express", "Python", "Java", "Django", "Spring Boot"],
+            "frontend": ["React", "Next.js", "Angular", "Vue"],
+            "frontend_foundation": ["HTML", "CSS", "JavaScript", "TypeScript"],
+            "backend": ["Node.js", "Express", "Python", "Django", "FastAPI", "PHP", "Laravel", "Java", "Spring Boot"],
             "database": ["SQL", "PostgreSQL", "MySQL", "MongoDB"],
+            "api_auth": ["REST API", "GraphQL", "JWT", "OAuth", "Authentication"],
+            "deployment_tools": ["Git", "GitHub", "Docker", "AWS", "DigitalOcean", "Vercel", "Netlify", "CI/CD"],
         },
     },
     "mobile_development": {

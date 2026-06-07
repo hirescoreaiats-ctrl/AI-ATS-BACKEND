@@ -41,9 +41,9 @@ def _unsafe_person_name(value: Any) -> bool:
     if len(text) > 70 or len(text.split()) > 5:
         return True
     return bool(re.search(
-        r"\b(objective|career objective|preferred full name|job title|company name|department|"
+        r"@|\b(email|e-mail|objective|career objective|preferred full name|job title|company name|department|"
         r"hiring manager|application form|position applied|resume|profile|summary|skills?|"
-        r"education|experience|projects?|contact)\b",
+        r"education|experience|projects?|contact|developer\s+at|engineer\s+at|cv)\b",
         text,
         re.I,
     ))

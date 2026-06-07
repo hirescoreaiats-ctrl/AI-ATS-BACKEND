@@ -13,6 +13,8 @@ INVALID_COMPANY_TOKENS = {
     "chicago", "chicago il", "pittsburgh", "kirkland", "cresskill", "crm", "remote",
     "sfdc", "gcr", "asean", "greater china region", "market research company",
     "telemarketer", "telesales", "nashville software school",
+    "wa", "net", "application", "html css", "java", "react", "node.js", "express.js",
+    "react. node.js, express.js", "both node and browser environments",
 }
 
 
@@ -24,6 +26,14 @@ def _valid_company_name(value):
     if lowered in INVALID_COMPANY_TOKENS:
         return False
     if re.search(r"(https?://|www\.|linkedin|github|portfolio|profile|technical skills|work experience|professional experience|responsibilities)", text, re.I):
+        return False
+    if re.fullmatch(r"(wa|net|application|html\s+css|java|react|node\.?js|express\.?js|api|css|sms)", lowered, re.I):
+        return False
+    if re.search(r"\b(react|node\.?js|express\.?js|html|css|java|python|django|fastapi|api)\b", lowered, re.I) and not re.search(
+        r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|systems|labs|studio|media|group|microsoft|amazon|infosys|capgemini)\b",
+        lowered,
+        re.I,
+    ):
         return False
     if re.fullmatch(
         r"(surat|gujarat|maharashtra|pune|bengaluru|bangalore|hyderabad|chennai|kolkata|mumbai|delhi|"

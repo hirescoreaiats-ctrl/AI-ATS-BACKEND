@@ -461,7 +461,7 @@ def _format_candidate_experience(meta):
         if total is not None:
             label += f" ({total:g} total)"
         if direct == 0:
-            label += "; direct DA not proven"
+            label += "; direct role not proven"
         return label
     if total is not None:
         return f"{total:g} years"
