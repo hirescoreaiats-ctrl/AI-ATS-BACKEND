@@ -1,7 +1,7 @@
 import re
 
 from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups, role_family_default_must_have
-from backend.services.taxonomy import expand_skill_requirements, known_skills_in_text, normalize_skill_list
+from backend.services.taxonomy import SKILL_CATEGORIES, expand_skill_requirements, known_skills_in_text, normalize_skill_list
 
 
 SENIORITY_PATTERNS = [
@@ -82,6 +82,35 @@ def _seniority(role_title="", jd_text="", min_years=0):
     return "unknown"
 
 
+def _explicit_seniority(role_title="", jd_text=""):
+    text = f"{role_title or ''} {jd_text or ''}".lower()
+    return next((level for level, pattern in SENIORITY_PATTERNS if re.search(pattern, text, re.I)), "")
+
+
+def _explicit_crm_analytics_requirement(role_title="", jd_text=""):
+    text = f"{role_title or ''}\n{jd_text or ''}".lower()
+    return bool(re.search(
+        r"\b(?:salesforce|crm)\s+(?:data|report(?:ing|s)?|dashboard(?:s)?|analytics?|analyst|administrator|admin)\b|"
+        r"\b(?:data|report(?:ing|s)?|dashboard(?:s)?|analytics?)\s+(?:in|on|for|from)\s+(?:salesforce|crm)\b",
+        text,
+        re.I,
+    ))
+
+
+def _split_analytics_must_have(role_family, role_title, jd_text, must_have):
+    if role_family != "data_analytics" or _explicit_crm_analytics_requirement(role_title, jd_text):
+        return normalize_skill_list(must_have), []
+
+    filtered = []
+    demoted = []
+    for skill in normalize_skill_list(must_have):
+        if SKILL_CATEGORIES.get(skill) == "CRM":
+            demoted.append(skill)
+        else:
+            filtered.append(skill)
+    return filtered, demoted
+
+
 def _requirement_lines(jd_text=""):
     hard = []
     soft = []
@@ -132,8 +161,16 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             skill for skill in nice_to_have
             if skill.lower() not in {item.lower() for item in must_have}
         ])
+    must_have, demoted_must_have = _split_analytics_must_have(role_family, role_title, jd_text, must_have)
+    if demoted_must_have:
+        nice_to_have = normalize_skill_list(nice_to_have + [
+            skill for skill in demoted_must_have
+            if skill.lower() not in {item.lower() for item in must_have}
+        ])
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
+    if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
+        seniority = "mid-level" if min_years >= 2 else "unknown"
     hard, soft = _requirement_lines(jd_text)
 
     return {

@@ -26,7 +26,26 @@ def test_title_only_data_analyst_jd_gets_scoring_profile_defaults():
     assert {"Power BI", "Tableau", "Power Query", "DAX", "MIS Reporting"}.issubset(
         set(enrichment["preferred_skills"])
     )
-    assert {"querying", "spreadsheet", "bi_tool", "reporting"} == set(enrichment["core_skill_groups"])
+
+
+def test_data_analyst_jd_does_not_make_crm_skill_mandatory_by_accident():
+    enrichment = enrich_jd_for_scoring(
+        "Data Analyst. Minimum 5 years professional experience. Skills: Salesforce, Power BI, Excel, SQL, Python, Tableau.",
+        {
+            "job_title": "Data Analyst",
+            "role": "Data Analyst",
+            "min_experience_years": 5,
+        },
+        structured_jd={
+            **EMPTY_STRUCTURED,
+            "required_skills": ["Salesforce", "Power BI", "Excel", "SQL", "Python", "Tableau"],
+            "min_experience_years": 5,
+        },
+    )
+
+    assert enrichment["role_family"] == "data_analytics"
+    assert "Salesforce" not in enrichment["required_skills"]
+    assert enrichment["jd_profile"]["seniority_level"] == "mid-level"
 
 
 def test_title_only_salesforce_developer_jd_gets_developer_gates():

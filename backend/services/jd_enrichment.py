@@ -77,7 +77,7 @@ def enrich_jd_for_scoring(jd_text: str, job_data: dict | None = None, structured
     extracted_preferred = normalize_jd_skills(structured.get("preferred_skills") or [])
     profile = build_jd_profile(jd_text or role, profile_input, extracted_required)
 
-    required_skills = normalize_skill_list(extracted_required + (profile.get("must_have_skills") or []))
+    required_skills = normalize_skill_list(profile.get("must_have_skills") or extracted_required)
     family_nice_to_have = role_family_default_nice_to_have(profile.get("role_family"))
     preferred_skills = _dedupe_without_required(
         extracted_preferred

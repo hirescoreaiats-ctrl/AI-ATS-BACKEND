@@ -1778,7 +1778,9 @@ def rereview_candidate_profile(resume_id: str):
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        repaired = _repair_stored_candidate_profile(candidate, job, force=False)
+        stored_path = getattr(candidate, "resume_file_path", None) or ""
+        can_reparse_resume = bool(stored_path and (is_remote_storage_uri(stored_path) or Path(stored_path).exists()))
+        repaired = _repair_stored_candidate_profile(candidate, job, force=can_reparse_resume)
         if not repaired:
             _rescore_candidate_from_stored_fields(candidate, job)
         _record_candidate_workflow_event(
