@@ -410,6 +410,7 @@ async def upload_resumes(
 
     processed_count = 0
     duplicate_count = 0
+    processed_resume_ids = []
 
     for file in files:
         contents = await file.read()
@@ -511,11 +512,19 @@ async def upload_resumes(
         )
         db.add(resume_entry)
         db.flush()
-        background_tasks.add_task(_process_resume_application_background, resume_entry.id)
+        processed_resume_ids.append(resume_entry.id)
         processed_count += 1
 
     db.commit()
     db.close()
+
+    process_inline = os.getenv("PROCESS_RESUMES_INLINE", "true").strip().lower() not in {"0", "false", "no"}
+    if process_inline:
+        for resume_id in processed_resume_ids:
+            _process_resume_application_background(resume_id)
+    else:
+        for resume_id in processed_resume_ids:
+            background_tasks.add_task(_process_resume_application_background, resume_id)
 
     if processed_count == 0 and duplicate_count:
         return {
@@ -529,10 +538,10 @@ async def upload_resumes(
         raise HTTPException(status_code=422, detail="No resume could be saved. Please upload a PDF or DOCX resume.")
 
     return {
-        "message": "Application submitted. AI screening is running in background.",
+        "message": "Application processed successfully." if process_inline else "Application submitted. AI screening is running in background.",
         "total_resumes": processed_count,
         "duplicates": duplicate_count,
-        "processing": True,
+        "processing": not process_inline,
     }
 
     jd_text = job.jd_text
