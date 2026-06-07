@@ -5,16 +5,32 @@ from backend.validation_scoring import validate_email, validate_phone
 from backend.services.explanation_service import generate_recruiter_explanation
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_profile_engine import build_jd_profile
-from backend.services.parsing_service import parse_resume_enterprise
+from backend.services.canonical_parser import apply_safe_primary_fields, parse_resume_document
 from backend.services.resume_quality_gate import apply_parser_quality_gate, build_parser_quality_report
 from backend.services.scoring_service import score_candidate
 from backend.services.semantic_service import candidate_embedding_payload, cosine_similarity_cached
 
 
-def _explicit_experience_years(text):
+def _explicit_experience_years(text, jd_profile=None):
     import re
 
     values = []
+    jd_profile = jd_profile or {}
+    role_terms = set()
+    for value in [
+        jd_profile.get("role_title"),
+        jd_profile.get("role_family"),
+        *(jd_profile.get("must_have_skills") or []),
+        *(jd_profile.get("responsibility_signals") or []),
+    ]:
+        for token in re.findall(r"[a-z][a-z0-9+#.]{2,}", str(value or "").lower()):
+            if token not in {"years", "experience", "role", "job", "and", "with", "using"}:
+                role_terms.add(token)
+    professional_terms = {
+        "experience", "work", "worked", "professional", "employment", "career",
+        "role", "responsibilities", "handled", "managed", "developed", "implemented",
+        "supported", "delivered", "created", "built",
+    }
     for match in re.finditer(r"\b(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b", text or "", re.I):
         number = float(match.group(1))
         context = (text or "")[max(0, match.start() - 80): match.end() + 120].lower()
@@ -28,10 +44,10 @@ def _explicit_experience_years(text):
             "virtual experience",
         ]):
             continue
-        if any(word in context for word in [
-            "experience", "data analyst", "analyst", "reporting", "dashboard", "power bi", "sql", "mis",
-            "software development", "software developer", "developer", "salesforce", "crm",
-        ]):
+        context_tokens = set(re.findall(r"[a-z][a-z0-9+#.]{2,}", context))
+        has_professional_context = bool(context_tokens & professional_terms)
+        has_role_context = bool(role_terms and context_tokens & role_terms)
+        if has_professional_context and (has_role_context or "experience" in context_tokens):
             values.append(number)
     return max(values) if values else 0
 
@@ -62,8 +78,8 @@ def _jd_experience_range(text):
 
 
 def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
-    parsed = parse_resume_enterprise(text)
     jd_profile = build_jd_profile(jd_text, jd_data, jd_skills)
+    parsed = parse_resume_document(text, job_context={**(jd_data or {}), "jd_profile": jd_profile}, mode="application")
 
     parsed["domain"] = parsed.get("domain") or detect_domain(
         parsed.get("key_skills", []),
@@ -71,12 +87,14 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     )
 
     exp_data = process_experience(parsed.get("experience", []))
-    explicit_years = _explicit_experience_years(text)
+    explicit_years = _explicit_experience_years(text, jd_profile)
     resume_lower = (text or "").lower()
-    explicit_is_role_relevant = explicit_years and any(
-        term in resume_lower
-        for term in ["data analyst", "mis analyst", "business analyst", "bi analyst", "reporting", "dashboard", "power bi", "sql"]
-    )
+    role_terms = [
+        str(item).lower()
+        for item in [jd_profile.get("role_title"), *(jd_profile.get("must_have_skills") or [])]
+        if str(item or "").strip()
+    ]
+    explicit_is_role_relevant = bool(explicit_years and any(term and term in resume_lower for term in role_terms))
     if explicit_is_role_relevant and explicit_years < exp_data["total_experience_years"]:
         exp_data["total_experience_years"] = explicit_years
     elif explicit_years > exp_data["total_experience_years"]:
@@ -112,7 +130,12 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
             repaired_ai_parse = repair_parse_resume(text, parsed, issue_messages)
         parsed["parser_recall_attempted"] = True
         if repaired_ai_parse:
-            repaired = parse_resume_enterprise(text, ai_parse_override=repaired_ai_parse)
+            repaired = parse_resume_document(
+                text,
+                job_context={**(jd_data or {}), "jd_profile": jd_profile},
+                mode="application_repair",
+                ai_parse_override=repaired_ai_parse,
+            )
             repaired_exp_data = process_experience(repaired.get("experience", []))
             repaired["total_experience_years"] = repaired_exp_data["total_experience_years"]
             repaired["email"] = validate_email(repaired.get("email"))
@@ -191,6 +214,7 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     score_data = score_candidate(parsed, jd_text, jd_profile.get("must_have_skills") or jd_skills, jd_data, text, jd_profile=jd_profile)
     parsed.update(score_data)
     quality_report = apply_parser_quality_gate(parsed, exp_data, jd_data, text)
+    apply_safe_primary_fields(parsed)
     if quality_report.get("parser_quality_action") == "manual_review_required" and parsed.get("final_score", 0) > 58:
         parsed["final_score"] = 58
         parsed["rank_score"] = min(parsed.get("rank_score") or 58, 58)

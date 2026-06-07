@@ -32,7 +32,7 @@ from backend.services.explanation_service import generate_recruiter_explanation
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_enrichment import enrich_jd_for_scoring
 from backend.services.jd_profile_engine import build_jd_profile
-from backend.services.parsing_service import parse_resume_enterprise
+from backend.services.canonical_parser import parse_resume_document
 from backend.services.pipeline import analyze_resume_for_job
 from backend.services.scoring_service import score_candidate
 from backend.services.scoring_context import apply_job_jd_snapshot, apply_job_scoring_snapshot, job_jd_hash
@@ -206,7 +206,7 @@ def _candidate_projects(candidate: Resume):
 
     if candidate.resume_text:
         try:
-            parsed = parse_resume_enterprise(candidate.resume_text, ai_parse_override={})
+            parsed = parse_resume_document(candidate.resume_text, mode="project_fallback", ai_parse_override={})
             projects = parsed.get("projects") or []
             if projects:
                 candidate.projects = json.dumps(projects, ensure_ascii=False)

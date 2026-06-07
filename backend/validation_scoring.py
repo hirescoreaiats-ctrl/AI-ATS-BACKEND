@@ -23,10 +23,35 @@ def validate_phone(phone):
     if not phone:
         return None
 
-    digits = re.sub(r"\D", "", phone)
+    value = str(phone or "")
+    clean = re.sub(r"[\u2010-\u2015\u2212]", "-", value)
+    clean = re.sub(r"\s+", " ", clean).strip()
 
-    if len(digits) >= 10:
-        return digits[-10:]
+    if re.search(r"\b(19|20)\d{2}\s*(?:-|to)\s*(19|20)\d{2}\b", clean, re.I):
+        return None
+    if re.search(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\b", clean, re.I):
+        return None
+    if re.search(r"\b(?:cgpa|gpa|percentage|score|marks|graduated|education|experience|project|invoice|employee id)\b", clean, re.I):
+        return None
+
+    candidates = re.findall(r"(?:\+?\d[\d\s().-]{8,}\d)", clean)
+    if not candidates and re.fullmatch(r"\+?\d{10,15}", clean):
+        candidates = [clean]
+
+    for candidate in candidates:
+        digits = re.sub(r"\D", "", candidate)
+        if not 10 <= len(digits) <= 15:
+            continue
+        if re.fullmatch(r"(19|20)\d{2}(19|20)\d{2,}", digits):
+            continue
+        if len(set(digits)) <= 2:
+            continue
+        if len(digits) == 10:
+            return digits
+        if digits.startswith("91") and len(digits) == 12:
+            return digits[-10:]
+        if len(digits) in {11, 12, 13, 14, 15}:
+            return f"+{digits}" if clean.strip().startswith("+") else digits
 
     return None
 

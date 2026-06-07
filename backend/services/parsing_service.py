@@ -2317,10 +2317,18 @@ def _clean_project_records(records):
     filtered = []
     for project in ranked:
         name_key = re.sub(r"[^a-z0-9]+", " ", str(project.get("name") or "").lower()).strip()
+        name_tokens = name_key.split()
         if any(
             name_key
             and name_key != re.sub(r"[^a-z0-9]+", " ", str(existing.get("name") or "").lower()).strip()
-            and name_key in re.sub(r"[^a-z0-9]+", " ", str(existing.get("name") or "").lower()).strip()
+            and (
+                name_key in re.sub(r"[^a-z0-9]+", " ", str(existing.get("name") or "").lower()).strip()
+                or re.sub(r"[^a-z0-9]+", " ", str(existing.get("name") or "").lower()).strip() in name_key
+                or (
+                    len(name_tokens) >= 4
+                    and " ".join(name_tokens[:4]) in re.sub(r"[^a-z0-9]+", " ", str(existing.get("name") or "").lower()).strip()
+                )
+            )
             for existing in filtered
         ):
             continue
@@ -2600,6 +2608,7 @@ def _validate_parser_company(value):
         return "", 0.25, "company_needs_review"
     if (
         _date_range_like(company)
+        or re.search(r"\+?\d[\d\s().-]{8,}\d", company)
         or _link_or_profile_text(company)
         or _looks_like_bad_company(company)
         or _looks_like_skill_list_or_section_noise(company)
@@ -2715,11 +2724,31 @@ def _apply_parser_reliability_layer(parsed, sections, parser_flags):
         company, company_confidence, company_flag = _validate_parser_company(job.get("company_name"))
         job["company_name"] = company
         if company:
+            job["company_confidence"] = company_confidence
+            job["record_confidence"] = max(float(job.get("record_confidence") or 0), 0.75)
             valid_companies.append(company)
             valid_company_jobs.append((company, job))
             validated_experience.append(job)
-        elif company_flag:
-            flags.add(company_flag)
+        else:
+            role = str(job.get("role") or "").strip()
+            description = str(job.get("description") or "").strip()
+            dates = " ".join(str(job.get(key) or "") for key in ("start_date", "end_date"))
+            has_useful_role_or_date = bool(
+                role
+                and not re.fullmatch(r"(experience|work experience|professional experience|employment history|projects?|education|skills?|contact|summary|profile)", role, re.I)
+                and (
+                    re.search(r"\b(19|20)\d{2}|present|current\b", dates, re.I)
+                    or len(description.split()) >= 5
+                )
+            )
+            if has_useful_role_or_date:
+                job["company_confidence"] = company_confidence
+                job["record_confidence"] = min(float(job.get("record_confidence") or 0.65), 0.65)
+                job["needs_review"] = True
+                validated_experience.append(job)
+                flags.add("company_needs_review")
+            elif company_flag:
+                flags.add(company_flag)
     parsed["experience"] = validated_experience
     confidence["last_company"] = 0.85 if valid_companies else (0.35 if parsed.get("experience") else 0.25)
     if not valid_companies and parsed.get("experience"):
@@ -2919,9 +2948,15 @@ def parse_resume_enterprise(text, ai_parse_override=None):
         parser_flags.append("education_needs_review")
 
     raw_ai_projects = parsed.get("projects") or []
-    inferred_projects = _recover_projects_from_text(text) + _infer_projects(sections)
+    has_project_section = bool(sections.get("projects"))
+    inferred_projects = (_recover_projects_from_text(text) + _infer_projects(sections)) if has_project_section else _recover_projects_from_text(text)
     cleaned_ai_projects = _clean_project_records(raw_ai_projects)
-    parsed["projects"] = cleaned_ai_projects or _clean_project_records(inferred_projects)
+    if has_project_section:
+        parsed["projects"] = cleaned_ai_projects or _clean_project_records(inferred_projects)
+    else:
+        parsed["projects"] = _clean_project_records(inferred_projects)
+        if cleaned_ai_projects:
+            parser_flags.append("project_ai_without_section")
     if raw_ai_projects and not cleaned_ai_projects:
         parser_flags.append("project_noise_detected")
     if sections.get("projects") and not parsed.get("projects"):

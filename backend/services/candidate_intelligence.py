@@ -13,12 +13,18 @@ INTELLIGENCE_FIELD_MAP = {
     "core_skill_match_percent": "core_skill_match_percent",
     "parser_quality_score": "parser_quality_score",
     "parser_quality_action": "parser_quality_action",
+    "profile_extraction_quality": "profile_extraction_quality",
     "experience_relevance_label": "experience_relevance_label",
 }
 
 JSON_INTELLIGENCE_FIELDS = [
     "missing_core_skill_groups",
     "parser_quality_flags",
+    "raw_parsed_json",
+    "safe_parsed_json",
+    "field_confidence_json",
+    "field_sources_json",
+    "text_extraction_quality",
     "experience_evidence",
     "experience_warnings",
     "score_caps_applied",
@@ -26,6 +32,7 @@ JSON_INTELLIGENCE_FIELDS = [
     "risk_flags",
     "scoring_breakdown",
     "jd_profile_json",
+    "jd_profile_snapshot_json",
 ]
 
 
@@ -60,6 +67,7 @@ def apply_resume_intelligence_fields(resume, parsed):
 
 def resume_intelligence_payload(candidate):
     scoring_breakdown = from_json_text(getattr(candidate, "scoring_breakdown", None), {})
+    experience_evidence = from_json_text(getattr(candidate, "experience_evidence", None), [])
     stored_score = getattr(candidate, "final_score", None)
     evidence_score = None
     if isinstance(scoring_breakdown, dict):
@@ -88,8 +96,14 @@ def resume_intelligence_payload(candidate):
         "parser_quality_score": getattr(candidate, "parser_quality_score", None),
         "parser_quality_action": getattr(candidate, "parser_quality_action", None),
         "parser_quality_flags": from_json_text(getattr(candidate, "parser_quality_flags", None), []),
+        "profile_extraction_quality": getattr(candidate, "profile_extraction_quality", None),
+        "raw_parsed_json": from_json_text(getattr(candidate, "raw_parsed_json", None), {}),
+        "safe_parsed_json": from_json_text(getattr(candidate, "safe_parsed_json", None), {}),
+        "field_confidence_json": from_json_text(getattr(candidate, "field_confidence_json", None), {}),
+        "field_sources_json": from_json_text(getattr(candidate, "field_sources_json", None), {}),
+        "text_extraction_quality": from_json_text(getattr(candidate, "text_extraction_quality", None), {}),
         "experience_relevance_label": getattr(candidate, "experience_relevance_label", None),
-        "experience_evidence": from_json_text(getattr(candidate, "experience_evidence", None), []),
+        "experience_evidence": experience_evidence,
         "experience_warnings": from_json_text(getattr(candidate, "experience_warnings", None), []),
         "score_caps_applied": from_json_text(getattr(candidate, "score_caps_applied", None), []),
         "recruiter_flags": from_json_text(getattr(candidate, "recruiter_flags", None), []),
@@ -99,4 +113,17 @@ def resume_intelligence_payload(candidate):
         "stale_score_delta": round(score_delta, 2),
         "current_evidence_score": evidence_score,
         "jd_profile_json": from_json_text(getattr(candidate, "jd_profile_json", None), {}),
+        "domain_specific_experience_years": scoring_breakdown.get("domain_specific_experience_years"),
+        "professional_role_experience_years": scoring_breakdown.get("professional_role_experience_years"),
+        "training_or_certification_exposure": scoring_breakdown.get("training_or_certification_exposure"),
+        "project_only_exposure": scoring_breakdown.get("project_only_exposure"),
+        "current_title": scoring_breakdown.get("current_title") or getattr(candidate, "designation", None),
+        "most_relevant_title": scoring_breakdown.get("most_relevant_role"),
+        "target_role_alignment": scoring_breakdown.get("target_role_alignment"),
+        "seniority_fit": scoring_breakdown.get("seniority_fit") or scoring_breakdown.get("experience_fit"),
+        "matched_skill_evidence": scoring_breakdown.get("matched_skill_evidence") or [],
+        "missing_or_weak_skills": scoring_breakdown.get("missing_or_weak_skills") or [],
+        "jd_aligned_work_evidence": scoring_breakdown.get("jd_aligned_work_evidence") or experience_evidence,
+        "jd_aligned_project_evidence": scoring_breakdown.get("jd_aligned_project_evidence") or [],
+        "non_jd_projects": scoring_breakdown.get("non_jd_projects") or [],
     }

@@ -59,6 +59,8 @@ def apply_job_scoring_snapshot(resume, job, jd_profile: dict | None = None) -> d
         resume.score_jd_hash = job_jd_hash(job)
     if hasattr(resume, "jd_profile_json"):
         resume.jd_profile_json = json.dumps(profile or {}, ensure_ascii=False)
+    if hasattr(resume, "jd_profile_snapshot_json"):
+        resume.jd_profile_snapshot_json = json.dumps(profile or {}, ensure_ascii=False)
     return profile
 
 

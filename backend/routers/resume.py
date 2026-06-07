@@ -13,7 +13,7 @@ from backend.models import Job, Resume
 
 from backend.extractor import extract_text_from_pdf, extract_text_from_docx
 from backend.services.pipeline import analyze_resume_for_job
-from backend.services.parsing_service import parse_resume_enterprise
+from backend.services.canonical_parser import parse_resume_document
 from backend.ai.vector_search import enrich_candidate_embedding
 from backend.jd_engine import normalize_jd_skills
 from backend.services.candidate_intelligence import apply_resume_intelligence_fields, resume_intelligence_payload
@@ -141,7 +141,8 @@ async def parse_resume_autofill(file: UploadFile = File(...)):
     if not text.strip():
         raise HTTPException(status_code=422, detail="Could not read text from this resume")
 
-    parsed = parse_resume_enterprise(text[:12000])
+    parsed = parse_resume_document(text[:12000], mode="autofill")
+    safe_parsed = parsed.get("safe_parsed_json") or {}
     links = {
         "linkedin": parsed.get("linkedin") or "",
         "github": parsed.get("github") or "",
@@ -151,12 +152,20 @@ async def parse_resume_autofill(file: UploadFile = File(...)):
 
     return {
         "fields": {
-            "form_full_name": parsed.get("full_name") or "",
+            "form_full_name": safe_parsed.get("full_name") or parsed.get("full_name") or "",
             "form_email": parsed.get("email") or "",
-            "form_phone": parsed.get("phone") or "",
+            "form_phone": safe_parsed.get("phone") or parsed.get("phone") or "",
             "form_location": parsed.get("location") or "",
             "linkedin": profile_url,
-        }
+        },
+        "safe_display": parsed.get("safe_display") or {},
+        "field_confidence": parsed.get("field_confidence") or {},
+        "field_sources": parsed.get("field_sources_json") or {},
+        "parser_quality_score": parsed.get("parser_quality_score"),
+        "parser_quality_action": parsed.get("parser_quality_action"),
+        "parser_quality_flags": parsed.get("parser_quality_flags") or [],
+        "profile_extraction_quality": parsed.get("profile_extraction_quality"),
+        "text_extraction_quality": parsed.get("text_extraction_quality") or {},
     }
 
 
@@ -843,6 +852,12 @@ async def bulk_analyze(
             "parser_quality_score": parsed.get("parser_quality_score"),
             "parser_quality_action": parsed.get("parser_quality_action"),
             "parser_quality_flags": parsed.get("parser_quality_flags"),
+            "profile_extraction_quality": parsed.get("profile_extraction_quality"),
+            "safe_display": parsed.get("safe_display"),
+            "field_confidence": parsed.get("field_confidence"),
+            "field_sources": parsed.get("field_sources_json"),
+            "text_extraction_quality": parsed.get("text_extraction_quality"),
+            "safe_parsed_json": parsed.get("safe_parsed_json"),
             "score_caps_applied": parsed.get("score_caps_applied"),
             "recruiter_flags": parsed.get("recruiter_flags"),
             "risk_flags": parsed.get("risk_flags"),
