@@ -115,6 +115,26 @@ def build_parser_quality_report(text, parsed, exp_data=None, jd_data=None):
     if noisy_companies:
         _flag(flags, "noisy_experience_company", "critical", "One or more company names look like parsed resume paragraphs.", 25)
 
+    jd_profile_json = parsed.get("jd_profile_json") if isinstance(parsed.get("jd_profile_json"), dict) else {}
+    role_family = _clean_text(parsed.get("role_family") or jd_profile_json.get("role_family")).lower()
+    if role_family == "full_stack":
+        full_stack_skill_hits = len([
+            skill for skill in parsed.get("key_skills") or []
+            if re.search(
+                r"\b(react|next|vue|angular|node|express|django|fastapi|laravel|mongodb|mysql|postgres|sql|"
+                r"rest|api|jwt|auth|git|docker|aws|vercel|netlify|nginx|linux)\b",
+                str(skill),
+                re.I,
+            )
+        ])
+        has_work_or_project = bool(parsed.get("experience") or parsed.get("projects"))
+        if full_stack_skill_hits >= 6 and has_work_or_project:
+            for item in flags:
+                if item.get("code") == "noisy_experience_company":
+                    item["severity"] = "warning"
+                    item["penalty"] = min(float(item.get("penalty") or 0), 10)
+                    item["message"] = "One or more company names need recruiter validation."
+
     sections = parsed.get("sections") or {}
     has_work_section = bool(sections.get("experience"))
     explicit_years = explicit_experience_years(text)

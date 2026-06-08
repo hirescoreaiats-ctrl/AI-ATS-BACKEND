@@ -15,6 +15,9 @@ INVALID_COMPANY_TOKENS = {
     "telemarketer", "telesales", "nashville software school",
     "wa", "net", "application", "html css", "java", "react", "node.js", "express.js",
     "react. node.js, express.js", "both node and browser environments",
+    "us", "usa", "u.s.", "u.s.a.", "js", "sms", "machine learning", "website",
+    "uttar pradesh", "haryana", "gurgaon", "gurugram", "jaipur", "chennai", "india",
+    "api", "api &", "lead", "& team lead",
 }
 
 
@@ -27,7 +30,14 @@ def _valid_company_name(value):
         return False
     if re.search(r"(https?://|www\.|linkedin|github|portfolio|profile|technical skills|work experience|professional experience|responsibilities)", text, re.I):
         return False
-    if re.fullmatch(r"(wa|net|application|html\s+css|java|react|node\.?js|express\.?js|api|css|sms)", lowered, re.I):
+    if re.fullmatch(
+        r"(wa|net|us|usa|u\.s\.|u\.s\.a\.|application|html\s+css|java|js|react|node\.?js|"
+        r"express\.?js|api|api\s*&|css|sms|machine\s+learning|website|lead|&\s*team\s+lead)",
+        lowered,
+        re.I,
+    ):
+        return False
+    if re.fullmatch(r"(uttar\s+pradesh|haryana|gurgaon|gurugram|jaipur|chennai|india|remote|hybrid)", lowered, re.I):
         return False
     if re.search(r"\b(react|node\.?js|express\.?js|html|css|java|python|django|fastapi|api)\b", lowered, re.I) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|systems|labs|studio|media|group|microsoft|amazon|infosys|capgemini)\b",

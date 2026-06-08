@@ -40,10 +40,16 @@ def _unsafe_person_name(value: Any) -> bool:
         return False
     if len(text) > 70 or len(text.split()) > 5:
         return True
+    if re.search(r"\s[-\u2013\u2014]\s", text) or re.search(r"\b(entri|elevate|cohort|coursework)\b", text, re.I):
+        return True
+    parts = text.split()
+    if len(parts) >= 4 and sum(1 for part in parts if len(part.strip(".-")) <= 2) >= 2:
+        return True
     return bool(re.search(
         r"@|\b(email|e-mail|objective|career objective|preferred full name|job title|company name|department|"
         r"hiring manager|application form|position applied|resume|profile|summary|skills?|"
-        r"education|experience|projects?|contact|developer\s+at|engineer\s+at|cv)\b",
+        r"education|experience|projects?|contact|developer\s+at|engineer\s+at|cv|about|github|github\.com|"
+        r"coursework|main developer|nilaya|nagar|road|street|layout|address)\b",
         text,
         re.I,
     ))

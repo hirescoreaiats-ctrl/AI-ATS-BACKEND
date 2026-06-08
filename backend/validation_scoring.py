@@ -13,9 +13,16 @@ def validate_email(email):
     if not email:
         return None
 
-    pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    value = str(email or "").strip()
+    pattern = (
+        r"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\."
+        r"(?:co\.in|com|net|org|edu|gov|io|ai|dev|me|info|biz|in|us|uk|ca|au|de|fr|sg))"
+    )
+    match = re.search(pattern, value, re.I)
+    if match:
+        return match.group(1).lower()
 
-    return email if re.match(pattern, email) else None
+    return None
 
 
 def validate_phone(phone):

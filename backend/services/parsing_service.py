@@ -90,8 +90,10 @@ def _looks_like_section_or_role_name(value):
         return True
     return bool(re.search(
         r"\b(data analyst|data analytics experience|business analyst|bi analyst|profile|summary|about me|objective|career objective|"
-        r"skills|technical skills|education|projects?|experience|contact|email|e-mail|resume|curriculum vitae|cv|preferred full name|"
-        r"job title|company name|department|hiring manager|application form|position applied|developer\s+at|engineer\s+at)\b|@",
+        r"about|github|github\.com|linkedin|portfolio|coursework|select coursework|main developer|skills|technical skills|"
+        r"education|projects?|experience|contact|email|e-mail|resume|curriculum vitae|cv|preferred full name|"
+        r"job title|company name|department|hiring manager|application form|position applied|developer\s+at|engineer\s+at|"
+        r"nilaya|nagar|road|street|layout|phase|sector|apartment|building|address)\b|@",
         text,
         re.I,
     ))
@@ -125,6 +127,8 @@ def _clean_person_name(name, email=""):
     value = re.sub(r"^(?:resume\s*)?(?:name|candidate\s+name)\s*[:\-]\s*", "", value, flags=re.I).strip(" |-")
     if not value:
         return value
+    if re.search(r"\s[-\u2013\u2014]\s", value) or re.search(r"\b(entri|elevate|cohort|coursework)\b", value, re.I):
+        return ""
     location_tokens = {
         "toronto", "ontario", "canada", "india", "usa", "us", "united", "states",
         "hyderabad", "bangalore", "bengaluru", "noida", "gurugram", "gurgaon",
@@ -157,6 +161,8 @@ def _clean_person_name(name, email=""):
     if _looks_like_section_or_role_name(value) or "dataanalyticsexperience" in compact_value:
         return ""
     name_parts = value.split()
+    if len(name_parts) >= 4 and sum(1 for part in name_parts if len(part.strip(".-")) <= 2) >= 2:
+        return ""
     if 2 <= len(name_parts) <= 4 and all(re.fullmatch(r"[A-Za-z][A-Za-z'-]*", part) for part in name_parts):
         return _title_name_parts(name_parts)
     return value.title() if value.isupper() else value
@@ -212,11 +218,16 @@ def _recover_header_name_from_lines(text):
         line = re.sub(r"\s+", " ", line).strip()
         if line:
             top_lines.append(line)
-    blocked = re.compile(r"\b(data|analyst|education|profile|skills?|technologies|contact|resume|email|phone)\b", re.I)
+    blocked = re.compile(
+        r"\b(data|analyst|education|profile|skills?|technologies|contact|resume|email|phone|candidate|"
+        r"developer|engineer|full\s*stack|frontend|backend|software|github|linkedin|portfolio|example|com)\b",
+        re.I,
+    )
     candidates = [
         line for line in top_lines
         if 2 <= len(line) <= 30
         and not blocked.search(line)
+        and len(known_skills_in_text(line)) < 2
         and not _looks_like_section_or_role_name(line)
     ]
     if len(candidates) >= 2:
@@ -670,6 +681,14 @@ def _looks_like_bad_company(value):
     text = re.sub(r"\bP\s+C\b", "PC", text, flags=re.I)
     compact_text = re.sub(r"[^a-z]", "", text.lower())
     if not text:
+        return True
+    if re.fullmatch(
+        r"(us|usa|u\.s\.|u\.s\.a\.|wa|net|js|sms|api|api\s*&|java|react|node\.?js|express\.?js|"
+        r"html\s+css|css|website|machine\s+learning|lead|&\s*team\s+lead|uttar\s+pradesh|"
+        r"haryana|gurgaon|gurugram|jaipur|chennai|india|remote|hybrid)",
+        text,
+        re.I,
+    ):
         return True
     if re.fullmatch(r"(llc|inc|ltd|corp|corporation|co\.?|company|pvt|private|limited)", text, re.I):
         return True

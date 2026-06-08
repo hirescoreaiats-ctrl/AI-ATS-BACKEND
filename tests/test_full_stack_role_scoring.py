@@ -4,6 +4,7 @@ from backend.services.canonical_parser import parse_resume_document
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.scoring_service import score_candidate
+from backend.validation_scoring import validate_email
 
 
 FULL_STACK_JD = """
@@ -63,6 +64,9 @@ def test_strong_full_stack_candidate_is_not_rejected():
     assert result["final_score"] >= 75
     assert "Data Visualization" not in result["missing_skills"]
     assert result["jd_role_family"] == "full_stack"
+    assert "Backend" not in result["missing_skills"]
+    assert "Database" not in result["missing_skills"]
+    assert "Api Auth" not in result["missing_skills"]
 
 
 def test_senior_full_stack_candidate_is_review_overqualified_not_fake_low_relevance():
@@ -113,6 +117,63 @@ def test_full_stack_relevance_counts_software_engineer_with_web_stack():
     assert relevance["role_relevance_score"] >= 55
 
 
+def test_full_stack_or_group_does_not_hallucinate_all_frontend_frameworks():
+    profile = full_stack_profile()
+    parsed = {
+        "full_name": "Ajay Kumar",
+        "designation": "Software Developer",
+        "key_skills": ["React", "Vue", "Node.js", "Express", "MongoDB", "MySQL", "JWT", "Nginx", "Linux", "GitHub"],
+        "total_experience_years": 1.5,
+        "relevant_experience_years": 1.5,
+        "role_relevance_score": 82,
+        "experience": [{
+            "role": "Software Developer",
+            "company_name": "Tech Services Pvt Ltd",
+            "description": "Built React and Vue interfaces, Node.js Express APIs, JWT authentication, MongoDB and MySQL integrations, and deployed apps on Nginx Linux servers.",
+            "start_date": "2024",
+            "end_date": "Present",
+        }],
+        "resume_quality_score": 82,
+    }
+
+    result = score_candidate(parsed, FULL_STACK_JD, profile["must_have_skills"], {"role": "Full Stack Web Developer"}, FULL_STACK_JD, jd_profile=profile)
+
+    assert result["recommendation"] in {"shortlisted", "in_review"}
+    assert "React" in result["matched_skills"]
+    assert "Vue" in result["matched_skills"]
+    assert "Next.js" not in result["matched_skills"]
+    assert "Angular" not in result["matched_skills"]
+    assert "Api Auth" not in result["missing_skills"]
+    assert "Deployment Tools" not in result["missing_skills"]
+
+
+def test_full_stack_keyword_only_groups_are_review_not_rejected():
+    profile = full_stack_profile()
+    parsed = {
+        "full_name": "Kartik Tomar",
+        "designation": "Full Stack Developer",
+        "key_skills": ["JavaScript", "React", "Node.js", "Express", "MongoDB", "HTML", "CSS", "GitHub"],
+        "total_experience_years": 1.9,
+        "relevant_experience_years": 1.9,
+        "role_relevance_score": 80,
+        "experience": [{
+            "role": "Software Engineer",
+            "company_name": "Double Slit Media Tech",
+            "description": "Developed full-stack product features and maintained APIs for production users.",
+            "start_date": "2024",
+            "end_date": "Present",
+        }],
+        "resume_quality_score": 80,
+    }
+
+    result = score_candidate(parsed, FULL_STACK_JD, profile["must_have_skills"], {"role": "Full Stack Web Developer"}, FULL_STACK_JD, jd_profile=profile)
+
+    assert result["recommendation"] != "rejected"
+    assert result["final_score"] >= 60
+    assert "Backend" not in result["missing_skills"]
+    assert "Database" not in result["missing_skills"]
+
+
 def test_full_stack_parser_rejects_email_or_role_fragments_as_candidate_name():
     parsed = parse_resume_document(
         "Full Stack Developer\nEmail: webdevdesign@sundeepcharan.com\nReact Node.js Express MongoDB",
@@ -126,6 +187,23 @@ def test_full_stack_parser_rejects_email_or_role_fragments_as_candidate_name():
 
     assert parsed["full_name"] == ""
     assert "name_needs_review" in set(parsed.get("parser_flags") or [])
+
+
+def test_full_stack_parser_rejects_address_or_project_fragments_as_candidate_name():
+    for bad_name in [
+        "About Gies.",
+        "Shri Mylara Lingeshwara Nilaya",
+        "- Main Developer Alius.Ai",
+        "Github.com mattchiaravalloti Select coursework",
+        "De V Prakash Si Ngh",
+    ]:
+        parsed = parse_resume_document(
+            f"{bad_name}\nFull Stack Developer\ncandidate@example.com\nReact Node.js MongoDB",
+            mode="test",
+            ai_parse_override={"full_name": bad_name, "email": "candidate@example.com"},
+        )
+
+        assert parsed["full_name"] == ""
 
 
 def test_full_stack_company_parser_does_not_use_tech_stack_fragments_as_last_company():
@@ -151,3 +229,18 @@ def test_full_stack_company_parser_does_not_use_tech_stack_fragments_as_last_com
     ])
 
     assert result["last_company_name"] == "Capgemini"
+
+
+def test_full_stack_company_parser_rejects_locations_and_skill_headings():
+    result = process_experience([
+        {"company_name": "US", "role": "Full Stack Developer", "start_date": "2024", "end_date": "Present"},
+        {"company_name": "Uttar Pradesh", "role": "Software Developer", "start_date": "2023", "end_date": "2024"},
+        {"company_name": "Machine Learning", "role": "Intern", "start_date": "2022", "end_date": "2023"},
+        {"company_name": "U2USystems, Singapore", "role": "Associate", "start_date": "2021", "end_date": "2022"},
+    ])
+
+    assert result["last_company_name"] == "U2USystems, Singapore"
+
+
+def test_resume_email_validation_extracts_clean_email_from_concatenated_text():
+    assert validate_email("7014167848himanshumeena2572006@gmail.comJaipur") == "7014167848himanshumeena2572006@gmail.com"

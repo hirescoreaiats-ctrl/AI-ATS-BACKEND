@@ -943,8 +943,15 @@ FULL_STACK_GROUP_WEIGHTS = {
 def _full_stack_group_score(group, options, parsed, resume_text, candidate_skills):
     evidences = []
     for skill in normalize_skill_list(options or []):
-        direct, equiv = _skill_match(skill, candidate_skills)
-        evidence = _classify_skill_evidence(skill, parsed, resume_text, candidate_skills, equivalent=equiv)
+        direct = any(skill.lower() == candidate.lower() for candidate in candidate_skills)
+        evidence = _classify_skill_evidence(skill, parsed, resume_text, candidate_skills, equivalent=False)
+        if not direct and evidence.get("source") == "skills_section_equivalent":
+            continue
+        if direct and evidence.get("source") in {"skills_section", "resume_text"}:
+            evidence = dict(evidence)
+            evidence["weight"] = max(float(evidence.get("weight") or 0), 0.38)
+            evidence["evidence_level"] = "skills_section_only"
+            evidence["depth"] = "skills_section_only"
         if evidence.get("status") != "missing" and evidence.get("weight", 0) > 0:
             evidences.append(evidence)
     if not evidences:
@@ -957,7 +964,7 @@ def _full_stack_group_score(group, options, parsed, resume_text, candidate_skill
             "evidence": [],
         }
     best = max(evidences, key=lambda item: float(item.get("weight") or 0))
-    bonus = min(0.18, max(0, len(evidences) - 1) * 0.06)
+    bonus = min(0.16, max(0, len(evidences) - 1) * 0.04)
     score = min(1.0, float(best.get("weight") or 0) + bonus)
     return {
         "group": group,
@@ -1045,9 +1052,9 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
             "frontend": ["React", "Next.js", "Vue", "Angular"],
             "frontend_foundation": ["HTML", "CSS", "JavaScript", "TypeScript"],
             "backend": ["Node.js", "Express", "Django", "FastAPI", "PHP", "Laravel", "Spring Boot"],
-            "database": ["MongoDB", "MySQL", "PostgreSQL", "SQL"],
-            "api_auth": ["REST API", "GraphQL", "JWT", "OAuth"],
-            "deployment_tools": ["Git", "GitHub", "Docker", "AWS", "DigitalOcean", "Vercel", "Netlify", "CI/CD"],
+            "database": ["MongoDB", "Mongoose", "MySQL", "PostgreSQL", "SQL", "SQL Server", "Firebase", "Firestore", "Prisma", "Sequelize"],
+            "api_auth": ["REST API", "GraphQL", "JWT", "OAuth", "Authentication", "Authorization", "RBAC", "Session Auth", "Firebase Auth", "Clerk Auth", "Password Hashing"],
+            "deployment_tools": ["Git", "GitHub", "GitHub Actions", "Docker", "Kubernetes", "AWS", "Azure", "DigitalOcean", "Vercel", "Netlify", "Render", "Heroku", "Nginx", "Linux", "VPS", "CI/CD"],
         }
 
     group_results = {
@@ -1132,7 +1139,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     if final_score >= 78 and core_skill_percent >= 68 and not experience_fit["overqualified"] and len(missing_core_groups) <= 1:
         recommendation = "shortlisted"
         _append_unique(recruiter_flags, ["strong_match" if final_score >= 88 else "good_match"])
-    elif final_score < 45 or len(missing_core_groups) >= 3:
+    elif final_score < 45 or (len(missing_core_groups) >= 3 and final_score < 60):
         recommendation = "rejected"
     else:
         recommendation = "in_review"
