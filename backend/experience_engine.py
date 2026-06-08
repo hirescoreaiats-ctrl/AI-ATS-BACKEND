@@ -18,6 +18,8 @@ INVALID_COMPANY_TOKENS = {
     "us", "usa", "u.s.", "u.s.a.", "js", "sms", "machine learning", "website",
     "uttar pradesh", "haryana", "gurgaon", "gurugram", "jaipur", "chennai", "india",
     "api", "api &", "lead", "& team lead",
+    "sde", "sde-1", "sde 1", "senior backend", "backend engineer", "backend developer",
+    "senior software engineer", "software engineer", "software developer", "elasticseach", "elasticsearch",
 }
 
 
@@ -28,11 +30,15 @@ def _valid_company_name(value):
     lowered = text.lower().strip(" :-|")
     if lowered in INVALID_COMPANY_TOKENS:
         return False
+    if re.match(r"^[.'’`-]*s\s+technology\b", lowered, re.I):
+        return False
     if re.search(r"(https?://|www\.|linkedin|github|portfolio|profile|technical skills|work experience|professional experience|responsibilities)", text, re.I):
         return False
     if re.fullmatch(
         r"(wa|net|us|usa|u\.s\.|u\.s\.a\.|application|html\s+css|java|js|react|node\.?js|"
-        r"express\.?js|api|api\s*&|css|sms|machine\s+learning|website|lead|&\s*team\s+lead)",
+        r"express\.?js|api|api\s*&|css|sms|machine\s+learning|website|lead|&\s*team\s+lead|"
+        r"sde(?:-\d+|\s+\d+)?|senior\s+backend|backend\s+(?:engineer|developer)|"
+        r"senior\s+software\s+engineer|software\s+(?:engineer|developer)|elasticseach|elasticsearch)",
         lowered,
         re.I,
     ):
@@ -179,6 +185,9 @@ def process_experience(experience_list):
         end = safe_parse_date(job.get("end_date"), is_end=True)
 
         if not start:
+            continue
+
+        if datetime.now().year - start.year > 45:
             continue
 
         if not end:
