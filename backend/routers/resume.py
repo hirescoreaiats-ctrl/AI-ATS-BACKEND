@@ -202,13 +202,69 @@ async def parse_resume_autofill(file: UploadFile = File(...)):
 
 def _resume_processing_mode() -> str:
     mode = (os.getenv("RESUME_PROCESSING_MODE") or "").strip().lower()
-    if mode in {"inline", "background"}:
+    if mode in {"inline", "background", "queued"}:
         return mode
 
     legacy_inline = os.getenv("PROCESS_RESUMES_INLINE")
     if legacy_inline is not None and legacy_inline.strip().lower() in {"0", "false", "no", "background"}:
         return "background"
-    return "inline"
+    if legacy_inline is not None and legacy_inline.strip().lower() in {"1", "true", "yes", "inline"}:
+        return "inline"
+    return "queued"
+
+
+_HIDDEN_SYSTEM_UPLOADS = {
+    ".ds_store",
+    "thumbs.db",
+    "desktop.ini",
+}
+
+
+def _upload_filename(file: UploadFile) -> str:
+    return (file.filename or "resume").replace("\\", "/")
+
+
+def _skip_upload_reason(filename: str) -> str | None:
+    basename = os.path.basename((filename or "").replace("\\", "/")).strip()
+    lower = basename.lower()
+    if not basename:
+        return "File name is missing."
+    if lower in _HIDDEN_SYSTEM_UPLOADS or basename.startswith("._"):
+        return "Hidden/system file skipped."
+    if basename.startswith("."):
+        return "Hidden file skipped."
+    if lower.endswith((".lnk", ".url")):
+        return "Shortcut/link files are not resumes."
+    return None
+
+
+def _upload_result(
+    filename: str,
+    status: str,
+    reason: str = "",
+    resume_id: str | None = None,
+    queued: bool = False,
+    retryable: bool = False,
+) -> dict:
+    result = {
+        "file": filename,
+        "filename": filename,
+        "status": status,
+        "queued": queued,
+    }
+    if reason:
+        result["reason"] = reason
+    if resume_id:
+        result["resume_id"] = resume_id
+    if retryable:
+        result["retryable"] = True
+    return result
+
+
+def _exception_reason(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _queue_resume_processing(resume_id: str) -> None:
@@ -555,176 +611,271 @@ async def upload_resumes(
     if not safe_tracking_url:
         safe_tracking_url = build_apply_links(job, db).get(safe_application_source) or build_apply_links(job, db)["main"]
 
+    request_id = uuid.uuid4().hex[:12]
     processed_count = 0
     duplicate_count = 0
     skipped_count = 0
+    failed_count = 0
     upload_messages = []
     processed_resume_ids = []
     seen_duplicate_keys = set()
 
-    for file in files:
-        contents = await file.read()
-        validate_upload(file, len(contents))
-
-        classification = _preclassify_upload_resume(file.filename or "", contents)
-        if classification and not classification.is_resume:
-            skipped_count += 1
-            upload_messages.append({
-                "file": file.filename,
-                "status": "skipped_non_resume",
-                "reason": classification.reason,
-            })
-            logger.warning(
-                "Resume upload skipped non-resume document: job_id=%s filename=%s reason=%s",
-                job_id,
-                file.filename,
-                classification.reason,
-            )
-            continue
-
-        candidate_email = (form_email or "").strip().lower()
-        candidate_phone = (form_phone or "").strip()
-        file_hash = hashlib.sha256(contents).hexdigest()
-        identity_source = candidate_email or candidate_phone or f"file|{file_hash}"
-        duplicate_key_source = f"{job_id}|{identity_source}"
-        duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
-        file_duplicate_key = hashlib.sha256(f"{job_id}|file|{file_hash}".encode()).hexdigest()
-        if duplicate_key in seen_duplicate_keys or file_duplicate_key in seen_duplicate_keys:
-            duplicate_count += 1
-            upload_messages.append({"file": file.filename, "status": "duplicate skipped"})
-            logger.info("Resume upload duplicate skipped within request: job_id=%s filename=%s", job_id, file.filename)
-            continue
-        duplicate_of = (
-            _find_existing_application(db, job_id, candidate_email, candidate_phone)
-            or db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == duplicate_key, Resume.is_active == True).first()
-            or db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == file_duplicate_key, Resume.is_active == True).first()
-        )
-        if duplicate_of:
-            duplicate_count += 1
-            upload_messages.append({"file": file.filename, "status": "duplicate skipped"})
-            continue
-
-        resume_id = str(uuid.uuid4())
-        file_path = ""
-        stored_file_path = ""
-        blob_metadata = None
-
-        if get_settings().use_vercel_blob_storage:
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or "")[1]) as temp_file:
-                    temp_file.write(contents)
-                    file_path = temp_file.name
-                malware_scan(file_path)
-
-                blob_metadata = upload_resume_file(
-                    contents,
-                    file.filename,
-                    job_id,
-                    resume_id,
-                    organization_id=job.organization_id or "default_org",
-                    mime_type=file.content_type,
-                )
-                stored_file_path = blob_metadata.storage_uri
-                logger.info(
-                    "Resume file stored: resume_id=%s job_id=%s storage=vercel_blob key=%s size=%s",
-                    resume_id,
-                    job_id,
-                    blob_metadata.key,
-                    blob_metadata.file_size,
-                )
-            finally:
-                if file_path:
-                    try:
-                        os.remove(file_path)
-                    except OSError:
-                        pass
-        else:
-            file_path = secure_upload_path(file.filename)
-            with open(file_path, "wb") as f:
-                f.write(contents)
-            malware_scan(file_path)
-            stored_file_path = persist_resume_file(file_path, file.filename, file.content_type, job_id)
-            logger.info(
-                "Resume file stored: resume_id=%s job_id=%s storage=local path=%s size=%s",
-                resume_id,
-                job_id,
-                stored_file_path,
-                len(contents),
-            )
-            file_path = ""
-
-        resume_entry = Resume(
-            id=resume_id,
-            job_id=job_id,
-            organization_id=job.organization_id,
-            full_name=form_full_name,
-            email=candidate_email,
-            phone=candidate_phone,
-            location=form_location,
-            form_full_name=form_full_name,
-            form_email=form_email,
-            form_phone=form_phone,
-            form_location=form_location,
-            expected_salary=expected_salary,
-            preferred_location=preferred_location,
-            notice_period=notice_period,
-            linkedin=linkedin,
-            github=github,
-            portfolio=portfolio,
-            application_source=safe_application_source,
-            apply_tracking_url=safe_tracking_url,
-            final_score=0,
-            rank_score=0,
-            fit_band="Processing",
-            ai_recommendation="processing",
-            ranking_reason="Application received. AI screening is pending.",
-            ai_confidence_reason="Application received. AI screening is pending.",
-            duplicate_key=duplicate_key,
-            duplicate_of_id=duplicate_of.id if duplicate_of else None,
-            resume_file_path=stored_file_path,
-            resume_file_url=blob_metadata.url if blob_metadata else None,
-            resume_file_key=blob_metadata.key if blob_metadata else None,
-            resume_original_filename=file.filename,
-            resume_content_type=file.content_type,
-            original_filename=file.filename,
-            file_size=len(contents),
-            mime_type=blob_metadata.mime_type if blob_metadata else file.content_type,
-            uploaded_at=blob_metadata.uploaded_at if blob_metadata else None,
-            processing_status="pending",
-            processing_error=None,
-            explanation="Application received. AI screening is pending.",
-            shortlisted=False,
-            shortlisted_auto=False,
-            shortlisted_manual=False,
-            status="Pending Processing" if safe_application_source == "folder" else "Processing",
-            stage="applied",
-            is_active=True,
-        )
-        db.add(resume_entry)
-        db.flush()
-        logger.info(
-            "Resume candidate row created: resume_id=%s job_id=%s filename=%s file_path=%s",
-            resume_entry.id,
-            job_id,
-            file.filename,
-            stored_file_path,
-        )
-        processed_resume_ids.append(resume_entry.id)
-        seen_duplicate_keys.add(duplicate_key)
-        seen_duplicate_keys.add(file_duplicate_key)
-        processed_count += 1
-
-    db.commit()
     logger.info(
-        "Resume upload transaction committed: job_id=%s created=%s duplicates=%s",
+        "Resume upload request started: request_id=%s job_id=%s total_files=%s source=%s",
+        request_id,
+        job_id,
+        len(files),
+        safe_application_source,
+    )
+
+    try:
+        for file in files:
+            filename = _upload_filename(file)
+            logger.info(
+                "Resume upload file received: request_id=%s job_id=%s filename=%s content_type=%s",
+                request_id,
+                job_id,
+                filename,
+                file.content_type,
+            )
+            skip_reason = _skip_upload_reason(filename)
+            if skip_reason:
+                skipped_count += 1
+                upload_messages.append(_upload_result(filename, "skipped", skip_reason))
+                logger.info(
+                    "Resume upload skipped before read: request_id=%s job_id=%s filename=%s reason=%s",
+                    request_id,
+                    job_id,
+                    filename,
+                    skip_reason,
+                )
+                continue
+
+            contents = b""
+            file_path = ""
+            try:
+                contents = await file.read()
+                if not contents:
+                    skipped_count += 1
+                    upload_messages.append(_upload_result(filename, "skipped", "File is empty."))
+                    logger.info(
+                        "Resume upload skipped empty file: request_id=%s job_id=%s filename=%s",
+                        request_id,
+                        job_id,
+                        filename,
+                    )
+                    continue
+
+                validate_upload(file, len(contents))
+
+                # Single candidate submissions still get the lightweight document guard.
+                # Folder/bulk sync skips it so upload returns quickly and parsing happens in the worker.
+                if safe_application_source != "folder" and len(files) == 1:
+                    classification = _preclassify_upload_resume(filename, contents)
+                    if classification and not classification.is_resume:
+                        skipped_count += 1
+                        upload_messages.append(_upload_result(filename, "skipped", classification.reason))
+                        logger.warning(
+                            "Resume upload skipped non-resume document: request_id=%s job_id=%s filename=%s reason=%s",
+                            request_id,
+                            job_id,
+                            filename,
+                            classification.reason,
+                        )
+                        continue
+
+                candidate_email = (form_email or "").strip().lower()
+                candidate_phone = (form_phone or "").strip()
+                file_hash = hashlib.sha256(contents).hexdigest()
+                identity_source = candidate_email or candidate_phone or f"file|{file_hash}"
+                duplicate_key_source = f"{job_id}|{identity_source}"
+                duplicate_key = hashlib.sha256(duplicate_key_source.encode()).hexdigest()
+                file_duplicate_key = hashlib.sha256(f"{job_id}|file|{file_hash}".encode()).hexdigest()
+                if duplicate_key in seen_duplicate_keys or file_duplicate_key in seen_duplicate_keys:
+                    duplicate_count += 1
+                    upload_messages.append(_upload_result(filename, "duplicate", "Duplicate resume skipped."))
+                    logger.info(
+                        "Resume upload duplicate skipped within request: request_id=%s job_id=%s filename=%s",
+                        request_id,
+                        job_id,
+                        filename,
+                    )
+                    continue
+                duplicate_of = (
+                    _find_existing_application(db, job_id, candidate_email, candidate_phone)
+                    or db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == duplicate_key, Resume.is_active == True).first()
+                    or db.query(Resume).filter(Resume.job_id == job_id, Resume.duplicate_key == file_duplicate_key, Resume.is_active == True).first()
+                )
+                if duplicate_of:
+                    duplicate_count += 1
+                    upload_messages.append(_upload_result(filename, "duplicate", "Candidate already exists for this job."))
+                    logger.info(
+                        "Resume upload duplicate skipped in database: request_id=%s job_id=%s filename=%s duplicate_of_id=%s",
+                        request_id,
+                        job_id,
+                        filename,
+                        duplicate_of.id,
+                    )
+                    continue
+
+                resume_id = str(uuid.uuid4())
+                stored_file_path = ""
+                blob_metadata = None
+
+                if get_settings().use_vercel_blob_storage:
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as temp_file:
+                            temp_file.write(contents)
+                            file_path = temp_file.name
+                        malware_scan(file_path)
+
+                        blob_metadata = upload_resume_file(
+                            contents,
+                            filename,
+                            job_id,
+                            resume_id,
+                            organization_id=job.organization_id or "default_org",
+                            mime_type=file.content_type,
+                        )
+                        stored_file_path = blob_metadata.storage_uri
+                        logger.info(
+                            "Resume file stored: request_id=%s resume_id=%s job_id=%s storage=vercel_blob key=%s size=%s",
+                            request_id,
+                            resume_id,
+                            job_id,
+                            blob_metadata.key,
+                            blob_metadata.file_size,
+                        )
+                    finally:
+                        if file_path:
+                            try:
+                                os.remove(file_path)
+                            except OSError:
+                                pass
+                else:
+                    file_path = secure_upload_path(filename)
+                    with open(file_path, "wb") as f:
+                        f.write(contents)
+                    malware_scan(file_path)
+                    stored_file_path = persist_resume_file(file_path, filename, file.content_type, job_id)
+                    logger.info(
+                        "Resume file stored: request_id=%s resume_id=%s job_id=%s storage=local path=%s size=%s",
+                        request_id,
+                        resume_id,
+                        job_id,
+                        stored_file_path,
+                        len(contents),
+                    )
+                    file_path = ""
+
+                resume_entry = Resume(
+                    id=resume_id,
+                    job_id=job_id,
+                    organization_id=job.organization_id,
+                    full_name=form_full_name,
+                    email=candidate_email,
+                    phone=candidate_phone,
+                    location=form_location,
+                    form_full_name=form_full_name,
+                    form_email=form_email,
+                    form_phone=form_phone,
+                    form_location=form_location,
+                    expected_salary=expected_salary,
+                    preferred_location=preferred_location,
+                    notice_period=notice_period,
+                    linkedin=linkedin,
+                    github=github,
+                    portfolio=portfolio,
+                    application_source=safe_application_source,
+                    apply_tracking_url=safe_tracking_url,
+                    final_score=0,
+                    rank_score=0,
+                    fit_band="Processing",
+                    ai_recommendation="processing",
+                    ranking_reason="Application received. AI screening is pending.",
+                    ai_confidence_reason="Application received. AI screening is pending.",
+                    duplicate_key=duplicate_key,
+                    duplicate_of_id=duplicate_of.id if duplicate_of else None,
+                    resume_file_path=stored_file_path,
+                    resume_file_url=blob_metadata.url if blob_metadata else None,
+                    resume_file_key=blob_metadata.key if blob_metadata else None,
+                    resume_original_filename=filename,
+                    resume_content_type=file.content_type,
+                    original_filename=filename,
+                    file_size=len(contents),
+                    mime_type=blob_metadata.mime_type if blob_metadata else file.content_type,
+                    uploaded_at=blob_metadata.uploaded_at if blob_metadata else None,
+                    processing_status="pending",
+                    processing_error=None,
+                    explanation="Application received. AI screening is pending.",
+                    shortlisted=False,
+                    shortlisted_auto=False,
+                    shortlisted_manual=False,
+                    status="Pending Processing" if safe_application_source == "folder" else "Processing",
+                    stage="applied",
+                    is_active=True,
+                )
+                db.add(resume_entry)
+                db.flush()
+                db.commit()
+                logger.info(
+                    "Resume candidate row created: request_id=%s resume_id=%s job_id=%s filename=%s file_path=%s",
+                    request_id,
+                    resume_entry.id,
+                    job_id,
+                    filename,
+                    stored_file_path,
+                )
+                processed_resume_ids.append(resume_entry.id)
+                upload_messages.append(_upload_result(filename, "uploaded", resume_id=resume_entry.id, queued=True))
+                seen_duplicate_keys.add(duplicate_key)
+                seen_duplicate_keys.add(file_duplicate_key)
+                processed_count += 1
+            except HTTPException as exc:
+                db.rollback()
+                status_label = "skipped" if exc.status_code in {400, 413, 415, 422} else "failed"
+                if status_label == "skipped":
+                    skipped_count += 1
+                else:
+                    failed_count += 1
+                upload_messages.append(_upload_result(filename, status_label, _exception_reason(exc), retryable=exc.status_code >= 500))
+                logger.exception(
+                    "Resume upload file failed: request_id=%s job_id=%s filename=%s status=%s reason=%s",
+                    request_id,
+                    job_id,
+                    filename,
+                    status_label,
+                    _exception_reason(exc),
+                )
+            except Exception as exc:
+                db.rollback()
+                failed_count += 1
+                upload_messages.append(_upload_result(filename, "failed", _exception_reason(exc), retryable=True))
+                logger.exception(
+                    "Resume upload file failed with traceback: request_id=%s job_id=%s filename=%s",
+                    request_id,
+                    job_id,
+                    filename,
+                )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Resume upload batch failed unexpectedly: request_id=%s job_id=%s", request_id, job_id)
+        failed_count += max(1, len(files) - processed_count - duplicate_count - skipped_count)
+        upload_messages.append(_upload_result("batch", "failed", _exception_reason(exc), retryable=True))
+
+    logger.info(
+        "Resume upload transaction completed: request_id=%s job_id=%s created=%s duplicates=%s skipped=%s failed=%s",
+        request_id,
         job_id,
         processed_count,
         duplicate_count,
+        skipped_count,
+        failed_count,
     )
     db.close()
 
     processing_mode = _resume_processing_mode()
-    if safe_application_source == "folder" and processing_mode == "inline":
+    if (safe_application_source == "folder" or len(files) > 1) and processing_mode == "inline":
         processing_mode = (os.getenv("FOLDER_RESUME_PROCESSING_MODE") or "queued").strip().lower()
         if processing_mode not in {"queued", "inline", "background"}:
             processing_mode = "queued"
@@ -745,33 +896,32 @@ async def upload_resumes(
         for resume_id in processed_resume_ids:
             background_tasks.add_task(_process_resume_application_background, resume_id)
 
-    if processed_count == 0 and duplicate_count:
-        return {
-            "message": "Application already submitted for this job.",
-            "total_resumes": 0,
-            "duplicates": duplicate_count,
-            "skipped": skipped_count,
-            "messages": upload_messages[:50],
-            "processing": False,
-        }
-
-    if processed_count == 0:
-        first_reason = (upload_messages[0] or {}).get("reason") if upload_messages else ""
-        detail = first_reason or "No resume could be saved. Please upload a PDF or DOCX resume."
-        raise HTTPException(status_code=422, detail=detail)
-
     processing_failures = processing_results.count(False) if process_inline else 0
     if process_inline and processing_failures:
         message = f"Application received, but {processing_failures} resume(s) need manual review. Check backend logs."
+    elif processed_count == 0 and duplicate_count:
+        message = "Application already submitted for this job."
+    elif processed_count == 0:
+        message = "No resume could be saved. Please upload valid PDF, DOC, or DOCX resumes."
     else:
-        message = "Application processed successfully." if process_inline else "Application submitted. AI screening is running in background."
+        message = "Application processed successfully." if process_inline else f"{processed_count} resume(s) uploaded. Processing has started."
+
+    overall_status = "success"
+    if failed_count or skipped_count or duplicate_count or processing_failures:
+        overall_status = "partial_success" if processed_count else "failed"
 
     return {
+        "request_id": request_id,
+        "status": overall_status,
         "message": message,
+        "uploaded": processed_count,
+        "failed": failed_count,
+        "queued": len(processed_resume_ids) if not process_inline else 0,
         "total_resumes": processed_count,
         "duplicates": duplicate_count,
         "skipped": skipped_count,
         "messages": upload_messages[:50],
+        "files": upload_messages,
         "processing": not process_inline,
         "processing_mode": processing_mode,
         "processing_failures": processing_failures,

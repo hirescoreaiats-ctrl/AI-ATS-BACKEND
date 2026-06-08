@@ -16,10 +16,10 @@ def anyio_backend():
 class FakeUploadFile:
     _counter = 0
 
-    def __init__(self, filename="candidate.pdf", content=None):
+    def __init__(self, filename="candidate.pdf", content=None, content_type="application/pdf"):
         FakeUploadFile._counter += 1
         self.filename = filename
-        self.content_type = "application/pdf"
+        self.content_type = content_type
         self.content = content if content is not None else f"%PDF resume bytes {FakeUploadFile._counter}".encode()
 
     async def read(self):
@@ -65,6 +65,9 @@ class FakeUploadDB:
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        pass
 
     def close(self):
         self.closed = True
@@ -166,6 +169,8 @@ def fake_settings():
         use_vercel_blob_storage=True,
         max_resume_upload_count=100,
         resume_processing_batch_size=3,
+        upload_bytes_limit=20 * 1024 * 1024,
+        resume_upload_limit_mb=20,
     )
 
 
@@ -185,7 +190,7 @@ async def test_upload_resumes_processes_inline_by_default(monkeypatch):
     db = FakeUploadDB()
     processed_ids = []
 
-    monkeypatch.delenv("RESUME_PROCESSING_MODE", raising=False)
+    monkeypatch.setenv("RESUME_PROCESSING_MODE", "inline")
     monkeypatch.delenv("PROCESS_RESUMES_INLINE", raising=False)
     monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
     monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
@@ -374,12 +379,106 @@ async def test_upload_resumes_rejects_non_resume_document_before_row_creation(mo
     monkeypatch.setattr(resume_router, "get_settings", fake_settings)
     monkeypatch.setattr(resume_router, "_preclassify_upload_resume", lambda filename, contents: classification)
 
-    with pytest.raises(HTTPException) as exc:
-        await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=[FakeUploadFile()], **upload_kwargs())
+    result = await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=[FakeUploadFile()], **upload_kwargs())
 
-    assert exc.value.status_code == 422
-    assert "JD/application form" in exc.value.detail
+    assert result["status"] == "failed"
+    assert result["total_resumes"] == 0
+    assert result["skipped"] == 1
+    assert "JD/application form" in result["files"][0]["reason"]
     assert db.added == []
+
+
+@pytest.mark.anyio
+async def test_folder_upload_accepts_41_files_and_returns_per_file_status(monkeypatch):
+    db = FakeUploadDB()
+    queued_batches = []
+
+    monkeypatch.setenv("FOLDER_RESUME_PROCESSING_MODE", "queued")
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
+    monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "upload_resume_file", lambda *args, **kwargs: fake_blob_metadata())
+    monkeypatch.setattr(resume_router, "_queue_resume_processing_batch", lambda resume_ids: queued_batches.append(list(resume_ids)))
+
+    kwargs = folder_upload_kwargs()
+    kwargs["folder_total_count"] = 41
+    files = [FakeUploadFile(filename=f"candidate-{index}.pdf") for index in range(41)]
+    result = await resume_router.upload_resumes("job-1", FakeBackgroundTasks(), files=files, **kwargs)
+
+    assert result["status"] == "success"
+    assert result["total_resumes"] == 41
+    assert result["queued"] == 41
+    assert len(result["files"]) == 41
+    assert all(item["status"] == "uploaded" for item in result["files"])
+    assert queued_batches and len(queued_batches[0]) == 41
+
+
+@pytest.mark.anyio
+async def test_upload_blob_failure_for_one_file_does_not_fail_batch(monkeypatch):
+    db = FakeUploadDB()
+
+    monkeypatch.setenv("FOLDER_RESUME_PROCESSING_MODE", "queued")
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "validate_upload", lambda file, size: None)
+    monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "_queue_resume_processing_batch", lambda resume_ids: None)
+
+    def fake_upload(file_bytes, original_filename, *args, **kwargs):
+        if original_filename == "bad.pdf":
+            raise HTTPException(status_code=502, detail="Vercel Blob upload failed")
+        return fake_blob_metadata()
+
+    monkeypatch.setattr(resume_router, "upload_resume_file", fake_upload)
+
+    result = await resume_router.upload_resumes(
+        "job-1",
+        FakeBackgroundTasks(),
+        files=[FakeUploadFile(filename="bad.pdf"), FakeUploadFile(filename="good.pdf")],
+        **folder_upload_kwargs(),
+    )
+
+    assert result["status"] == "partial_success"
+    assert result["total_resumes"] == 1
+    assert result["failed"] == 1
+    assert len(db.added) == 1
+    assert {item["status"] for item in result["files"]} == {"failed", "uploaded"}
+
+
+@pytest.mark.anyio
+async def test_upload_unsupported_and_hidden_files_are_skipped(monkeypatch):
+    db = FakeUploadDB()
+
+    monkeypatch.setenv("FOLDER_RESUME_PROCESSING_MODE", "queued")
+    monkeypatch.setattr(resume_router, "SessionLocal", lambda: db)
+    monkeypatch.setattr(resume_router, "resolve_job_identifier", lambda job_id, db_arg: fake_job())
+    monkeypatch.setattr(resume_router, "build_apply_links", lambda job, db_arg: {"direct": "https://app/apply", "main": "https://app/apply"})
+    monkeypatch.setattr(resume_router, "malware_scan", lambda path: None)
+    monkeypatch.setattr(resume_router, "get_settings", fake_settings)
+    monkeypatch.setattr(resume_router, "upload_resume_file", lambda *args, **kwargs: fake_blob_metadata())
+    monkeypatch.setattr(resume_router, "_queue_resume_processing_batch", lambda resume_ids: None)
+
+    result = await resume_router.upload_resumes(
+        "job-1",
+        FakeBackgroundTasks(),
+        files=[
+            FakeUploadFile(filename=".DS_Store", content=b"metadata", content_type="application/octet-stream"),
+            FakeUploadFile(filename="notes.txt", content=b"not a resume", content_type="text/plain"),
+            FakeUploadFile(filename="candidate.pdf"),
+        ],
+        **folder_upload_kwargs(),
+    )
+
+    assert result["status"] == "partial_success"
+    assert result["total_resumes"] == 1
+    assert result["skipped"] == 2
+    assert len(db.added) == 1
+    assert [item["status"] for item in result["files"]] == ["skipped", "skipped", "uploaded"]
 
 
 @pytest.mark.anyio
