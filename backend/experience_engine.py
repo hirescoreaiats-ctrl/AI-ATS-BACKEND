@@ -172,10 +172,31 @@ def merge_overlapping_periods(periods):
     return merged
 
 
+def _fmt_date(value):
+    return value.strftime("%Y-%m-%d") if value else None
+
+
+def _normalize_company_name(value):
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" ,-|")
+    role_prefix = re.match(
+        r"^(?:senior\s+|junior\s+|lead\s+)?"
+        r"(?:graphic|software|full[-\s]?stack|front[-\s]?end|back[-\s]?end|web|java|python|mern|mean)?\s*"
+        r"(?:designer|developer|engineer|intern|trainee|associate|consultant|specialist|manager)\s+"
+        r"(?:at|in|with|for)\s+(.+)$",
+        text,
+        re.I,
+    )
+    if role_prefix:
+        text = role_prefix.group(1).strip(" ,-|")
+    return text
+
+
 def process_experience(experience_list):
 
     processed = []
     date_ranges = []
+    raw_ranges = []
+    excluded_ranges = []
 
     for job in experience_list or []:
 
@@ -183,20 +204,45 @@ def process_experience(experience_list):
         is_current = raw_end.strip().lower() in ["present", "current", "till date"] or "present" in raw_end.lower()
         start = safe_parse_date(job.get("start_date"))
         end = safe_parse_date(job.get("end_date"), is_end=True)
+        raw_record = {
+            "company_name": job.get("company_name"),
+            "role": job.get("role"),
+            "start_date": job.get("start_date"),
+            "end_date": job.get("end_date"),
+        }
 
         if not start:
+            excluded_ranges.append({**raw_record, "reason": "missing_or_unparseable_start_date"})
             continue
 
         if datetime.now().year - start.year > 45:
+            excluded_ranges.append({**raw_record, "reason": "implausibly_old_start_date"})
             continue
 
         if not end:
             end = datetime.now()
 
-        if end < start:
+        now = datetime.now()
+        if start > now:
+            excluded_ranges.append({**raw_record, "reason": "future_start_date"})
             continue
 
-        company_name = job.get("company_name") if _valid_company_name(job.get("company_name")) else None
+        if end > now:
+            end = now
+
+        if end < start:
+            excluded_ranges.append({**raw_record, "reason": "end_before_start"})
+            continue
+
+        normalized_company = _normalize_company_name(job.get("company_name"))
+        company_name = normalized_company if _valid_company_name(normalized_company) else None
+        raw_ranges.append({
+            **raw_record,
+            "normalized_company_name": company_name,
+            "normalized_start": _fmt_date(start),
+            "normalized_end": _fmt_date(end),
+            "company_valid": bool(company_name),
+        })
 
         processed.append({
 
@@ -214,7 +260,11 @@ def process_experience(experience_list):
         return {
             "total_experience_years": 0,
             "last_company_name": None,
-            "last_working_date": None
+            "last_working_date": None,
+            "extracted_date_ranges_raw": raw_ranges,
+            "normalized_date_ranges": [],
+            "merged_total_experience_ranges": [],
+            "excluded_ranges_with_reason": excluded_ranges,
         }
 
     # latest job detection: current roles win, then latest end/start dates.
@@ -245,5 +295,19 @@ def process_experience(experience_list):
 
         "last_company_name": last_company,
 
-        "last_working_date": last_working_date
+        "last_working_date": last_working_date,
+
+        "extracted_date_ranges_raw": raw_ranges,
+
+        "normalized_date_ranges": [
+            {"start": _fmt_date(start), "end": _fmt_date(end)}
+            for start, end in date_ranges
+        ],
+
+        "merged_total_experience_ranges": [
+            {"start": _fmt_date(start), "end": _fmt_date(end)}
+            for start, end in merged_periods
+        ],
+
+        "excluded_ranges_with_reason": excluded_ranges,
     }

@@ -205,16 +205,23 @@ Return STRICT valid JSON only. No markdown, comments, prose, or trailing commas.
 Rules:
 1. Use only facts present in the resume text. Do not invent missing companies, dates, degrees, projects, or skills.
 2. full_name is only the person's name. Exclude title, city, degree, certification, address, and section headings.
-3. Clean icon prefixes from contact fields. Example: "/envelopejohn@gmail.com" becomes "john@gmail.com".
-4. designation is the latest professional title, not a skill and not an old internship when a newer role exists.
-5. Extract experience only from structured work headers such as:
+3. Prefer the first-page/header name. If the header is unclear, use LinkedIn/portfolio identity, then email local-part only when it clearly resembles a name. Never return "Unnamed Candidate".
+4. Extract email and phone exactly as written in the resume text. Do not change letters or guess missing characters.
+5. Clean icon prefixes from contact fields. Example: "/envelopejohn@gmail.com" becomes "john@gmail.com".
+6. designation is the latest professional title, not a skill and not an old internship when a newer role exists.
+7. Extract experience only from structured work headers such as:
    Company | Title | Date Range; Company - Title - Date Range; Title at Company, Date Range;
    Company, Location newline Title newline Date Range; Title | Company | Date Range.
-6. Never use bullet sentences, responsibilities, project text, school names, bootcamps, certifications, or skill lists as company_name.
-7. Internships can be experience entries. Training/certification dates are not work experience.
-8. Projects must be real projects only. Do not use section headings, work roles, education entries, or skill names as project names.
-9. key_skills must be explicitly mentioned in skills, work, projects, tools, or certifications.
-10. domain priority: current title, recent professional experience, repeated professional skills, projects, education.
+8. Never use bullet sentences, responsibilities, project text, school names, bootcamps, certifications, or skill lists as company_name.
+9. Never use locations as companies. Examples: Noida, Gurgaon, Gurugram, Bengaluru, London, Ontario, Remote, India, USA.
+10. Never use technical terms, stacks, modules, or project names as companies. Examples: MVC, MERN, REST, API, React, Node, Express, MongoDB, GraphQL, AWS, Azure, CI/CD, FAM, client businesses.
+11. In "Software Developer / Credin / Noida, Uttar Pradesh / Dec 2025 - Present", company_name is "Credin" and location is "Noida, Uttar Pradesh".
+12. In "System Engineer, TCS ... Project Details: FAM", company_name is "TCS"; FAM is a project/module, not company_name.
+13. Internships can be experience entries. Training/certification dates are not work experience.
+14. Projects must be real projects only. Do not use section headings, work roles, education entries, or skill names as project names.
+15. Capture project evidence when present, especially MERN/JWT/OAuth/RBAC/REST API/CRUD/deployment projects. Do not say no project proof when a project section has this evidence.
+16. key_skills must be explicitly mentioned in skills, work, projects, tools, or certifications.
+17. domain priority: current title, recent professional experience, repeated professional skills, projects, education.
     Old internships should not override current role. Salesforce CRM/tool usage is not Salesforce Developer domain unless Apex/LWC/SOQL/Flow/customization evidence appears.
 
 Use null for unknown scalar fields and [] for unknown lists.

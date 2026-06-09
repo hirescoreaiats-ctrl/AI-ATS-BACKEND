@@ -2268,7 +2268,7 @@ def _save_folder_resume_application(db, job: Job, source_path: Path, original_fi
     score = parsed.get("rank_score") or parsed.get("final_score") or 0
     shortlist_threshold = job.shortlist_score or 70
     recommendation = parsed.get("recommendation")
-    ai_shortlisted = recommendation == "shortlisted" if recommendation else score >= shortlist_threshold
+    ai_shortlisted = recommendation == "shortlisted"
     if ai_shortlisted:
         status = "Shortlisted"
         stage = "shortlisted"

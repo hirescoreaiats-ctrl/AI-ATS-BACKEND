@@ -244,3 +244,97 @@ def test_full_stack_company_parser_rejects_locations_and_skill_headings():
 
 def test_resume_email_validation_extracts_clean_email_from_concatenated_text():
     assert validate_email("7014167848himanshumeena2572006@gmail.comJaipur") == "7014167848himanshumeena2572006@gmail.com"
+
+
+def strict_full_stack_profile():
+    jd_text = """
+    Full Stack Developer. Experience: 2-4 Years.
+    Required: React, Next.js, HTML, CSS, JavaScript, Node.js, Express, Python, FastAPI,
+    Django, MongoDB, MySQL, PostgreSQL, REST API, JWT, OAuth, RBAC, Git, Postman,
+    Docker, AWS.
+    """
+    skills = normalize_jd_skills([], jd_text)
+    return jd_text, build_jd_profile(
+        jd_text,
+        {"role": "Full Stack Developer", "experience_required": "2-4 Years"},
+        skills,
+    )
+
+
+def test_strict_two_to_four_full_stack_zero_year_skill_match_is_not_shortlisted():
+    jd_text, profile = strict_full_stack_profile()
+    parsed = {
+        "full_name": "Junior Builder",
+        "designation": "Full Stack Intern",
+        "key_skills": ["React", "Node.js", "Express", "MongoDB", "REST API", "JWT", "Git", "Postman"],
+        "total_experience_years": 0.16,
+        "relevant_experience_years": 0.16,
+        "role_relevance_score": 85,
+        "experience": [{
+            "company_name": "Startup Lab",
+            "role": "Full Stack Intern",
+            "start_date": "Feb 2026",
+            "end_date": "Apr 2026",
+            "description": "Built React UI, Node.js Express APIs, MongoDB models, REST API endpoints, JWT auth, Postman tests, and Git workflows.",
+        }],
+        "resume_quality_score": 88,
+    }
+
+    result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Full Stack Developer"}, jd_text, jd_profile=profile)
+
+    assert result["recommendation"] != "shortlisted"
+    assert result["final_score"] <= 60
+    assert "below_jd_experience_range" in result["risk_flags"]
+    assert result["label"] == "Below experience range"
+
+
+def test_strict_two_to_four_full_stack_one_point_five_years_is_capped():
+    jd_text, profile = strict_full_stack_profile()
+    parsed = {
+        "full_name": "Ajay Kumar",
+        "designation": "Software Developer",
+        "key_skills": ["React", "Vue", "Node.js", "Express", "MongoDB", "MySQL", "JWT", "GitHub", "Postman"],
+        "total_experience_years": 1.5,
+        "relevant_experience_years": 1.5,
+        "role_relevance_score": 84,
+        "experience": [{
+            "company_name": "Credin",
+            "role": "Software Developer",
+            "start_date": "Jan 2025",
+            "end_date": "Jun 2026",
+            "description": "Built React and Vue interfaces, Node.js Express APIs, JWT authentication, MongoDB and MySQL integrations, Postman testing, and deployment workflows.",
+        }],
+        "resume_quality_score": 86,
+    }
+
+    result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Full Stack Developer"}, jd_text, jd_profile=profile)
+
+    assert result["recommendation"] != "shortlisted"
+    assert result["final_score"] <= 72
+    assert "below_jd_experience_range" in result["risk_flags"]
+
+
+def test_strict_two_to_four_full_stack_over_range_is_review_not_shortlisted():
+    jd_text, profile = strict_full_stack_profile()
+    parsed = {
+        "full_name": "Senior Candidate",
+        "designation": "Senior Full Stack Developer",
+        "key_skills": ["React", "Node.js", "Express", "MongoDB", "REST API", "JWT", "Git", "AWS"],
+        "total_experience_years": 6.2,
+        "relevant_experience_years": 6.2,
+        "role_relevance_score": 92,
+        "experience": [{
+            "company_name": "Enterprise Software",
+            "role": "Senior Full Stack Developer",
+            "start_date": "Jan 2020",
+            "end_date": "Mar 2026",
+            "description": "Led React, Node.js, Express, MongoDB, REST API, JWT authentication, AWS deployment, and Git workflows for production systems.",
+        }],
+        "resume_quality_score": 90,
+    }
+
+    result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Full Stack Developer"}, jd_text, jd_profile=profile)
+
+    assert result["recommendation"] != "shortlisted"
+    assert "over_jd_experience_range" in result["risk_flags"]
+    assert result["label"] == "Overqualified review"

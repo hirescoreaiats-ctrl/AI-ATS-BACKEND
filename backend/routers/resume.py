@@ -469,7 +469,7 @@ def _process_resume_application_background(resume_id: str) -> bool:
         recommendation = parsed.get("recommendation")
         score = parsed.get("rank_score") or parsed.get("final_score") or 0
         shortlist_threshold = job.shortlist_score or 70
-        ai_shortlisted = recommendation == "shortlisted" if recommendation else score >= shortlist_threshold
+        ai_shortlisted = recommendation == "shortlisted"
 
         if ai_shortlisted:
             status = "Shortlisted"
@@ -1044,7 +1044,7 @@ async def upload_resumes(
         # 🤖 AI SHORTLIST
         recommendation = parsed.get("recommendation")
 
-        if recommendation == "shortlisted" if recommendation else score >= shortlist_threshold:
+        if recommendation == "shortlisted":
             ai_shortlisted = True
         else:
             ai_shortlisted = False
@@ -1306,6 +1306,10 @@ async def bulk_analyze(
             "score_caps_applied": parsed.get("score_caps_applied"),
             "recruiter_flags": parsed.get("recruiter_flags"),
             "risk_flags": parsed.get("risk_flags"),
+            "extracted_date_ranges_raw": parsed.get("extracted_date_ranges_raw"),
+            "normalized_date_ranges": parsed.get("normalized_date_ranges"),
+            "merged_total_experience_ranges": parsed.get("merged_total_experience_ranges"),
+            "excluded_ranges_with_reason": parsed.get("excluded_ranges_with_reason"),
             "scoring_breakdown": parsed.get("scoring_breakdown"),
             "jd_profile_json": parsed.get("jd_profile_json"),
             "transferable_skills": parsed.get("transferable_skills"),

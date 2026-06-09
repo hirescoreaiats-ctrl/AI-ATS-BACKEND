@@ -1261,8 +1261,11 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         _append_unique(recruiter_flags, ["missing_core_skills"])
     if experience_fit["under_experienced"]:
         _append_unique(recruiter_flags, ["under_experienced"])
+        if (experience_fit.get("jd_min") or 0) >= 2:
+            _append_unique(risk_flags, ["below_jd_experience_range"])
     if experience_fit["overqualified"]:
         _append_unique(recruiter_flags, ["overqualified", "senior_overqualified"])
+        _append_unique(risk_flags, ["over_jd_experience_range"])
     if project_work_strength >= 60:
         _append_unique(recruiter_flags, ["strong_professional_evidence"])
 
@@ -1279,6 +1282,11 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         caps.append({"cap": 60, "reason": "Three or more full-stack core groups are missing."})
     elif len(missing_core_groups) >= 2:
         caps.append({"cap": 72, "reason": "Two full-stack core groups need validation."})
+    if experience_fit["under_experienced"] and (experience_fit.get("jd_min") or 0) >= 2:
+        if experience_fit["relevant_years"] < 1:
+            caps.append({"cap": 60, "reason": "JD-related professional experience is below 1 year for a role requiring at least 2 years."})
+        else:
+            caps.append({"cap": 72, "reason": "JD-related professional experience is below the minimum required range."})
     if experience_fit["label"] == "senior_overqualified":
         caps.append({"cap": 78, "reason": "Senior/overqualified for this 1-3 year role; recruiter review recommended."})
     if parsed.get("parser_quality_action") == "manual_review_required":
@@ -1292,7 +1300,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     confidence = round(min(100, 35 + core_skill_percent * 0.25 + project_work_strength * 0.22 + role_relevance * 0.18 + _safe_float(parsed.get("resume_quality_score"), 75) * 0.12), 2)
     rank_score = round(min(100, final_score + (3 if confidence >= 65 and not risk_flags else 0)), 2)
 
-    if final_score >= 78 and core_skill_percent >= 68 and not experience_fit["overqualified"] and len(missing_core_groups) <= 1:
+    if final_score >= 78 and core_skill_percent >= 68 and not experience_fit["under_experienced"] and not experience_fit["overqualified"] and len(missing_core_groups) <= 1:
         recommendation = "shortlisted"
         _append_unique(recruiter_flags, ["strong_match" if final_score >= 88 else "good_match"])
     elif final_score < 45 or (len(missing_core_groups) >= 3 and final_score < 60):
@@ -1307,7 +1315,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     for group in missing_core_groups:
         missing_skills.append(group.replace("_", " ").title())
 
-    label = "Strong fit" if recommendation == "shortlisted" and final_score >= 84 else "Good match" if recommendation == "shortlisted" else "Senior / overqualified" if experience_fit["overqualified"] else "Junior but promising" if experience_fit["under_experienced"] and final_score >= 55 else "Weak match" if recommendation == "rejected" else "Review required"
+    label = "Strong fit" if recommendation == "shortlisted" and final_score >= 84 else "Good match" if recommendation == "shortlisted" else "Overqualified review" if experience_fit["overqualified"] else "Below experience range" if "below_jd_experience_range" in risk_flags else "Junior but promising" if experience_fit["under_experienced"] and final_score >= 55 else "Weak match" if recommendation == "rejected" else "Review required"
     ranking_reason = (
         f"Rank score {rank_score}/100 with {confidence}% confidence: "
         f"{core_skill_percent}% full-stack group coverage, {experience_fit['relevant_years']:g}/{experience_fit['total_years']:g} relevant/total years, "
@@ -1620,6 +1628,14 @@ def _score_candidate_backend(parsed, jd_text, jd_skills, jd_data, resume_text, j
 
 def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_score, mandatory_coverage, seniority_fit):
     flags = set(recruiter_flags or []) | set(risk_flags or [])
+    if "below_jd_experience_range" in flags or "no_valid_professional_work_dates" in flags:
+        if "project_only_exposure" in flags:
+            return "Project-only match"
+        if "training_only_exposure" in flags:
+            return "Training-only exposure"
+        return "Below experience range"
+    if "over_jd_experience_range" in flags or seniority_fit == "over":
+        return "Overqualified review"
     if "employer_name_only_match" in flags:
         return "Low match"
     if "missing_core_skill_groups" in flags or "missing_mandatory_skills" in flags:
@@ -1793,8 +1809,25 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         if risk:
             _append_unique(risk_flags, [risk])
 
+    has_valid_work_date = any(
+        isinstance(job, dict) and (job.get("start_date") or job.get("end_date"))
+        for job in parsed.get("experience") or []
+    )
+
     if parser_action == "manual_review_required":
         cap_at(58, "Parser quality requires manual review.", "parser_manual_review", "parser_quality")
+    if min_years and not has_valid_work_date:
+        cap_at(58, "No valid professional work dates were found for a JD that requires professional experience.", "no_valid_work_dates", "no_valid_professional_work_dates")
+    if min_years and relevant_years < min_years:
+        if min_years >= 2 and relevant_years < 1:
+            cap_at(60, "JD-related professional experience is below 1 year for a role requiring at least 2 years.", "under_experienced", "below_jd_experience_range")
+        else:
+            cap_at(72, "JD-related professional experience is below the minimum required range.", "under_experienced", "below_jd_experience_range")
+    if max_years and seniority_fit == "over":
+        if relevant_years >= max_years + 2 or total_years >= max_years + 3:
+            cap_at(77, "Candidate is above the JD experience range and needs recruiter review.", "over_experienced", "over_jd_experience_range")
+        else:
+            cap_at(82, "Candidate is slightly above the JD experience range; review before client shortlist.", "slightly_over_range", "over_jd_experience_range")
     if seniority in {"senior", "lead", "manager", "architect"} and relevant_years < 2:
         cap_at(50, "Senior-level role but relevant experience is below 2 years.", "under_experienced", "seniority_experience_gap")
     elif seniority in {"senior", "lead", "manager", "architect"} and relevant_years < 4:
@@ -1817,6 +1850,19 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         _append_unique(recruiter_flags, ["employer_name_only_match"])
     if missing_core_groups:
         _append_unique(risk_flags, ["missing_core_skill_groups"])
+    skill_section_only_matches = [
+        item for item in evidence.values()
+        if item.get("status") in {"matched", "partial", "project_only"}
+        and item.get("evidence_level") in {"skills_section_only", "keyword_only"}
+    ]
+    proven_matches = [
+        item for item in evidence.values()
+        if item.get("status") in {"matched", "partial", "project_only"}
+        and item.get("evidence_level") in {"professional_strong", "professional_weak", "project_strong", "project_weak"}
+    ]
+    if skill_section_only_matches and len(skill_section_only_matches) > len(proven_matches):
+        _append_unique(recruiter_flags, ["skill_match_mostly_listed_only"])
+        _append_unique(risk_flags, ["skill_match_mostly_listed_only"])
     if parsed.get("experience_warnings"):
         _append_unique(risk_flags, ["experience_warnings"])
     if (jd_profile.get("role_family") or "other") == "other" or family_confidence < 40:

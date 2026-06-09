@@ -100,6 +100,12 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     elif explicit_years > exp_data["total_experience_years"]:
         exp_data["total_experience_years"] = explicit_years
     parsed["total_experience_years"] = exp_data["total_experience_years"]
+    parsed.update({
+        "extracted_date_ranges_raw": exp_data.get("extracted_date_ranges_raw", []),
+        "normalized_date_ranges": exp_data.get("normalized_date_ranges", []),
+        "merged_total_experience_ranges": exp_data.get("merged_total_experience_ranges", []),
+        "excluded_ranges_with_reason": exp_data.get("excluded_ranges_with_reason", []),
+    })
     parsed["email"] = validate_email(parsed.get("email"))
     parsed["phone"] = validate_phone(parsed.get("phone"))
     parsed["jd_profile_json"] = jd_profile
@@ -138,6 +144,12 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
             )
             repaired_exp_data = process_experience(repaired.get("experience", []))
             repaired["total_experience_years"] = repaired_exp_data["total_experience_years"]
+            repaired.update({
+                "extracted_date_ranges_raw": repaired_exp_data.get("extracted_date_ranges_raw", []),
+                "normalized_date_ranges": repaired_exp_data.get("normalized_date_ranges", []),
+                "merged_total_experience_ranges": repaired_exp_data.get("merged_total_experience_ranges", []),
+                "excluded_ranges_with_reason": repaired_exp_data.get("excluded_ranges_with_reason", []),
+            })
             repaired["email"] = validate_email(repaired.get("email"))
             repaired["phone"] = validate_phone(repaired.get("phone"))
             repaired["jd_profile_json"] = jd_profile
