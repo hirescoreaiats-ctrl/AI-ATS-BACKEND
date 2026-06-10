@@ -22,6 +22,23 @@ INVALID_COMPANY_TOKENS = {
     "senior software engineer", "software engineer", "software developer", "elasticseach", "elasticsearch",
 }
 
+ROLE_ONLY_RE = re.compile(
+    r"^(?:senior|sr\.?|junior|jr\.?|lead|principal|staff|technical)?\s*"
+    r"(?:qa|sqa|sdet|quality|test|testing|automation|software|digital\s+quality\s+assurance|"
+    r"full[-\s]?stack|front[-\s]?end|back[-\s]?end|java|python|web)?\s*"
+    r"(?:engineer|developer|analyst|consultant|specialist|manager|lead|intern|trainee|"
+    r"quality\s+engineer|quality\s+assurance|test\s+lead|technical\s+test\s+lead|"
+    r"software\s+testing\s+engineer|automation\s+engineer|qa\s+automation\s+engineer)\s*"
+    r"(?:\d+|i{1,3}|iv)?$",
+    re.I,
+)
+
+NON_WORK_EXPERIENCE_RE = re.compile(
+    r"\b(summary|profile|skills?|technical\s+skills?|projects?|education|certifications?|"
+    r"courses?|coursework|bootcamp|training|achievements?|publications?|portfolio|find\s+me\s+online)\b",
+    re.I,
+)
+
 
 def _valid_company_name(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -29,6 +46,13 @@ def _valid_company_name(value):
         return False
     lowered = text.lower().strip(" :-|")
     if lowered in INVALID_COMPANY_TOKENS:
+        return False
+    if ROLE_ONLY_RE.fullmatch(lowered):
+        return False
+    if re.search(r"\b(senior|sr\.?|lead)?\s*(qa|sqa|sdet|quality|test|testing|software)\s+(engineer|analyst|lead)\b", lowered) and not re.search(
+        r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|labs|health|games)\b",
+        lowered,
+    ):
         return False
     if re.match(r"^[.'’`-]*s\s+technology\b", lowered, re.I):
         return False
@@ -178,6 +202,12 @@ def _fmt_date(value):
 
 def _normalize_company_name(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip(" ,-|")
+    comma_parts = [part.strip(" .,-|") for part in re.split(r"\s*[,|]\s*", text) if part.strip(" .,-|")]
+    if len(comma_parts) >= 2:
+        prefix = " ".join(comma_parts[:-1])
+        suffix = comma_parts[-1]
+        if re.search(r"\b(qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|analyst|lead)\b", prefix, re.I):
+            text = suffix
     role_prefix = re.match(
         r"^(?:senior\s+|junior\s+|lead\s+)?"
         r"(?:graphic|software|full[-\s]?stack|front[-\s]?end|back[-\s]?end|web|java|python|mern|mean)?\s*"
@@ -191,6 +221,26 @@ def _normalize_company_name(value):
     return text
 
 
+def _is_non_work_experience(job):
+    if not isinstance(job, dict):
+        return True
+    section = " ".join(
+        str(job.get(key) or "")
+        for key in ("section", "section_name", "source_section", "category", "type")
+    )
+    if section and NON_WORK_EXPERIENCE_RE.search(section):
+        return True
+    role = str(job.get("role") or job.get("job_title") or "")
+    company = str(job.get("company_name") or job.get("company") or "")
+    header = " ".join([role, company])
+    if re.search(r"\b(bootcamp|coursera|udemy|certification|certificate|coursework|training\s+program)\b", header, re.I):
+        if not re.search(r"\b(intern|internship|assistant|employee|employer|worked|work experience|company|analyst|engineer|accountant|developer)\b", header, re.I):
+            return True
+    if not role and not company:
+        return True
+    return False
+
+
 def process_experience(experience_list):
 
     processed = []
@@ -199,6 +249,15 @@ def process_experience(experience_list):
     excluded_ranges = []
 
     for job in experience_list or []:
+        if _is_non_work_experience(job):
+            excluded_ranges.append({
+                "company_name": (job or {}).get("company_name") if isinstance(job, dict) else None,
+                "role": (job or {}).get("role") if isinstance(job, dict) else None,
+                "start_date": (job or {}).get("start_date") if isinstance(job, dict) else None,
+                "end_date": (job or {}).get("end_date") if isinstance(job, dict) else None,
+                "reason": "non_work_experience_section",
+            })
+            continue
 
         raw_end = str(job.get("end_date") or "")
         is_current = raw_end.strip().lower() in ["present", "current", "till date"] or "present" in raw_end.lower()

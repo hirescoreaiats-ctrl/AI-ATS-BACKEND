@@ -56,6 +56,38 @@ JD_SKILL_PATTERNS = [
     ("GitHub", re.compile(r"\bgithub\b", re.I)),
     ("GitHub Actions", re.compile(r"\bgithub\s+actions\b", re.I)),
     ("Postman", re.compile(r"\bpostman\b", re.I)),
+    ("Selenium", re.compile(r"\bselenium(?:\s+web\s*driver|\s+webdriver)?\b|\bwebdriver\b", re.I)),
+    ("Cypress", re.compile(r"\bcypress\b", re.I)),
+    ("Playwright", re.compile(r"\bplaywright\b", re.I)),
+    ("TestNG", re.compile(r"\btest\s*ng\b|\btestng\b", re.I)),
+    ("JUnit", re.compile(r"\bjunit\b", re.I)),
+    ("Pytest", re.compile(r"\bpytest\b|\bpy\.?test\b", re.I)),
+    ("REST Assured", re.compile(r"\brest[-\s]?assured\b|\brestassured\b", re.I)),
+    ("SoapUI", re.compile(r"\bsoap\s*ui\b|\bsoapui\b", re.I)),
+    ("API Testing", re.compile(r"\bapi\s+testing\b|\brest\s+api\s+testing\b|\bweb\s+services?\s+testing\b", re.I)),
+    ("Manual Testing", re.compile(r"\bmanual\s+testing\b", re.I)),
+    ("Automation Testing", re.compile(r"\bautomation\s+testing\b|\btest\s+automation\b|\bqa\s+automation\b", re.I)),
+    ("Regression Testing", re.compile(r"\bregression\s+testing\b", re.I)),
+    ("Smoke Testing", re.compile(r"\bsmoke\s+testing\b", re.I)),
+    ("Sanity Testing", re.compile(r"\bsanity\s+testing\b", re.I)),
+    ("Functional Testing", re.compile(r"\bfunctional\s+testing\b", re.I)),
+    ("Integration Testing", re.compile(r"\bintegration\s+testing\b", re.I)),
+    ("End-to-End Testing", re.compile(r"\bend[-\s]?to[-\s]?end\s+testing\b|\be2e\s+testing\b", re.I)),
+    ("Test Cases", re.compile(r"\btest\s+cases?\b|\btest\s+case\s+design\b", re.I)),
+    ("Test Plan", re.compile(r"\btest\s+plans?\b", re.I)),
+    ("Test Scenarios", re.compile(r"\btest\s+scenarios?\b", re.I)),
+    ("Bug Reporting", re.compile(r"\bbug\s+reporting\b|\bdefect\s+reporting\b", re.I)),
+    ("Defect Life Cycle", re.compile(r"\bdefect\s+life\s+cycle\b|\bbug\s+life\s+cycle\b|\bdefect\s+lifecycle\b", re.I)),
+    ("STLC", re.compile(r"\bstlc\b|\bsoftware\s+testing\s+life\s+cycle\b", re.I)),
+    ("SDLC", re.compile(r"\bsdlc\b|\bsoftware\s+development\s+life\s+cycle\b", re.I)),
+    ("Jira", re.compile(r"\bjira\b", re.I)),
+    ("Jenkins", re.compile(r"\bjenkins\b", re.I)),
+    ("GitLab CI", re.compile(r"\bgitlab\s+ci\b", re.I)),
+    ("Cucumber", re.compile(r"\bcucumber\b", re.I)),
+    ("BDD", re.compile(r"\bbdd\b|\bbehavior[-\s]?driven\s+development\b", re.I)),
+    ("JMeter", re.compile(r"\bjmeter\b", re.I)),
+    ("Appium", re.compile(r"\bappium\b", re.I)),
+    ("Database Testing", re.compile(r"\bdatabase\s+testing\b|\bdb\s+validation\b|\bdatabase\s+validation\b", re.I)),
     ("Vercel", re.compile(r"\bvercel\b", re.I)),
     ("Netlify", re.compile(r"\bnetlify\b", re.I)),
     ("Render", re.compile(r"\brender\b", re.I)),
@@ -140,6 +172,13 @@ def _normalize_loose_skill_phrase(value):
     )
     text = re.sub(r"[^\w\s.+#/-]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+    if re.fullmatch(
+        r"(quality|reliability|security|reliability security|software quality|high quality|"
+        r"problem solving|analytical|communication|team player|fast paced|detail oriented)",
+        text,
+        re.I,
+    ):
+        return ""
 
     if not text or len(text) > 35 or len(text.split()) > 3:
         return ""

@@ -163,6 +163,8 @@ def _responsibility_signals(jd_text=""):
         "develop", "design", "implement", "maintain", "analyze", "report", "dashboard",
         "deploy", "monitor", "support", "sell", "source", "screen", "onboard",
         "reconcile", "audit", "manage", "coordinate", "troubleshoot",
+        "test", "automate", "validate", "verify", "debug", "document", "track",
+        "regression", "smoke", "sanity", "functional", "integration",
     ]
     found = []
     text = (jd_text or "").lower()

@@ -95,9 +95,15 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
         if str(item or "").strip()
     ]
     explicit_is_role_relevant = bool(explicit_years and any(term and term in resume_lower for term in role_terms))
-    if explicit_is_role_relevant and explicit_years < exp_data["total_experience_years"]:
+    explicit_capped_total_years = False
+    if (
+        explicit_is_role_relevant
+        and explicit_years
+        and exp_data["total_experience_years"] > explicit_years * 2.5
+    ):
         exp_data["total_experience_years"] = explicit_years
-    elif explicit_years > exp_data["total_experience_years"]:
+        explicit_capped_total_years = True
+    elif explicit_years > exp_data["total_experience_years"] and exp_data["total_experience_years"] <= 0:
         exp_data["total_experience_years"] = explicit_years
     parsed["total_experience_years"] = exp_data["total_experience_years"]
     parsed.update({
@@ -200,11 +206,20 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
             "experience_warnings": ["Relevant experience could not be calculated from work-history evidence."],
         }
     parsed.update(relevance)
-    parsed["total_experience_years"] = max(
-        float(parsed.get("total_experience_years") or 0),
-        float(exp_data.get("total_experience_years") or 0),
+    canonical_total_years = float(exp_data.get("total_experience_years") or 0)
+    if canonical_total_years > 0:
+        parsed["total_experience_years"] = canonical_total_years
+    else:
+        parsed["total_experience_years"] = float(parsed.get("total_experience_years") or 0)
+    parsed["relevant_experience_years"] = min(
+        float(parsed.get("relevant_experience_years") or 0),
+        parsed["total_experience_years"],
     )
-    if explicit_is_role_relevant and explicit_years:
+    parsed["direct_relevant_experience_years"] = min(
+        float(parsed.get("direct_relevant_experience_years") or 0),
+        parsed["total_experience_years"],
+    )
+    if explicit_is_role_relevant and explicit_years and (canonical_total_years <= 0 or explicit_capped_total_years):
         parsed["total_experience_years"] = min(parsed["total_experience_years"], explicit_years)
         parsed["relevant_experience_years"] = min(
             max(float(parsed.get("relevant_experience_years") or 0), explicit_years),

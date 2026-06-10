@@ -1,5 +1,6 @@
 from backend.experience_engine import process_experience
 from backend.jd_engine import normalize_jd_skills
+from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.scoring_service import score_candidate
 
@@ -156,3 +157,118 @@ def test_experience_parser_skips_impossible_old_ranges():
 
     assert result["total_experience_years"] < 10
     assert result["last_company_name"] == "Modern APIs Ltd"
+
+
+def test_anthony_style_qa_year_only_roles_merge_without_inflating_total_experience():
+    result = process_experience([
+        {
+            "company_name": "SiriusXM",
+            "role": "Senior Quality Engineer",
+            "start_date": "2008",
+            "end_date": "2025",
+            "description": "Designed Selenium automation and CI/CD tests.",
+        },
+        {
+            "company_name": "WebMD",
+            "role": "QA/Automation",
+            "start_date": "2003",
+            "end_date": "2008",
+            "description": "Managed automation and API test reporting.",
+        },
+        {
+            "company_name": "Dynax Solutions",
+            "role": "Programmer/QA/IT/Tech Support",
+            "start_date": "2000",
+            "end_date": "2003",
+            "description": "QA and support.",
+        },
+        {
+            "company_name": "Columbia Bootcamp",
+            "role": "Bootcamp",
+            "start_date": "2018",
+            "end_date": "2019",
+            "section": "education",
+        },
+    ])
+
+    assert 25 <= result["total_experience_years"] <= 27
+    assert result["total_experience_years"] < 33
+    assert result["last_company_name"] == "SiriusXM"
+    assert any(item["reason"] == "non_work_experience_section" for item in result["excluded_ranges_with_reason"])
+
+
+def test_qa_relevant_experience_uses_canonical_total_not_duplicate_parser_rows():
+    jd_text = (
+        "QA Automation Engineer, 1-3 Years. Selenium, Playwright, API Testing, Postman, "
+        "SQL, Manual Testing, Automation Testing, Test Cases, Bug Reporting."
+    )
+    jd_profile = build_jd_profile(jd_text, {"role": "QA Automation Engineer", "experience_required": "1-3 Years"}, [])
+    parsed = {
+        "designation": "Engineer- Digital Quality Assurance",
+        "key_skills": ["Manual Testing", "Automation Testing", "API Testing", "Java", "Python", "Playwright", "Selenium", "MySQL", "Postman"],
+        "total_experience_years": 4.28,
+        "experience": [
+            {
+                "company_name": "Virtusa Pvt Ltd",
+                "role": "Engineer- Digital Quality Assurance",
+                "start_date": "Jan 2022",
+                "end_date": "Oct 2025",
+                "description": "Manual testing, automation testing, API testing, Selenium, Playwright, MySQL, Postman.",
+            },
+            {
+                "company_name": "Virtusa Pvt Ltd., Colombo, Sri Lanka",
+                "role": "Engineer- Digital Quality Assurance",
+                "start_date": "Jan 2022",
+                "end_date": "Oct 2025",
+                "description": "Duplicate parser block with automation testing evidence.",
+            },
+            {
+                "company_name": "Internship",
+                "role": "Software Engineer Intern",
+                "start_date": "Aug 2020",
+                "end_date": "Jan 2021",
+                "description": "Automation testing internship.",
+            },
+        ],
+    }
+
+    relevance = estimate_relevant_experience_v2(parsed, jd_text, jd_profile)
+
+    assert relevance["total_experience_years"] == 4.28
+    assert 3.5 <= relevance["relevant_experience_years"] <= 4.28
+    assert relevance["role_relevance_score"] >= 75
+
+
+def test_qa_jd_does_not_emit_generic_reliability_security_gap():
+    jd_text = (
+        "QA Automation Engineer. Required: Selenium, Cypress, Playwright, TestNG, JUnit, "
+        "Java, Python, JavaScript, Automation Testing, Manual Testing, API Testing, Postman, "
+        "REST Assured, SQL, Jira, Git, Jenkins, CI/CD."
+    )
+
+    skills = normalize_jd_skills([], jd_text)
+
+    assert "Reliability Security" not in skills
+    assert "Selenium" in skills
+    assert "API Testing" in skills
+    assert "REST Assured" in skills
+
+
+def test_role_prefixed_qa_company_names_are_corrected():
+    result = process_experience([
+        {
+            "company_name": "Technical Test Lead",
+            "role": "Technical Test Lead",
+            "start_date": "Jan 2021",
+            "end_date": "Dec 2022",
+        },
+        {
+            "company_name": "SDET 3 & SDET 2 , Junglee Games Pvt Ltd",
+            "role": "SDET 3 & SDET 2",
+            "start_date": "Jan 2023",
+            "end_date": "Present",
+        },
+    ])
+
+    assert result["last_company_name"] == "Junglee Games Pvt Ltd"
+    assert any(not item["company_valid"] for item in result["extracted_date_ranges_raw"] if item["company_name"] == "Technical Test Lead")

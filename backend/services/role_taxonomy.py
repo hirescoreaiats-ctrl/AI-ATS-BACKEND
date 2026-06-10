@@ -4,6 +4,63 @@ from backend.services.taxonomy import equivalent_skill, known_skills_in_text, no
 
 
 ROLE_FAMILIES = {
+    "qa_automation": {
+        "patterns": [
+            r"\bqa\s+automation\b",
+            r"\bautomation\s+(?:test|testing|qa)\b",
+            r"\btest\s+automation\b",
+            r"\bsdet\b",
+            r"\bsoftware\s+development\s+engineer\s+in\s+test\b",
+            r"\bquality\s+(?:assurance|engineer)\b",
+            r"\bsqa\s+engineer\b",
+            r"\bsoftware\s+testing\s+engineer\b",
+            r"\bdigital\s+quality\s+assurance\b",
+            r"\bsenior\s+quality\s+engineer\b",
+        ],
+        "skills": [
+            "Selenium", "Cypress", "Playwright", "TestNG", "JUnit", "Java", "Python",
+            "JavaScript", "Automation Testing", "Manual Testing", "API Testing", "Postman",
+            "REST Assured", "SQL", "Jira", "Git", "Jenkins", "CI/CD", "Test Cases",
+            "Regression Testing",
+        ],
+        "default_must_have": [
+            "Automation Testing", "Manual Testing", "API Testing", "Test Cases",
+            "Bug Reporting", "Selenium", "Postman", "SQL",
+        ],
+        "default_core_groups": {
+            "ui_automation": ["Selenium", "Cypress", "Playwright"],
+            "api_testing": ["API Testing", "Postman", "REST Assured", "Swagger", "SoapUI"],
+            "test_frameworks": ["TestNG", "JUnit", "Pytest", "Cucumber", "BDD"],
+            "testing_process": ["Manual Testing", "Automation Testing", "Regression Testing", "Smoke Testing", "Sanity Testing", "Test Cases", "Test Plan", "Bug Reporting", "STLC", "SDLC"],
+            "programming": ["Java", "Python", "JavaScript"],
+            "database_validation": ["SQL", "MySQL", "PostgreSQL", "SQL Server", "Database Testing"],
+            "delivery_tools": ["Jira", "Git", "GitHub", "Jenkins", "CI/CD", "GitHub Actions", "GitLab CI"],
+        },
+        "core_groups": {
+            "ui_automation": ["Selenium", "Cypress", "Playwright"],
+            "api_testing": ["API Testing", "Postman", "REST Assured", "Swagger", "SoapUI"],
+            "test_frameworks": ["TestNG", "JUnit", "Pytest", "Cucumber", "BDD"],
+            "testing_process": ["Manual Testing", "Automation Testing", "Regression Testing", "Smoke Testing", "Sanity Testing", "Test Cases", "Test Plan", "Bug Reporting", "STLC", "SDLC"],
+            "programming": ["Java", "Python", "JavaScript"],
+            "database_validation": ["SQL", "MySQL", "PostgreSQL", "SQL Server", "Database Testing"],
+            "delivery_tools": ["Jira", "Git", "GitHub", "Jenkins", "CI/CD", "GitHub Actions", "GitLab CI"],
+        },
+    },
+    "manual_qa": {
+        "patterns": [
+            r"\bmanual\s+qa\b",
+            r"\bmanual\s+test(?:er|ing)\b",
+            r"\bqa\s+engineer\b",
+            r"\btest\s+engineer\b",
+            r"\bquality\s+assurance\s+analyst\b",
+        ],
+        "skills": ["Manual Testing", "Functional Testing", "Regression Testing", "Test Cases", "Test Plan", "Bug Reporting", "Jira", "STLC", "SDLC"],
+        "core_groups": {
+            "testing_process": ["Manual Testing", "Functional Testing", "Regression Testing", "Smoke Testing", "Sanity Testing"],
+            "test_design": ["Test Cases", "Test Plan", "Test Scenarios"],
+            "defect_tracking": ["Bug Reporting", "Defect Life Cycle", "Jira"],
+        },
+    },
     "software_backend": {
         "patterns": [
             r"\bbackend\b",

@@ -1828,6 +1828,10 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             cap_at(77, "Candidate is above the JD experience range and needs recruiter review.", "over_experienced", "over_jd_experience_range")
         else:
             cap_at(82, "Candidate is slightly above the JD experience range; review before client shortlist.", "slightly_over_range", "over_jd_experience_range")
+    if max_years and max_years <= 3 and total_years > 12:
+        cap_at(65, "Candidate is strongly overqualified for a junior 1-3 year JD.", "strongly_overqualified", "over_jd_experience_range")
+    elif max_years and max_years <= 3 and total_years > 8:
+        cap_at(72, "Candidate is overqualified for a junior 1-3 year JD.", "over_experienced", "over_jd_experience_range")
     if seniority in {"senior", "lead", "manager", "architect"} and relevant_years < 2:
         cap_at(50, "Senior-level role but relevant experience is below 2 years.", "under_experienced", "seniority_experience_gap")
     elif seniority in {"senior", "lead", "manager", "architect"} and relevant_years < 4:
@@ -1840,6 +1844,8 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         cap_at(65, "Two or more JD core skill groups are missing.", "missing_core_skills", "core_group_gap")
     if role_relevance < 35 and relevant_years < 1:
         cap_at(55, "Current role/domain is weakly related and relevant experience is below 1 year.", "role_domain_gap", "role_relevance")
+    elif role_relevance < 50:
+        cap_at(65, "Role fit is partial or weak for the JD role family.", "partial_role_match", "role_relevance")
     if total_years >= 5 and relevant_years < 1 and (parsed.get("experience_relevance_label") in {"unproven", "needs_validation"}):
         cap_at(70, "High total experience claim needs validation because role-relevant work evidence is weak.", "experience_needs_validation", "experience_needs_validation")
 

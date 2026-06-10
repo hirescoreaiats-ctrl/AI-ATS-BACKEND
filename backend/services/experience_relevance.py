@@ -108,6 +108,28 @@ SALESFORCE_DEV_SPECIFIC_RE = re.compile(
 
 SENIOR_ROLE_RE = re.compile(r"\b(senior|sr\.?|lead|principal|architect|manager|tech\s+lead)\b", re.I)
 INTERNSHIP_RE = re.compile(r"\b(intern|internship|trainee|training|certification|trailhead)\b", re.I)
+DIRECT_ROLE_PATTERNS = {
+    "qa_automation": re.compile(
+        r"\b(?:qa\s*/\s*automation|qa\s+automation(?:\s+engineer)?|automation\s+(?:test|testing|qa)\s+engineer|"
+        r"test\s+automation\s+engineer|sdet|software\s+development\s+engineer\s+in\s+test|"
+        r"senior\s+quality\s+engineer|quality\s+engineer|sqa\s+engineer|"
+        r"software\s+testing\s+engineer|digital\s+quality\s+assurance|qa\s+engineer)\b",
+        re.I,
+    ),
+    "manual_qa": re.compile(
+        r"\b(?:manual\s+qa|manual\s+tester|qa\s+engineer|test\s+engineer|"
+        r"quality\s+assurance\s+analyst|software\s+testing\s+engineer)\b",
+        re.I,
+    ),
+    "software_backend": re.compile(
+        r"\b(?:backend|back[-\s]?end|api|python|java|node\.?js|software)\s+"
+        r"(?:developer|engineer)\b",
+        re.I,
+    ),
+    "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
+    "data_analytics": DIRECT_ANALYST_ROLE_RE,
+    "salesforce_crm": SALESFORCE_ROLE_RE,
+}
 
 FULL_STACK_ROLE_RE = re.compile(
     r"\b(full[-\s]?stack|mern|mean|web\s+developer|software\s+engineer|software\s+developer|"
@@ -333,7 +355,12 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
     domain_context = str(jd_profile.get("domain_context") or role_family or "").replace("_", " ")
     target_accepts_junior = target_seniority in {"intern", "junior", "unknown"}
 
-    total_years = 0.0
+    parsed_total_years = 0.0
+    try:
+        parsed_total_years = float(parsed.get("total_experience_years") or 0)
+    except (TypeError, ValueError):
+        parsed_total_years = 0.0
+    summed_total_years = 0.0
     direct_years = 0.0
     transferable_years = 0.0
     senior_years = 0.0
@@ -352,7 +379,7 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         years = _years_from_job(job)
         if years <= 0:
             continue
-        total_years += years
+        summed_total_years += years
 
         role = str(job.get("role") or "")
         company = str(job.get("company_name") or job.get("company") or "")
@@ -367,6 +394,9 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         internship = bool(INTERNSHIP_RE.search(block_text))
         role_hits = [term for term in role_terms if term and re.search(r"\b" + re.escape(term) + r"\b", role.lower())]
         role_title_score = _score_ratio(len(role_hits), min(max(len(role_terms), 1), 4))
+        direct_role_match = bool((DIRECT_ROLE_PATTERNS.get(role_family) or re.compile(r"a^")).search(role))
+        if direct_role_match:
+            role_title_score = 100
         if role_family == "data_analytics" and DIRECT_ANALYST_ROLE_RE.search(role):
             role_title_score = 100
         elif role_family == "salesforce_crm" and SALESFORCE_ROLE_RE.search(role):
@@ -416,6 +446,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         )
         if role_title_score >= 75 and domain_match_score >= 35:
             final_block_score = max(final_block_score, 78)
+        if direct_role_match and (skill_evidence_score >= 25 or responsibility_match_score >= 20):
+            final_block_score = max(final_block_score, 82)
 
         if final_block_score >= 75:
             weight = 1.0
@@ -475,7 +507,7 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         parsed_total = float(parsed.get("total_experience_years") or 0)
     except (TypeError, ValueError):
         parsed_total = 0.0
-    total_years = round(max(total_years, parsed_total), 2)
+    total_years = round(parsed_total if parsed_total > 0 else summed_total_years, 2)
     relevant_years = round(min(total_years, direct_years + transferable_years), 2)
     role_relevance_score = round(max(block_scores or [0]), 2)
 
