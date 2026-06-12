@@ -1,9 +1,14 @@
-from fastapi import FastAPI
+import logging
+import uuid
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 
-from backend.api import ai, copilot, enterprise, health, interviews, organizations, realtime, talent, uploads
+from backend.api import ai, copilot, debug, enterprise, health, interviews, organizations, realtime, talent, uploads
 from backend.core.config import get_settings
 from backend.core.logging import configure_logging
 from backend.database import engine
@@ -12,9 +17,11 @@ from backend.middleware.rate_limit import InMemoryRateLimitMiddleware
 from backend.middleware.security_headers import SecurityHeadersMiddleware
 from backend.models import Base
 from backend.routers import auth, job, resume
+from backend.services.runtime import log_startup_runtime, operational_error_type
 
 configure_logging()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 if settings.sentry_dsn:
     try:
@@ -41,6 +48,56 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(InMemoryRateLimitMiddleware)
+
+
+def _requires_no_cache(path: str) -> bool:
+    protected_tokens = (
+        "/jobs",
+        "/results",
+        "/candidate",
+        "/dashboard",
+        "/analytics",
+        "/debug/dashboard-consistency",
+    )
+    return any(token in path for token in protected_tokens)
+
+
+@app.middleware("http")
+async def production_safety_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    try:
+        response = await call_next(request)
+    except OperationalError as exc:
+        error_type = operational_error_type(exc)
+        logger.exception(
+            "Database operational error: path=%s request_id=%s user=%s error_type=%s",
+            request.url.path,
+            request_id,
+            getattr(getattr(request, "state", None), "user_email", "unknown"),
+            error_type,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Database temporarily unavailable",
+                "request_id": request_id,
+                "error_type": error_type,
+            },
+            headers={"X-Request-ID": request_id},
+        )
+
+    response.headers["X-Request-ID"] = request_id
+    if _requires_no_cache(request.url.path):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
+@app.on_event("startup")
+def startup_runtime_log():
+    log_startup_runtime()
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -215,6 +272,7 @@ app.include_router(job.router)
 app.include_router(resume.router)
 app.include_router(auth.router)
 app.include_router(health.router, prefix=settings.api_prefix)
+app.include_router(debug.router, prefix=settings.api_prefix)
 app.include_router(ai.router, prefix=settings.api_prefix)
 app.include_router(copilot.router, prefix=settings.api_prefix)
 app.include_router(enterprise.router, prefix=settings.api_prefix)
@@ -223,7 +281,7 @@ app.include_router(organizations.router, prefix=settings.api_prefix)
 app.include_router(realtime.router, prefix=settings.api_prefix)
 app.include_router(talent.router, prefix=settings.api_prefix)
 app.include_router(uploads.router, prefix=settings.api_prefix)
-app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
+app.mount("/frontend", StaticFiles(directory="frontend", check_dir=False), name="frontend")
 
 
 @app.get("/")

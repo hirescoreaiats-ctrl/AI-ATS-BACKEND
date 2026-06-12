@@ -7,6 +7,7 @@ import json
 import tempfile
 import re
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -36,6 +37,7 @@ LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "recruiter", "hi
 logger = logging.getLogger(__name__)
 _batch_size = get_settings().resume_processing_batch_size
 _resume_processing_executor = ThreadPoolExecutor(max_workers=_batch_size)
+_resume_processing_semaphore = threading.BoundedSemaphore(_batch_size)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -334,7 +336,8 @@ def _mark_resume_needs_review(db, resume: Resume, reason: str, resume_text: str 
     logger.warning("Resume marked Needs Review: resume_id=%s reason=%s", resume.id, reason)
 
 
-def _process_resume_application_background(resume_id: str) -> bool:
+def _process_resume_application_background_legacy(resume_id: str) -> bool:
+    _resume_processing_semaphore.acquire()
     db = SessionLocal()
     resume = None
     try:
@@ -553,6 +556,230 @@ def _process_resume_application_background(resume_id: str) -> bool:
         return False
     finally:
         db.close()
+        _resume_processing_semaphore.release()
+
+
+def _mark_resume_needs_review_by_id(resume_id: str, reason: str, resume_text: str = "") -> None:
+    db = SessionLocal()
+    try:
+        resume = db.query(Resume).filter(Resume.id == resume_id).first()
+        if resume:
+            _mark_resume_needs_review(db, resume, reason, resume_text)
+    finally:
+        db.close()
+
+
+def _process_resume_application_background(resume_id: str) -> bool:
+    _resume_processing_semaphore.acquire()
+    try:
+        db = SessionLocal()
+        try:
+            logger.info("Resume processing started: resume_id=%s", resume_id)
+            resume = db.query(Resume).filter(Resume.id == resume_id).first()
+            if not resume:
+                logger.warning("Resume processing skipped; row not found: resume_id=%s", resume_id)
+                return False
+
+            job = db.query(Job).filter(Job.id == resume.job_id).first()
+            if not job:
+                _mark_resume_needs_review(db, resume, "Application received, but matching job was not found.")
+                return False
+
+            resume_snapshot = {
+                "id": resume.id,
+                "job_id": resume.job_id,
+                "resume_file_path": resume.resume_file_path or "",
+                "original_filename": resume.original_filename or resume.resume_original_filename,
+                "form_full_name": resume.form_full_name,
+                "form_email": resume.form_email,
+                "form_phone": resume.form_phone,
+                "form_location": resume.form_location,
+            }
+            job_snapshot = {
+                "id": job.id,
+                "jd_text": job.jd_text or "",
+                "required_skills": job.required_skills or "",
+                "min_experience_years": job.min_experience_years,
+                "education": job.education,
+                "role": job.role,
+                "preferred_skills": job.preferred_skills or "",
+                "shortlist_score": job.shortlist_score or 70,
+            }
+            resume.processing_status = "processing"
+            resume.processing_error = None
+            resume.processing_started_at = datetime.utcnow()
+            resume.processing_completed_at = None
+            resume.status = "Processing"
+            db.commit()
+        finally:
+            db.close()
+
+        try:
+            text = _extract_resume_text_from_file_path(
+                resume_snapshot["resume_file_path"],
+                resume_id=resume_snapshot["id"],
+                original_filename=resume_snapshot["original_filename"],
+            )
+        except Exception as exc:
+            logger.exception("Resume text extraction failed for resume_id=%s", resume_snapshot["id"])
+            _mark_resume_needs_review_by_id(
+                resume_snapshot["id"],
+                f"Could not download or extract resume file: {type(exc).__name__}",
+            )
+            return False
+
+        if not text.strip():
+            _mark_resume_needs_review_by_id(
+                resume_snapshot["id"],
+                "Resume uploaded, but text could not be extracted. Recruiter review required.",
+            )
+            return False
+
+        resume_text = text[:12000]
+        jd_skills = normalize_jd_skills(job_snapshot["required_skills"], job_snapshot["jd_text"])
+        jd_data = {
+            "min_experience_years": job_snapshot["min_experience_years"],
+            "education": job_snapshot["education"],
+            "role": job_snapshot["role"],
+            "preferred_skills": job_snapshot["preferred_skills"],
+        }
+
+        try:
+            parsed, exp_data, score_data = analyze_resume_for_job(
+                text,
+                job_snapshot["jd_text"],
+                jd_skills,
+                jd_data,
+            )
+        except Exception as exc:
+            logger.exception("Resume AI parsing/scoring failed for resume_id=%s", resume_snapshot["id"])
+            _mark_resume_needs_review_by_id(
+                resume_snapshot["id"],
+                f"AI parse/scoring failed: {type(exc).__name__}. Recruiter review required.",
+                resume_text,
+            )
+            return False
+
+        if not parsed:
+            _mark_resume_needs_review_by_id(
+                resume_snapshot["id"],
+                "Resume uploaded, but AI parsing failed. Recruiter review required.",
+                resume_text,
+            )
+            return False
+
+        mismatch_reason = _identity_mismatch_reason(
+            resume_snapshot["form_full_name"],
+            resume_snapshot["form_email"],
+            resume_snapshot["form_phone"],
+            parsed,
+        )
+        if mismatch_reason:
+            _mark_resume_needs_review_by_id(
+                resume_snapshot["id"],
+                f"Resume/result mismatch detected ({mismatch_reason}). Please re-parse correct resume.",
+                resume_text,
+            )
+            return False
+
+        db = SessionLocal()
+        try:
+            resume = db.query(Resume).filter(Resume.id == resume_snapshot["id"]).first()
+            job = db.query(Job).filter(Job.id == resume_snapshot["job_id"]).first()
+            if not resume or not job:
+                logger.warning("Resume save skipped; row disappeared: resume_id=%s", resume_snapshot["id"])
+                return False
+
+            parsed_email = (parsed.get("email") or resume.form_email or resume.email or "").strip().lower()
+            parsed_phone = (parsed.get("phone") or resume.form_phone or resume.phone or "").strip()
+            duplicate = _find_existing_application(db, resume.job_id, parsed_email, parsed_phone, exclude_id=resume.id)
+            if duplicate:
+                resume.email = parsed_email or resume.email
+                resume.phone = parsed_phone or resume.phone
+                resume.duplicate_of_id = duplicate.id
+                resume.is_active = False
+                resume.status = "Duplicate"
+                resume.stage = "duplicate"
+                resume.ranking_reason = "Duplicate application skipped. Candidate already applied for this job."
+                resume.ai_confidence_reason = resume.ranking_reason
+                resume.explanation = resume.ranking_reason
+                resume.processing_status = "completed"
+                resume.processing_error = None
+                resume.processing_completed_at = datetime.utcnow()
+                db.commit()
+                return True
+
+            recommendation = parsed.get("recommendation")
+            ai_shortlisted = recommendation == "shortlisted"
+            status = "Shortlisted" if ai_shortlisted else ("Rejected" if recommendation == "rejected" else "In Review")
+            stage = "shortlisted" if ai_shortlisted else ("rejected" if recommendation == "rejected" else "review")
+
+            resume.full_name = parsed.get("full_name") or resume.form_full_name or resume.full_name
+            resume.email = parsed_email
+            resume.phone = parsed_phone
+            resume.location = parsed.get("location") or resume.form_location or resume.location
+            resume.key_skills = ", ".join(parsed.get("key_skills", [])) if parsed.get("key_skills") else ""
+            resume.projects = json.dumps(parsed.get("projects") or [], ensure_ascii=False)
+            resume.designation = parsed.get("designation")
+            resume.total_experience_years = parsed.get("total_experience_years")
+            resume.last_company_name = (exp_data or {}).get("last_company_name")
+            resume.last_working_date = (exp_data or {}).get("last_working_date")
+            resume.education = _education_label(parsed.get("education") or [])
+            resume.industry = parsed.get("industry_category")
+            resume.domain = parsed.get("domain")
+            resume.final_score = parsed.get("final_score")
+            resume.rank_score = parsed.get("rank_score")
+            resume.fit_band = parsed.get("fit_band")
+            resume.skill_score = parsed.get("skill_score")
+            resume.experience_score = parsed.get("experience_score")
+            resume.confidence_score = parsed.get("confidence_score")
+            resume.resume_quality_score = parsed.get("resume_quality_score")
+            resume.ai_recommendation = parsed.get("recommendation")
+            resume.ranking_reason = parsed.get("ranking_reason")
+            resume.ai_confidence_reason = _text_value(parsed.get("ai_recruiter_explanation"))
+            resume.matched_skills = ",".join(parsed.get("matched_skills", []))
+            resume.missing_skills = ",".join(parsed.get("missing_skills", []))
+            resume.skill_match_percent = parsed.get("skill_match_percent")
+            apply_resume_intelligence_fields(resume, parsed)
+            apply_job_scoring_snapshot(resume, job, parsed.get("jd_profile_json"))
+            resume.resume_text = resume_text
+            resume.explanation = _text_value(parsed.get("ai_recruiter_explanation"))
+            resume.shortlisted = ai_shortlisted
+            resume.shortlisted_auto = ai_shortlisted
+            resume.shortlisted_manual = False
+            resume.status = status
+            resume.stage = stage
+            resume.processing_status = "completed"
+            resume.processing_error = None
+            resume.processing_completed_at = datetime.utcnow()
+            try:
+                enrich_candidate_embedding(resume)
+            except Exception:
+                logger.exception("Candidate embedding failed: resume_id=%s", resume.id)
+            db.commit()
+            logger.info(
+                "Resume DB candidate updated: resume_id=%s name=%s email=%s score=%s status=%s",
+                resume.id,
+                resume.full_name,
+                resume.email,
+                resume.rank_score or resume.final_score,
+                resume.status,
+            )
+            return True
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.exception("Resume processing failed with exception: resume_id=%s", resume_id)
+        _mark_resume_needs_review_by_id(
+            resume_id,
+            f"Resume processing failed: {type(exc).__name__}. Check backend logs for details.",
+        )
+        return False
+    finally:
+        _resume_processing_semaphore.release()
 
 
 @router.post("/upload-resumes/{job_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
@@ -582,8 +809,11 @@ async def upload_resumes(
 ):
 
     db = SessionLocal()
-
-    job = resolve_job_identifier(job_id, db)
+    try:
+        job = resolve_job_identifier(job_id, db)
+    except Exception:
+        db.close()
+        raise
 
     if not job:
         db.close()

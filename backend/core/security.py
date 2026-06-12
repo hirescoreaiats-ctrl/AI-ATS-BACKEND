@@ -79,6 +79,8 @@ def get_current_user(request: Request, db=Depends(get_db)) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    request.state.user_email = user.email
+    request.state.user_id = user.id
     return user
 
 

@@ -1555,43 +1555,41 @@ def legacy_backend_apply_page_redirect(job_id: str | None = Query(default=None),
 def public_job(job_identifier: str):
 
     db = SessionLocal()
+    try:
+        job = resolve_job_identifier(job_identifier, db, active_only=True)
 
-    job = resolve_job_identifier(job_identifier, db, active_only=True)
+        if not job:
+            return {"error": "Job not found"}
+        if job.public_apply_enabled is False:
+            return {"error": "Public apply page is not enabled for this job"}
+        ensure_apply_slug(job, db)
+        if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
+            ensure_generated_sourcing_content(job, db)
+        db.commit()
 
-    if not job:
+        jd_fields = _jd_autofill_payload(job.jd_text or "")
+
+        data = {
+            "job_id": job.id,
+            "job_title": job.job_title or jd_fields.get("job_title"),
+            "company": job.company_name,
+            "department": job.department or jd_fields.get("department"),
+            "location": jd_fields.get("location") or job.location,
+            "work_mode": jd_fields.get("work_mode") or job.work_mode,
+            "salary": job.salary_range or jd_fields.get("salary_range"),
+            "job_type": jd_fields.get("job_type") or job.job_type,
+            "experience_required": jd_fields.get("experience_required") or job.experience_required,
+            "application_deadline": job.application_deadline,
+            "hiring_manager": job.hiring_manager,
+            "description": job.jd_text,
+            "public_apply_enabled": job.public_apply_enabled if job.public_apply_enabled is not None else True,
+            "source_tracking_enabled": job.source_tracking_enabled if job.source_tracking_enabled is not None else True,
+            **sourcing_payload(job)
+        }
+
+        return data
+    finally:
         db.close()
-        return {"error": "Job not found"}
-    if job.public_apply_enabled is False:
-        db.close()
-        return {"error": "Public apply page is not enabled for this job"}
-    ensure_apply_slug(job, db)
-    if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
-        ensure_generated_sourcing_content(job, db)
-    db.commit()
-
-    jd_fields = _jd_autofill_payload(job.jd_text or "")
-
-    data = {
-        "job_id": job.id,
-        "job_title": job.job_title or jd_fields.get("job_title"),
-        "company": job.company_name,
-        "department": job.department or jd_fields.get("department"),
-        "location": jd_fields.get("location") or job.location,
-        "work_mode": jd_fields.get("work_mode") or job.work_mode,
-        "salary": job.salary_range or jd_fields.get("salary_range"),
-        "job_type": jd_fields.get("job_type") or job.job_type,
-        "experience_required": jd_fields.get("experience_required") or job.experience_required,
-        "application_deadline": job.application_deadline,
-        "hiring_manager": job.hiring_manager,
-        "description": job.jd_text,
-        "public_apply_enabled": job.public_apply_enabled if job.public_apply_enabled is not None else True,
-        "source_tracking_enabled": job.source_tracking_enabled if job.source_tracking_enabled is not None else True,
-        **sourcing_payload(job)
-    }
-
-    db.close()
-
-    return data
 
 
 @router.post("/jobs/{job_id}/ai-posts", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
@@ -2105,70 +2103,71 @@ def download_csv(job_id: str):
 def get_jobs():
 
     db = SessionLocal()
+    try:
+        jobs = db.query(Job).order_by(Job.created_at.desc()).all()
 
-    jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+        result = []
 
-    result = []
+        for job in jobs:
 
-    for job in jobs:
+            resumes = db.query(Resume).filter(
+                Resume.job_id == job.id,
+                Resume.is_active == True
+            ).all()
 
-        resumes = db.query(Resume).filter(
-            Resume.job_id == job.id,
-            Resume.is_active == True
-        ).all()
+            total_applicants = len(resumes)
+            shortlisted_count = len([
+                r for r in resumes
+                if r.shortlisted and r.status != "Communication"
+            ])
+            communication_count = len([
+                r for r in resumes
+                if r.status == "Communication" or r.stage == "communication"
+            ])
 
-        total_applicants = len(resumes)
-        shortlisted_count = len([
-            r for r in resumes
-            if r.shortlisted and r.status != "Communication"
-        ])
-        communication_count = len([
-            r for r in resumes
-            if r.status == "Communication" or r.stage == "communication"
-        ])
+            top_score = 0
+            if resumes:
+                top_score = max([r.final_score or 0 for r in resumes])
+            ensure_apply_slug(job, db)
+            if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
+                ensure_generated_sourcing_content(job, db)
+            source_counts = {source: 0 for source in [*TRACKED_APPLICATION_SOURCES, "unknown"]}
+            for resume in resumes:
+                source = normalize_application_source(resume.application_source)
+                source_counts[source] = source_counts.get(source, 0) + 1
 
-        top_score = 0
-        if resumes:
-            top_score = max([r.final_score or 0 for r in resumes])
-        ensure_apply_slug(job, db)
-        if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
-            ensure_generated_sourcing_content(job, db)
-        source_counts = {source: 0 for source in [*TRACKED_APPLICATION_SOURCES, "unknown"]}
-        for resume in resumes:
-            source = normalize_application_source(resume.application_source)
-            source_counts[source] = source_counts.get(source, 0) + 1
+            result.append({
 
-        result.append({
+                "id": job.id,
+                "job_title": job.job_title,
+                "company_name": job.company_name,
+                "location": job.location,
+                "salary_range": job.salary_range,
+                "job_type": job.job_type,
+                "jd_text": job.jd_text,
+                "required_skills": ",".join(
+                    normalize_jd_skills(job.required_skills or "", job.jd_text or "")
+                ),
 
-            "id": job.id,
-            "job_title": job.job_title,
-            "company_name": job.company_name,
-            "location": job.location,
-            "salary_range": job.salary_range,
-            "job_type": job.job_type,
-            "jd_text": job.jd_text,
-            "required_skills": ",".join(
-                normalize_jd_skills(job.required_skills or "", job.jd_text or "")
-            ),
+                "is_active": job.is_active,
 
-            "is_active": job.is_active,
+                "total_applicants": total_applicants,
+                "top_score": top_score,
+                "shortlisted_count": shortlisted_count,
+                "communication_count": communication_count,
+                "public_apply_enabled": job.public_apply_enabled if job.public_apply_enabled is not None else True,
+                "source_tracking_enabled": job.source_tracking_enabled if job.source_tracking_enabled is not None else True,
+                "resume_folder_path": job.resume_folder_path,
+                "applications_by_source": source_counts,
+                **sourcing_payload(job)
 
-            "total_applicants": total_applicants,
-            "top_score": top_score,
-            "shortlisted_count": shortlisted_count,
-            "communication_count": communication_count,
-            "public_apply_enabled": job.public_apply_enabled if job.public_apply_enabled is not None else True,
-            "source_tracking_enabled": job.source_tracking_enabled if job.source_tracking_enabled is not None else True,
-            "resume_folder_path": job.resume_folder_path,
-            "applications_by_source": source_counts,
-            **sourcing_payload(job)
+            })
 
-        })
+        db.commit()
+        return result
+    finally:
+        db.close()
 
-    db.commit()
-    db.close()
-
-    return result
 
 
 def _extract_folder_resume_text(file_path: Path) -> str:
