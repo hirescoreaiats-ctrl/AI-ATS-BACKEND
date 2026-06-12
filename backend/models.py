@@ -263,6 +263,23 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SupportCase(Base):
+    __tablename__ = "support_cases"
+
+    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    full_name = Column(String, nullable=False)
+    email = Column(String, nullable=False, index=True)
+    company_name = Column(String, nullable=True)
+    issue_type = Column(String, nullable=False, index=True)
+    priority = Column(String, nullable=False, index=True)
+    subject = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    status = Column(String, default="open", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
