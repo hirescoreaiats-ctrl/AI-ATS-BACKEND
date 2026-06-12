@@ -20,6 +20,8 @@ INVALID_COMPANY_TOKENS = {
     "api", "api &", "lead", "& team lead",
     "sde", "sde-1", "sde 1", "senior backend", "backend engineer", "backend developer",
     "senior software engineer", "software engineer", "software developer", "elasticseach", "elasticsearch",
+    "remote qa", "hybrid qa", "resume", "cv", "curriculum vitae", "professional summary",
+    "san juan pr senior software testing", "karachi pakistan senior sqa",
 }
 
 ROLE_ONLY_RE = re.compile(
@@ -52,6 +54,27 @@ def _valid_company_name(value):
     if re.search(r"\b(senior|sr\.?|lead)?\s*(qa|sqa|sdet|quality|test|testing|software)\s+(engineer|analyst|lead)\b", lowered) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|labs|health|games)\b",
         lowered,
+    ):
+        return False
+    if re.fullmatch(
+        r"(remote|hybrid|onsite)?\s*(qa|sqa|sdet|quality\s+assurance|software\s+testing|testing)\b.*",
+        lowered,
+        re.I,
+    ):
+        return False
+    if re.fullmatch(
+        r"[a-z .]+,\s*(?:[a-z]{2}|[a-z .]+)\s+(?:senior\s+|sr\.?\s+|lead\s+)?"
+        r"(?:qa|sqa|sdet|quality|test|testing|software)\s+"
+        r"(?:(?:engineer|analyst|lead|testing)\b.*)?",
+        lowered,
+        re.I,
+    ):
+        return False
+    if re.fullmatch(
+        r"(?:pakistan|india|usa|u\.s\.a?|sri\s+lanka|san\s+juan|karachi|remote|hybrid)\s+"
+        r"(?:senior\s+|sr\.?\s+|lead\s+)?(?:qa|sqa|sdet|quality|test|testing|software)\b.*",
+        lowered,
+        re.I,
     ):
         return False
     if re.match(r"^[.'’`-]*s\s+technology\b", lowered, re.I):
@@ -202,12 +225,26 @@ def _fmt_date(value):
 
 def _normalize_company_name(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip(" ,-|")
+    text = re.sub(r"\s*[-–—]\s*(?:remote|hybrid|onsite|india|usa|u\.s\.a?|pakistan|sri\s+lanka)\s*$", "", text, flags=re.I).strip(" ,-|")
+    if "|" in text:
+        parts = [part.strip(" .,-|") for part in text.split("|") if part.strip(" .,-|")]
+        if parts:
+            company_side = parts[0]
+            role_side = parts[-1]
+            if re.search(r"\b(qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|analyst|lead)\b", role_side, re.I):
+                text = company_side
     comma_parts = [part.strip(" .,-|") for part in re.split(r"\s*[,|]\s*", text) if part.strip(" .,-|")]
     if len(comma_parts) >= 2:
         prefix = " ".join(comma_parts[:-1])
         suffix = comma_parts[-1]
         if re.search(r"\b(qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|analyst|lead)\b", prefix, re.I):
             text = suffix
+        elif re.search(r"\b(qa|sqa|sdet|quality|test|testing|automation|software)\b", suffix, re.I) and re.fullmatch(
+            r"[A-Za-z .]+", comma_parts[0]
+        ):
+            text = suffix
+        elif re.search(r"\b(?:us|usa|u\.s\.a?|india|pakistan|sri\s+lanka|pr|[A-Z]{2})\b", suffix, re.I):
+            text = comma_parts[0]
     role_prefix = re.match(
         r"^(?:senior\s+|junior\s+|lead\s+)?"
         r"(?:graphic|software|full[-\s]?stack|front[-\s]?end|back[-\s]?end|web|java|python|mern|mean)?\s*"

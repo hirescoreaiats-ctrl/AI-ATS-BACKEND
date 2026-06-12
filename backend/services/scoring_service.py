@@ -462,6 +462,138 @@ def _has_any(patterns, text):
     return any(re.search(pattern, text or "", re.I) for pattern in patterns)
 
 
+QA_TARGET_FAMILIES = {"qa_automation", "manual_qa"}
+
+QA_DIRECT_TITLE_RE = re.compile(
+    r"\b("
+    r"qa|sqa|sdet|quality\s+assurance|quality\s+engineer|digital\s+quality\s+assurance|"
+    r"test\s+automation|automation\s+(?:test|testing|qa)|software\s+testing|"
+    r"manual\s+test(?:er|ing)|qa\s+automation"
+    r")\b",
+    re.I,
+)
+
+QA_ADJACENT_TITLE_RE = re.compile(r"\b(test(?:er|ing)?|quality|automation)\b", re.I)
+
+SOFTWARE_DEV_TITLE_RE = re.compile(
+    r"\b("
+    r"full[-\s]?stack|front[-\s]?end|back[-\s]?end|software|java|python|web|mern|mean|"
+    r"react|node(?:\.js)?|developer|programmer"
+    r")\b",
+    re.I,
+)
+
+
+def _is_qa_target(jd_profile):
+    family = (jd_profile.get("role_family") or "").lower()
+    role_title = jd_profile.get("role_title") or ""
+    return family in QA_TARGET_FAMILIES or bool(QA_DIRECT_TITLE_RE.search(role_title))
+
+
+def _latest_experience_role(parsed):
+    for job in parsed.get("experience") or []:
+        if isinstance(job, dict) and (job.get("is_current") or str(job.get("end_date") or "").lower() in {"present", "current"}):
+            return str(job.get("role") or "")
+    for job in parsed.get("experience") or []:
+        if isinstance(job, dict) and job.get("role"):
+            return str(job.get("role") or "")
+    return ""
+
+
+def _qa_group_evidence_strength(core_skill_groups, skill_evidence):
+    levels_by_group = {}
+    for group, options in (core_skill_groups or {}).items():
+        levels = []
+        for option in normalize_skill_list(options or []):
+            evidence = skill_evidence.get(option) or {}
+            level = evidence.get("evidence_level")
+            if not level:
+                continue
+            levels.append(level)
+        if levels:
+            levels_by_group[group] = levels
+
+    professional = [
+        group for group, levels in levels_by_group.items()
+        if any(level in {"professional_strong", "professional_weak"} for level in levels)
+    ]
+    project = [
+        group for group, levels in levels_by_group.items()
+        if group not in professional and any(level in {"project_strong", "project_weak"} for level in levels)
+    ]
+    keyword_only = [
+        group for group, levels in levels_by_group.items()
+        if group not in professional
+        and group not in project
+        and any(level in {"keyword_only", "skills_section_only"} for level in levels)
+    ]
+    training_only = [
+        group for group, levels in levels_by_group.items()
+        if group not in professional
+        and group not in project
+        and group not in keyword_only
+        and any(level == "certification_or_training_only" for level in levels)
+    ]
+    return {
+        "professional_groups": professional,
+        "project_groups": project,
+        "keyword_only_groups": keyword_only,
+        "training_only_groups": training_only,
+        "professional_group_count": len(professional),
+        "project_group_count": len(project),
+        "keyword_only_group_count": len(keyword_only),
+        "training_only_group_count": len(training_only),
+    }
+
+
+def _qa_role_identity(parsed, mandatory_coverage, professional_group_count):
+    primary_title = str(parsed.get("current_title") or parsed.get("designation") or "").strip()
+    latest_role = _latest_experience_role(parsed)
+    title_text = " ".join([primary_title, latest_role]).strip()
+    direct_years = _safe_float(parsed.get("direct_relevant_experience_years"))
+    relevant_years = _safe_float(parsed.get("relevant_experience_years"))
+    evidence = parsed.get("experience_evidence") or []
+    direct_blocks = [
+        item for item in evidence
+        if isinstance(item, dict) and item.get("label") in {"direct", "partial_match", "direct_match", "partial"}
+    ]
+
+    primary_is_qa = bool(QA_DIRECT_TITLE_RE.search(primary_title))
+    latest_is_qa = bool(QA_DIRECT_TITLE_RE.search(latest_role))
+    primary_is_dev = bool(SOFTWARE_DEV_TITLE_RE.search(primary_title)) and not primary_is_qa
+
+    if primary_is_qa or latest_is_qa:
+        alignment = "direct"
+        reason = "Current or latest title is in the QA/testing role family."
+        family = "qa_automation"
+    elif primary_is_dev and (direct_years >= 1 or direct_blocks):
+        alignment = "adjacent"
+        reason = "Primary title is software development, with some QA-relevant work evidence."
+        family = "software_engineering"
+    elif direct_years > 0 or relevant_years >= 1 or mandatory_coverage >= 55:
+        alignment = "transferable"
+        reason = "Resume has transferable QA skills, but the primary role is not QA."
+        family = "transferable"
+    elif QA_ADJACENT_TITLE_RE.search(title_text) or professional_group_count:
+        alignment = "weak"
+        reason = "Some testing signal exists, but role identity is weak."
+        family = "weak_qa_signal"
+    else:
+        alignment = "mismatch"
+        reason = "No reliable QA role identity was found."
+        family = "non_qa"
+
+    return {
+        "role_alignment": alignment,
+        "primary_role_family": family,
+        "primary_role_label": primary_title or latest_role,
+        "latest_role_label": latest_role,
+        "primary_is_developer": primary_is_dev,
+        "role_alignment_reason": reason,
+        "direct_qa_evidence_blocks": len(direct_blocks),
+    }
+
+
 def _is_data_analyst_jd(jd_text, jd_data, required_skills):
     text = " ".join([
         str(jd_data.get("role") or ""),
@@ -1634,12 +1766,14 @@ def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_sco
         if "training_only_exposure" in flags:
             return "Training-only exposure"
         return "Below experience range"
-    if "over_jd_experience_range" in flags or seniority_fit == "over":
-        return "Overqualified review"
+    if "primary_role_mismatch" in flags or "qa_transferable_only" in flags or "qa_role_identity_gap" in flags:
+        return "Role mismatch review"
     if "employer_name_only_match" in flags:
         return "Low match"
     if "missing_core_skill_groups" in flags or "missing_mandatory_skills" in flags:
         return "Rejected - missing core skills" if recommendation == "rejected" else "Skill validation needed"
+    if "over_jd_experience_range" in flags or seniority_fit == "over":
+        return "Overqualified review"
     if seniority_fit == "under" and final_score >= 65:
         return "Under-experienced but technically relevant"
     if "seniority_experience_gap" in flags and final_score >= 65:
@@ -1799,6 +1933,50 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     else:
         seniority_fit = "unclear"
 
+    qa_target = _is_qa_target(jd_profile)
+    qa_evidence = _qa_group_evidence_strength(jd_profile.get("core_skill_groups") or {}, evidence) if qa_target else {
+        "professional_groups": [],
+        "project_groups": [],
+        "keyword_only_groups": [],
+        "training_only_groups": [],
+        "professional_group_count": 0,
+        "project_group_count": 0,
+        "keyword_only_group_count": 0,
+        "training_only_group_count": 0,
+    }
+    role_identity = _qa_role_identity(parsed, mandatory_coverage, qa_evidence["professional_group_count"]) if qa_target else {
+        "role_alignment": parsed.get("target_role_alignment") or "unknown",
+        "primary_role_family": jd_profile.get("role_family") or "other",
+        "primary_role_label": parsed.get("current_title") or parsed.get("designation") or "",
+        "latest_role_label": _latest_experience_role(parsed),
+        "primary_is_developer": False,
+        "role_alignment_reason": "",
+        "direct_qa_evidence_blocks": 0,
+    }
+    applied_boosts = []
+    if qa_target:
+        alignment = role_identity["role_alignment"]
+        professional_group_count = qa_evidence["professional_group_count"]
+        if alignment == "direct" and core_percent >= 70 and professional_group_count >= 4 and mandatory_coverage < 65:
+            uplift = round((65 - mandatory_coverage) * 0.30, 2)
+            mandatory_coverage = 65
+            final_score += uplift
+            applied_boosts.append({"boost": uplift, "reason": "Direct QA professional evidence covers most core groups despite missing optional tool keywords."})
+        if alignment == "direct" and mandatory_coverage >= 60 and professional_group_count >= 3:
+            boost = 7 if seniority_fit != "over" else 4
+            final_score += boost
+            applied_boosts.append({"boost": boost, "reason": "Direct QA title with professional evidence across core QA groups."})
+        if alignment == "direct" and min_years and relevant_years >= min_years and professional_group_count >= 2:
+            boost = 3
+            final_score += boost
+            applied_boosts.append({"boost": boost, "reason": "Direct QA experience satisfies the JD minimum."})
+        if alignment == "direct" and role_identity.get("latest_role_label") and QA_DIRECT_TITLE_RE.search(role_identity["latest_role_label"]):
+            boost = 2
+            final_score += boost
+            applied_boosts.append({"boost": boost, "reason": "Latest role is QA/testing aligned."})
+
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
+
     def cap_at(limit, reason, flag=None, risk=None):
         nonlocal final_score
         if final_score > limit:
@@ -1849,6 +2027,52 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     if total_years >= 5 and relevant_years < 1 and (parsed.get("experience_relevance_label") in {"unproven", "needs_validation"}):
         cap_at(70, "High total experience claim needs validation because role-relevant work evidence is weak.", "experience_needs_validation", "experience_needs_validation")
 
+    if qa_target:
+        alignment = role_identity["role_alignment"]
+        professional_group_count = qa_evidence["professional_group_count"]
+        project_group_count = qa_evidence["project_group_count"]
+        keyword_group_count = qa_evidence["keyword_only_group_count"]
+        if alignment == "mismatch":
+            cap_at(45, "QA JD requires QA/testing role identity; candidate role is not QA-aligned.", "primary_role_mismatch", "qa_role_identity_gap")
+        elif alignment == "weak":
+            cap_at(55, "QA role identity is weak and needs recruiter validation.", "qa_role_weak", "qa_role_identity_gap")
+        elif alignment == "transferable":
+            limit = 58 if mandatory_coverage < 75 or professional_group_count < 3 else 64
+            cap_at(limit, "QA match is transferable but not a direct QA automation profile.", "qa_transferable_only", "qa_role_identity_gap")
+        elif alignment == "adjacent":
+            if mandatory_coverage < 75:
+                cap_at(58, "Primary role is software development and QA mandatory coverage is below 75%.", "primary_role_mismatch", "qa_role_identity_gap")
+            elif professional_group_count < 3:
+                cap_at(62, "Primary role is software development and professional QA evidence is thin.", "qa_professional_evidence_gap", "qa_evidence_gap")
+            else:
+                cap_at(72, "Adjacent software profile with QA evidence needs recruiter review for a QA role.", "qa_adjacent_profile", "qa_role_identity_gap")
+
+        if core_percent < 40:
+            cap_at(50, "QA core group coverage is below 40%.", "qa_core_group_gap", "mandatory_skill_gap")
+        elif core_percent < 60:
+            cap_at(58, "QA core group coverage is below 60%.", "qa_core_group_gap", "mandatory_skill_gap")
+        elif core_percent < 75 and alignment != "direct":
+            cap_at(62, "Non-direct QA profile is missing at least two QA core groups.", "qa_core_group_gap", "mandatory_skill_gap")
+
+        if role_identity.get("primary_is_developer") and mandatory_coverage < 75:
+            cap_at(58, "Developer-primary profile lacks enough mandatory QA coverage for this role.", "primary_role_mismatch", "qa_role_identity_gap")
+        if professional_group_count + project_group_count < 2:
+            cap_at(55, "QA tools are not backed by enough professional or project evidence.", "qa_professional_evidence_gap", "qa_evidence_gap")
+        elif professional_group_count < 3 and alignment != "direct":
+            cap_at(58, "Non-direct QA profile lacks professional evidence across enough core QA groups.", "qa_professional_evidence_gap", "qa_evidence_gap")
+        if keyword_group_count >= max(2, professional_group_count + project_group_count) and alignment != "direct":
+            cap_at(60, "Most QA skill matches are keyword/listed-only instead of work evidence.", "skill_match_mostly_listed_only", "qa_evidence_gap")
+
+        if max_years and max_years <= 3:
+            if total_years > 12:
+                cap_at(60, "Candidate is strongly overqualified for a junior QA Automation role.", "strongly_overqualified", "over_jd_experience_range")
+            elif total_years > 8:
+                cap_at(64, "Candidate is overqualified for a junior QA Automation role.", "over_experienced", "over_jd_experience_range")
+            elif total_years > 5 and alignment == "direct":
+                cap_at(68, "Direct QA profile is above the junior QA experience band.", "over_experienced", "over_jd_experience_range")
+            elif total_years > 4 and alignment != "direct":
+                cap_at(62, "Non-direct profile is above the junior QA experience band.", "over_experienced", "over_jd_experience_range")
+
     if missing:
         _append_unique(risk_flags, ["missing_mandatory_skills"])
     if employer_name_only_skills:
@@ -1897,6 +2121,11 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
 
     final_score = round(max(0, min(100, final_score)), 2)
     rank_score = round(min(100, final_score + min(5, confidence / 25 if not risk_flags else 0)), 2)
+    if qa_target:
+        if role_identity["role_alignment"] == "direct" and "missing_mandatory_skills" not in risk_flags:
+            rank_score = round(min(100, max(rank_score, final_score + 3)), 2)
+        elif role_identity["role_alignment"] in {"adjacent", "transferable", "weak", "mismatch"}:
+            rank_score = round(min(rank_score, final_score), 2)
     recommendation = _generic_recommendation(final_score, mandatory_coverage, confidence, caps, risk_flags)
     band = fit_band(rank_score, mandatory_coverage / 100, confidence)
 
@@ -1928,6 +2157,15 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "overqualified_penalty": overqualified_penalty,
         "experience_target_max_years": max_years or None,
         "experience_over_target_years": round(over_target_years, 2),
+        "role_alignment": role_identity["role_alignment"],
+        "primary_role_family": role_identity["primary_role_family"],
+        "primary_role_label": role_identity["primary_role_label"],
+        "role_alignment_reason": role_identity["role_alignment_reason"],
+        "professional_qa_group_count": qa_evidence["professional_group_count"],
+        "keyword_only_qa_group_count": qa_evidence["keyword_only_group_count"],
+        "qa_evidence_groups": qa_evidence,
+        "final_score_before_caps": final_score_before_caps,
+        "score_boosts_applied": applied_boosts,
         "matched_skills": matched + transferable,
         "direct_matched_skills": matched,
         "transferable_skills": transferable,
@@ -1973,6 +2211,13 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "experience_target_max_years": max_years or None,
             "experience_over_target_years": round(over_target_years, 2),
             "seniority_fit": seniority_fit,
+            "role_alignment": role_identity["role_alignment"],
+            "primary_role_family": role_identity["primary_role_family"],
+            "primary_role_label": role_identity["primary_role_label"],
+            "role_alignment_reason": role_identity["role_alignment_reason"],
+            "qa_evidence_groups": qa_evidence,
+            "final_score_before_caps": final_score_before_caps,
+            "score_boosts_applied": applied_boosts,
             "domain_specific_experience_years": parsed.get("domain_specific_experience_years"),
             "professional_role_experience_years": parsed.get("professional_role_experience_years"),
             "training_or_certification_exposure": parsed.get("training_or_certification_exposure"),
@@ -1993,7 +2238,10 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "candidate_name": parsed.get("full_name") or "",
             "current_title": parsed.get("current_title") or parsed.get("designation") or "",
             "most_relevant_title": parsed.get("most_relevant_role") or "",
-            "target_role_alignment": parsed.get("target_role_alignment") or "weak",
+            "target_role_alignment": role_identity["role_alignment"] if qa_target else (parsed.get("target_role_alignment") or "weak"),
+            "primary_role_family": role_identity["primary_role_family"],
+            "role_alignment_reason": role_identity["role_alignment_reason"],
+            "qa_evidence_groups": qa_evidence,
             "total_experience_years": total_years,
             "jd_relevant_experience_years": relevant_years,
             "seniority_fit": seniority_fit,
