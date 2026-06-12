@@ -463,6 +463,7 @@ def _has_any(patterns, text):
 
 
 QA_TARGET_FAMILIES = {"qa_automation", "manual_qa"}
+BUSINESS_ANALYST_TARGET_FAMILIES = {"business_analyst", "business_analysis"}
 
 QA_DIRECT_TITLE_RE = re.compile(
     r"\b("
@@ -483,11 +484,38 @@ SOFTWARE_DEV_TITLE_RE = re.compile(
     re.I,
 )
 
+BUSINESS_ANALYST_DIRECT_TITLE_RE = re.compile(
+    r"\b(?:business\s+analyst|functional\s+analyst|it\s+business\s+analyst|"
+    r"business\s+systems\s+analyst|requirements?\s+analyst)\b",
+    re.I,
+)
+
+BUSINESS_ANALYST_ADJACENT_TITLE_RE = re.compile(
+    r"\b(?:data|bi|mis|reporting|product|project|operations?)\s+"
+    r"(?:analyst|associate|specialist|coordinator|manager)\b",
+    re.I,
+)
+
+BA_CRITICAL_GROUPS = {
+    "requirements_gathering",
+    "requirements_documentation",
+    "stakeholder_coordination",
+    "functional_analysis",
+    "uat_change_management",
+    "process_workflow",
+}
+
 
 def _is_qa_target(jd_profile):
     family = (jd_profile.get("role_family") or "").lower()
     role_title = jd_profile.get("role_title") or ""
     return family in QA_TARGET_FAMILIES or bool(QA_DIRECT_TITLE_RE.search(role_title))
+
+
+def _is_business_analyst_target(jd_profile):
+    family = (jd_profile.get("role_family") or "").lower()
+    role_title = jd_profile.get("role_title") or ""
+    return family in BUSINESS_ANALYST_TARGET_FAMILIES or bool(BUSINESS_ANALYST_DIRECT_TITLE_RE.search(role_title))
 
 
 def _latest_experience_role(parsed):
@@ -1164,6 +1192,8 @@ def _project_work_evidence_strength(parsed, resume_text, matched_skills, role_fa
     role_family = (role_family or "other").lower()
     if role_family == "data_analytics":
         action_pattern = r"\b(built|developed|implemented|designed|automated|analyzed|managed|deployed|optimized|created|delivered|reported|visualized|cleaned|extracted)\b"
+    elif role_family in {"business_analyst", "business_analysis"}:
+        action_pattern = r"\b(gathered|documented|analyzed|validated|coordinated|communicated|created|wrote|mapped|prioritized|facilitated|supported|managed|tracked|clarified|tested)\b"
     elif role_family in {"software_backend", "software_frontend", "full_stack", "mobile_development", "devops_cloud"}:
         action_pattern = r"\b(built|developed|implemented|designed|automated|deployed|optimized|created|delivered|tested|integrated|maintained|debugged)\b"
     elif role_family in {"sales_business_development", "hr_recruitment", "customer_support"}:
@@ -2049,6 +2079,17 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "keyword_only_group_count": 0,
         "training_only_group_count": 0,
     }
+    ba_target = _is_business_analyst_target(jd_profile)
+    ba_evidence = _qa_group_evidence_strength(jd_profile.get("core_skill_groups") or {}, evidence) if ba_target else {
+        "professional_groups": [],
+        "project_groups": [],
+        "keyword_only_groups": [],
+        "training_only_groups": [],
+        "professional_group_count": 0,
+        "project_group_count": 0,
+        "keyword_only_group_count": 0,
+        "training_only_group_count": 0,
+    }
     role_identity = (
         _qa_role_identity(parsed, mandatory_coverage, qa_evidence["professional_group_count"])
         if qa_target
@@ -2075,6 +2116,30 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             boost = 2
             final_score += boost
             applied_boosts.append({"boost": boost, "reason": "Latest role is QA/testing aligned."})
+
+    if ba_target:
+        alignment = role_identity["role_alignment"]
+        critical_professional = [group for group in ba_evidence["professional_groups"] if group in BA_CRITICAL_GROUPS]
+        critical_project = [group for group in ba_evidence["project_groups"] if group in BA_CRITICAL_GROUPS]
+        critical_count = len(set(critical_professional + critical_project))
+        title_text = " ".join([
+            str(role_identity.get("primary_role_label") or ""),
+            str(role_identity.get("latest_role_label") or ""),
+        ])
+        direct_ba_title = bool(BUSINESS_ANALYST_DIRECT_TITLE_RE.search(title_text))
+        if direct_ba_title and critical_count >= 2 and mandatory_coverage < 65:
+            uplift = round((65 - mandatory_coverage) * 0.25, 2)
+            mandatory_coverage = 65
+            final_score += uplift
+            applied_boosts.append({"boost": uplift, "reason": "Direct Business Analyst role evidence covers core BA responsibilities."})
+        if direct_ba_title and critical_count >= 3:
+            boost = 7 if seniority_fit != "over" else 4
+            final_score += boost
+            applied_boosts.append({"boost": boost, "reason": "Direct Business Analyst title with requirements/stakeholder evidence."})
+        elif alignment in {"adjacent", "transferable"} and critical_count >= 3 and mandatory_coverage >= 55:
+            boost = 4
+            final_score += boost
+            applied_boosts.append({"boost": boost, "reason": "Adjacent analyst profile has strong BA responsibility evidence."})
 
     final_score_before_caps = round(max(0, min(100, final_score)), 2)
 
@@ -2174,6 +2239,39 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             elif total_years > 4 and alignment != "direct":
                 cap_at(62, "Non-direct profile is above the junior QA experience band.", "over_experienced", "over_jd_experience_range")
 
+    if ba_target:
+        alignment = role_identity["role_alignment"]
+        critical_groups = set(ba_evidence["professional_groups"] + ba_evidence["project_groups"]) & BA_CRITICAL_GROUPS
+        critical_count = len(critical_groups)
+        keyword_group_count = ba_evidence["keyword_only_group_count"]
+        title_text = " ".join([
+            str(role_identity.get("primary_role_label") or ""),
+            str(role_identity.get("latest_role_label") or ""),
+        ])
+        direct_ba_title = bool(BUSINESS_ANALYST_DIRECT_TITLE_RE.search(title_text))
+        adjacent_analytics_title = bool(BUSINESS_ANALYST_ADJACENT_TITLE_RE.search(title_text))
+
+        if adjacent_analytics_title and critical_count < 2:
+            cap_at(52, "Analytics/dashboard profile lacks Business Analyst core responsibility evidence.", "analytics_only_for_ba", "ba_core_evidence_gap")
+
+        if critical_count == 0:
+            cap_at(52, "Business Analyst JD requires requirements, documentation, stakeholder, UAT, or process-flow evidence.", "ba_core_evidence_gap", "mandatory_skill_gap")
+        elif critical_count < 2 and not direct_ba_title:
+            cap_at(55, "Candidate has limited BA core responsibility evidence for this JD.", "ba_core_evidence_gap", "mandatory_skill_gap")
+
+        if alignment in {"weak", "mismatch"}:
+            cap_at(48, "Candidate role identity is not Business Analyst aligned.", "primary_role_mismatch", "ba_role_identity_gap")
+        elif alignment == "transferable" and critical_count < 3:
+            cap_at(58, "Transferable profile lacks enough BA core responsibility coverage.", "ba_transferable_only", "ba_role_identity_gap")
+
+        if core_percent < 45:
+            cap_at(52, "Business Analyst core group coverage is below 45%.", "ba_core_group_gap", "mandatory_skill_gap")
+        elif core_percent < 65 and alignment != "direct":
+            cap_at(60, "Non-direct BA profile is missing multiple BA core groups.", "ba_core_group_gap", "mandatory_skill_gap")
+
+        if keyword_group_count >= max(2, ba_evidence["professional_group_count"] + ba_evidence["project_group_count"]) and not direct_ba_title:
+            cap_at(58, "Most BA matches are keyword/listed-only instead of work evidence.", "skill_match_mostly_listed_only", "ba_evidence_gap")
+
     scoring_mode = jd_profile.get("scoring_mode") or "legacy"
     profile_confidence = _safe_float(jd_profile.get("profile_confidence"), _safe_float(jd_profile.get("role_family_confidence")))
     if scoring_mode == "dynamic" and profile_confidence < 75:
@@ -2248,6 +2346,11 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             rank_score = round(min(100, max(rank_score, final_score + 3)), 2)
         elif role_identity["role_alignment"] in {"adjacent", "transferable", "weak", "mismatch"}:
             rank_score = round(min(rank_score, final_score), 2)
+    if ba_target:
+        if role_identity["role_alignment"] == "direct" and len(set(ba_evidence["professional_groups"] + ba_evidence["project_groups"]) & BA_CRITICAL_GROUPS) >= 2:
+            rank_score = round(min(100, max(rank_score, final_score + 2)), 2)
+        elif role_identity["role_alignment"] in {"adjacent", "transferable", "weak", "mismatch"}:
+            rank_score = round(min(rank_score, final_score), 2)
     recommendation = _generic_recommendation(final_score, mandatory_coverage, confidence, caps, risk_flags)
     band = fit_band(rank_score, mandatory_coverage / 100, confidence)
 
@@ -2286,6 +2389,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "professional_qa_group_count": qa_evidence["professional_group_count"],
         "keyword_only_qa_group_count": qa_evidence["keyword_only_group_count"],
         "qa_evidence_groups": qa_evidence,
+        "business_analyst_evidence_groups": ba_evidence,
         "final_score_before_caps": final_score_before_caps,
         "score_boosts_applied": applied_boosts,
         "matched_skills": matched + transferable,
@@ -2338,6 +2442,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "primary_role_label": role_identity["primary_role_label"],
             "role_alignment_reason": role_identity["role_alignment_reason"],
             "qa_evidence_groups": qa_evidence,
+            "business_analyst_evidence_groups": ba_evidence,
             "final_score_before_caps": final_score_before_caps,
             "score_boosts_applied": applied_boosts,
             "domain_specific_experience_years": parsed.get("domain_specific_experience_years"),
@@ -2364,6 +2469,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "primary_role_family": role_identity["primary_role_family"],
             "role_alignment_reason": role_identity["role_alignment_reason"],
             "qa_evidence_groups": qa_evidence,
+            "business_analyst_evidence_groups": ba_evidence,
             "total_experience_years": total_years,
             "jd_relevant_experience_years": relevant_years,
             "seniority_fit": seniority_fit,

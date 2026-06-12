@@ -8,6 +8,29 @@ from backend.services.taxonomy import SKILL_CATEGORIES, expand_skill_requirement
 
 JD_PROFILE_VERSION = "jd_profile_v3_dual_mode"
 
+BUSINESS_ANALYST_RESPONSIBILITY_SIGNALS = [
+    "requirement gathering",
+    "requirement analysis",
+    "requirement documentation",
+    "business requirements",
+    "brd",
+    "frd",
+    "srs",
+    "user stories",
+    "use cases",
+    "acceptance criteria",
+    "functional specification",
+    "stakeholder",
+    "uat",
+    "change request",
+    "gap analysis",
+    "process flow",
+    "workflow",
+    "business case",
+    "status reports",
+    "defect clarification",
+]
+
 SENIORITY_PATTERNS = [
     ("architect", r"\b(architect|principal)\b"),
     ("manager", r"\b(manager|head|leadership|people\s+management)\b"),
@@ -283,6 +306,18 @@ def _responsibility_signals(jd_text=""):
     return found[:12]
 
 
+def _profile_responsibility_signals(role_family, jd_text=""):
+    found = _responsibility_signals(jd_text or "")
+    if role_family == "business_analyst":
+        text = (jd_text or "").lower()
+        ba_found = [
+            signal for signal in BUSINESS_ANALYST_RESPONSIBILITY_SIGNALS
+            if re.search(r"\b" + re.escape(signal).replace(r"\ ", r"\s+") + r"\b", text, re.I)
+        ]
+        found = ba_found + [item for item in found if item not in ba_found]
+    return found[:20]
+
+
 def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     jd_data = jd_data or {}
     role_title = _first_text(jd_data.get("role"), jd_data.get("job_title"), jd_data.get("title"))
@@ -297,6 +332,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
 
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
+    if role_family == "business_analysis":
+        role_family = "business_analyst"
     dynamic_hint = _dynamic_role_hint(role_title, jd_text)
     if dynamic_hint and role_family in {"crm_erp", "other"}:
         role_family = "other"
@@ -336,6 +373,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
                 for skill in (options or [])
             ])
     normalized_role_label = dynamic_role_label or _normalized_role_label(role_title, role_family)
+    responsibility_signals = _profile_responsibility_signals(role_family, jd_text or "")
     profile_warnings = []
     if scoring_mode == "dynamic":
         profile_warnings.append("Low role-family confidence; using JD-specific dynamic scoring profile.")
@@ -375,8 +413,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "mandatory_skill_groups": core_groups,
         "preferred_skill_groups": {"preferred": nice_to_have} if nice_to_have else {},
         "core_skill_groups": core_groups,
-        "responsibility_signals": _responsibility_signals(jd_text or ""),
-        "responsibility_groups": {"responsibilities": _responsibility_signals(jd_text or "")},
+        "responsibility_signals": responsibility_signals,
+        "responsibility_groups": {"responsibilities": responsibility_signals},
         "title_signals": _title_signals(role_title, role_family),
         "adjacent_title_signals": [],
         "negative_title_signals": [],

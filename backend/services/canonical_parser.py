@@ -38,9 +38,26 @@ def _unsafe_person_name(value: Any) -> bool:
     text = _safe_text(value)
     if not text:
         return False
+    lowered = text.lower().strip(" :-|")
+    if lowered in {
+        "city state",
+        "city state gpa",
+        "data analyst",
+        "business analyst",
+        "digitalrealty usa remote",
+        "suffolk university boston ma",
+        "preferred full name",
+    }:
+        return True
     if len(text) > 70 or len(text.split()) > 5:
         return True
     if re.search(r"\s[-\u2013\u2014]\s", text) or re.search(r"\b(entri|elevate|cohort|coursework)\b", text, re.I):
+        return True
+    if re.search(r"\b(gpa|university|college|school|bachelor|master|degree|major|minor)\b", text, re.I):
+        return True
+    if re.search(r"\b(remote|hybrid|onsite|usa|u\.s\.a?|city|state)\b", text, re.I) and len(text.split()) <= 4:
+        return True
+    if re.search(r"\b(data|business|qa|software|full\s*stack|java|python)\s+(analyst|engineer|developer|tester)\b", text, re.I):
         return True
     parts = text.split()
     if len(parts) >= 4 and sum(1 for part in parts if len(part.strip(".-")) <= 2) >= 2:

@@ -137,6 +137,41 @@ FULL_STACK_ROLE_RE = re.compile(
     re.I,
 )
 
+BUSINESS_ANALYST_DIRECT_ROLE_RE = re.compile(
+    r"\b(?:junior\s+|associate\s+|assistant\s+|senior\s+|sr\.?\s+)?"
+    r"(?:business\s+analyst|functional\s+analyst|it\s+business\s+analyst|"
+    r"business\s+systems\s+analyst|requirements?\s+analyst)\b",
+    re.I,
+)
+
+BUSINESS_ANALYST_ADJACENT_ROLE_RE = re.compile(
+    r"\b(?:data|bi|mis|reporting|product|project|operations?|customer\s+support)\s+"
+    r"(?:analyst|associate|specialist|coordinator|manager|intern)\b",
+    re.I,
+)
+
+BUSINESS_ANALYST_EVIDENCE_RE = re.compile(
+    r"\b(?:business\s+requirements?|requirements?\s+(?:gathering|analysis|documentation)|"
+    r"gather(?:ed|ing)?\s+requirements?|document(?:ed|ing)?\s+requirements?|"
+    r"brd|frd|srs|user\s+stor(?:y|ies)|use\s+cases?|acceptance\s+criteria|"
+    r"functional\s+specifications?|stakeholder(?:s)?|uat|user\s+acceptance\s+testing|"
+    r"change\s+requests?|gap\s+analysis|process\s+flows?|workflow\s+diagrams?|"
+    r"business\s+process\s+mapping|requirement\s+traceability\s+matrix|rtm|"
+    r"backlog\s+grooming|sprint\s+planning|defect\s+clarification|wireframes?)\b",
+    re.I,
+)
+
+ANALYTICS_ONLY_RE = re.compile(
+    r"\b(?:dashboard|dashboards|reporting|reports?|kpi|metrics?|power\s*bi|tableau|"
+    r"excel|sql|data\s+cleaning|data\s+visuali[sz]ation|etl|mis)\b",
+    re.I,
+)
+
+DIRECT_ROLE_PATTERNS.update({
+    "business_analyst": BUSINESS_ANALYST_DIRECT_ROLE_RE,
+    "business_analysis": BUSINESS_ANALYST_DIRECT_ROLE_RE,
+})
+
 FULL_STACK_SIGNAL_RE = re.compile(
     r"\b(react|next(?:\.js)?|vue(?:\.js)?|angular|node(?:\.js)?|express(?:\.js)?|django|fastapi|"
     r"laravel|spring\s+boot|java|rest\s+api|api|apis|graphql|authentication|authorization|"
@@ -411,6 +446,22 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif direct_full_stack_role:
                 role_title_score = max(role_title_score, 72)
 
+        ba_evidence_hits = set()
+        ba_direct_role = False
+        ba_adjacent_role = False
+        ba_analytics_only = False
+        if role_family in {"business_analyst", "business_analysis"}:
+            ba_evidence_hits = {match.group(0).lower() for match in BUSINESS_ANALYST_EVIDENCE_RE.finditer(block_text)}
+            ba_direct_role = bool(BUSINESS_ANALYST_DIRECT_ROLE_RE.search(role))
+            ba_adjacent_role = bool(BUSINESS_ANALYST_ADJACENT_ROLE_RE.search(role))
+            ba_analytics_only = bool(ANALYTICS_ONLY_RE.search(block_text)) and not ba_evidence_hits
+            if ba_direct_role:
+                role_title_score = 100
+            elif ba_adjacent_role and ba_evidence_hits:
+                role_title_score = max(role_title_score, 74)
+            elif ba_adjacent_role:
+                role_title_score = max(role_title_score, 34)
+
         block_skills = normalize_skill_list(known_skills_in_text(block_text))
         skill_hits = []
         for required in family_signal_skills:
@@ -420,6 +471,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
 
         responsibility_hits = [signal for signal in required_signals if signal and re.search(r"\b" + re.escape(signal) + r"\w*\b", block_lower)]
         responsibility_match_score = _score_ratio(len(set(responsibility_hits)), min(max(len(required_signals), 1), 5))
+        if ba_evidence_hits:
+            responsibility_match_score = max(responsibility_match_score, min(100, len(ba_evidence_hits) * 24))
 
         domain_hits = 0
         if domain_context and domain_context.lower() in block_lower:
@@ -431,6 +484,12 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         if role_family == "full_stack" and len({match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}) >= 3:
             domain_hits += 2
         domain_match_score = min(100, domain_hits * 35)
+        if role_family in {"business_analyst", "business_analysis"}:
+            if ba_evidence_hits:
+                domain_match_score = max(domain_match_score, min(100, 35 + len(ba_evidence_hits) * 15))
+            elif ba_analytics_only:
+                skill_evidence_score = min(skill_evidence_score, 38)
+                domain_match_score = min(domain_match_score, 30)
 
         seniority_signal_score = _seniority_block_score(job, target_seniority)
         recency_score = _recency_score(job)
@@ -448,6 +507,17 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             final_block_score = max(final_block_score, 78)
         if direct_role_match and (skill_evidence_score >= 25 or responsibility_match_score >= 20):
             final_block_score = max(final_block_score, 82)
+        if role_family in {"business_analyst", "business_analysis"}:
+            if ba_direct_role and len(ba_evidence_hits) >= 2:
+                final_block_score = max(final_block_score, 86)
+            elif ba_direct_role:
+                final_block_score = max(final_block_score, 70)
+            elif ba_adjacent_role and len(ba_evidence_hits) >= 2:
+                final_block_score = max(final_block_score, 72)
+            elif len(ba_evidence_hits) >= 2:
+                final_block_score = max(final_block_score, 64)
+            elif ba_analytics_only:
+                final_block_score = min(final_block_score, 42)
 
         if final_block_score >= 75:
             weight = 1.0

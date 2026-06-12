@@ -6,6 +6,7 @@ from backend.services.explanation_service import generate_recruiter_explanation
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.canonical_parser import apply_safe_primary_fields, parse_resume_document
+from backend.services.document_classifier import classify_resume_document
 from backend.services.resume_quality_gate import apply_parser_quality_gate, build_parser_quality_report
 from backend.services.scoring_service import score_candidate
 from backend.services.semantic_service import candidate_embedding_payload, cosine_similarity_cached
@@ -79,6 +80,67 @@ def _jd_experience_range(text):
 
 def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     jd_profile = build_jd_profile(jd_text, jd_data, jd_skills)
+    classification = classify_resume_document(text)
+    if not classification.is_resume:
+        exp_data = {
+            "total_experience_years": 0,
+            "last_company_name": "",
+            "last_company_confidence": 0,
+            "last_company_source_text": "",
+            "last_company_needs_review": True,
+        }
+        parsed = {
+            "full_name": "",
+            "email": "",
+            "phone": "",
+            "designation": "",
+            "key_skills": [],
+            "education": [],
+            "experience": [],
+            "projects": [],
+            "total_experience_years": 0,
+            "relevant_experience_years": 0,
+            "direct_relevant_experience_years": 0,
+            "role_relevance_score": 0,
+            "experience_relevance_label": "non_resume",
+            "parser_quality_score": 0,
+            "parser_quality_action": "rejected_non_resume",
+            "parser_quality_flags": [{
+                "code": "non_resume_document",
+                "severity": "critical",
+                "message": classification.reason,
+                "penalty": 100,
+            }],
+            "invalid_resume_type": classification.invalid_resume_type or classification.label,
+            "document_classification": classification.__dict__,
+            "jd_profile_json": jd_profile,
+            "role_family": jd_profile.get("role_family"),
+            "jd_profile_version": jd_profile.get("jd_profile_version"),
+            "scoring_mode": jd_profile.get("scoring_mode"),
+            "dynamic_profile_used": jd_profile.get("dynamic_profile_used"),
+            "detected_role_family": jd_profile.get("detected_role_family"),
+            "normalized_role_label": jd_profile.get("normalized_role_label"),
+            "profile_confidence": jd_profile.get("profile_confidence"),
+            "profile_warnings": jd_profile.get("profile_warnings") or [],
+        }
+        score_data = {
+            "final_score": 0,
+            "rank_score": 0,
+            "fit_band": "rejected",
+            "recommendation": "rejected",
+            "label": "Rejected - not a resume",
+            "confidence_score": 100,
+            "ranking_reason": classification.reason,
+            "recruiter_flags": ["non_resume_document"],
+            "risk_flags": ["non_resume_document"],
+            "score_caps_applied": [{"cap": 0, "reason": classification.reason}],
+            "invalid_resume_type": parsed["invalid_resume_type"],
+            "document_classification": parsed["document_classification"],
+            "jd_profile_json": jd_profile,
+        }
+        parsed.update(score_data)
+        return parsed, exp_data, score_data
+
     parsed = parse_resume_document(text, job_context={**(jd_data or {}), "jd_profile": jd_profile}, mode="application")
 
     parsed["domain"] = parsed.get("domain") or detect_domain(

@@ -22,12 +22,16 @@ INVALID_COMPANY_TOKENS = {
     "senior software engineer", "software engineer", "software developer", "elasticseach", "elasticsearch",
     "remote qa", "hybrid qa", "resume", "cv", "curriculum vitae", "professional summary",
     "san juan pr senior software testing", "karachi pakistan senior sqa",
+    "turkey", "boston ma", "usa remote", "city state", "city state gpa",
+    "digitalrealty usa remote", "da ta analy st", "data analyst", "business analyst",
+    "assistant manager", "event co-chair", "co-chair",
 }
 
 ROLE_ONLY_RE = re.compile(
     r"^(?:senior|sr\.?|junior|jr\.?|lead|principal|staff|technical)?\s*"
     r"(?:qa|sqa|sdet|quality|test|testing|automation|software|digital\s+quality\s+assurance|"
-    r"full[-\s]?stack|front[-\s]?end|back[-\s]?end|java|python|web)?\s*"
+    r"full[-\s]?stack|front[-\s]?end|back[-\s]?end|java|python|web|data|business|bi|mis|"
+    r"analytics?|reporting|product|project|technical\s+support)?\s*"
     r"(?:engineer|developer|analyst|consultant|specialist|manager|lead|intern|trainee|"
     r"quality\s+engineer|quality\s+assurance|test\s+lead|technical\s+test\s+lead|"
     r"software\s+testing\s+engineer|automation\s+engineer|qa\s+automation\s+engineer)\s*"
@@ -51,7 +55,7 @@ def _valid_company_name(value):
         return False
     if ROLE_ONLY_RE.fullmatch(lowered):
         return False
-    if re.search(r"\b(senior|sr\.?|lead)?\s*(qa|sqa|sdet|quality|test|testing|software)\s+(engineer|analyst|lead)\b", lowered) and not re.search(
+    if re.search(r"\b(senior|sr\.?|lead)?\s*(qa|sqa|sdet|quality|test|testing|software|data|business|bi|mis|analytics?|reporting)\s+(engineer|analyst|lead|developer|specialist)\b", lowered) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|labs|health|games)\b",
         lowered,
     ):
@@ -91,6 +95,13 @@ def _valid_company_name(value):
     ):
         return False
     if re.fullmatch(r"(uttar\s+pradesh|haryana|gurgaon|gurugram|jaipur|chennai|india|remote|hybrid)", lowered, re.I):
+        return False
+    if re.fullmatch(
+        r"(turkey|boston\s+ma|usa\s+remote|city\s+state(?:\s+gpa)?|digitalrealty\s+usa\s+remote|"
+        r"da\s+ta\s+analy\s+st|event\s+co-chair|co-chair|data\s+analyst|business\s+analyst)",
+        lowered,
+        re.I,
+    ):
         return False
     if re.search(r"\b(react|node\.?js|express\.?js|html|css|java|python|django|fastapi|api)\b", lowered, re.I) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|systems|labs|studio|media|group|microsoft|amazon|infosys|capgemini)\b",
