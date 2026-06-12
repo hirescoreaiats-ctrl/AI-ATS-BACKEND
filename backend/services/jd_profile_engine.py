@@ -1,8 +1,12 @@
+import hashlib
+import json
 import re
 
 from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups, role_family_default_must_have, role_family_default_nice_to_have
 from backend.services.taxonomy import SKILL_CATEGORIES, expand_skill_requirements, known_skills_in_text, normalize_skill_list
 
+
+JD_PROFILE_VERSION = "jd_profile_v3_dual_mode"
 
 SENIORITY_PATTERNS = [
     ("architect", r"\b(architect|principal)\b"),
@@ -12,6 +16,38 @@ SENIORITY_PATTERNS = [
     ("intern", r"\b(intern|internship|trainee)\b"),
     ("junior", r"\b(junior|jr\.?|fresher|entry[-\s]?level)\b"),
     ("mid-level", r"\b(mid[-\s]?level|associate)\b"),
+]
+
+DYNAMIC_ROLE_GROUP_RULES = [
+    (
+        "procurement",
+        r"\b(procurement|purchase|purchasing|vendor|supply\s+chain)\b",
+        {
+            "procurement_process": ["Procurement", "Purchase Orders", "Purchasing"],
+            "vendor_management": ["Vendor Management", "Supplier Management", "Negotiation"],
+            "erp_tools": ["ERP", "SAP", "Excel"],
+            "supply_chain": ["Supply Chain", "Inventory", "Coordination"],
+        },
+    ),
+    (
+        "seo",
+        r"\b(seo|search\s+engine\s+optimization|keyword\s+research|on[-\s]?page|off[-\s]?page)\b",
+        {
+            "seo_research": ["Keyword Research", "SEO"],
+            "seo_execution": ["On-page SEO", "Off-page SEO", "Content Optimization"],
+            "seo_tools": ["Google Search Console", "Google Analytics", "SEMrush", "Ahrefs"],
+            "reporting": ["Reporting", "Analytics"],
+        },
+    ),
+    (
+        "ui_ux",
+        r"\b(ui/ux|ux|user\s+experience|figma|wireframes?|prototypes?|usability)\b",
+        {
+            "design_tools": ["Figma", "Adobe XD", "Sketch"],
+            "interaction_design": ["Wireframes", "Prototypes", "Design Systems"],
+            "research_testing": ["User Research", "Usability Testing"],
+        },
+    ),
 ]
 
 
@@ -28,6 +64,79 @@ def _first_text(*values):
         if value:
             return str(value).strip()
     return ""
+
+
+def _stable_hash(payload):
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _normalized_role_label(role_title, role_family):
+    label = re.sub(r"[^a-z0-9]+", "_", str(role_title or role_family or "generic").lower()).strip("_")
+    return label or "generic"
+
+
+def _scoring_mode(role_family, confidence):
+    if role_family == "other" or confidence < 55:
+        return "dynamic"
+    if confidence < 80:
+        return "hybrid"
+    return "known_template"
+
+
+def _profile_confidence(mode, role_confidence, must_have, core_groups):
+    base = float(role_confidence or 0)
+    if mode == "known_template":
+        base = max(base, 82)
+    elif mode == "hybrid":
+        base = min(max(base, 62), 79)
+    else:
+        base = min(max(base, 45), 74)
+    if len(must_have or []) >= 4:
+        base += 6
+    if len(core_groups or {}) >= 3:
+        base += 5
+    return round(max(20, min(100, base)), 2)
+
+
+def _dynamic_core_groups_from_jd(role_title, jd_text, must_have):
+    text = f"{role_title or ''}\n{jd_text or ''}\n{' '.join(must_have or [])}".lower()
+    for normalized_role, pattern, groups in DYNAMIC_ROLE_GROUP_RULES:
+        if re.search(pattern, text, re.I):
+            selected = {}
+            for group, options in groups.items():
+                hits = []
+                for option in options:
+                    option_pattern = re.escape(option.lower()).replace(r"\ ", r"\s+")
+                    if re.search(r"\b" + option_pattern + r"\b", text, re.I):
+                        hits.append(option)
+                selected[group] = normalize_skill_list(hits or options[:2])
+            return normalized_role, selected
+
+    dynamic_skills = normalize_skill_list(must_have or known_skills_in_text(jd_text or ""))
+    if dynamic_skills:
+        groups = {}
+        for index, skill in enumerate(dynamic_skills[:12], start=1):
+            key = re.sub(r"[^a-z0-9]+", "_", skill.lower()).strip("_") or f"requirement_{index}"
+            groups[key] = [skill]
+        return "", groups
+    return "", {}
+
+
+def _dynamic_role_hint(role_title, jd_text):
+    text = f"{role_title or ''}\n{jd_text or ''}".lower()
+    for normalized_role, pattern, _groups in DYNAMIC_ROLE_GROUP_RULES:
+        if re.search(pattern, text, re.I):
+            return normalized_role
+    return ""
+
+
+def _title_signals(role_title, role_family):
+    tokens = [
+        token for token in re.findall(r"[a-z][a-z0-9+#.]{2,}", f"{role_title or ''} {role_family or ''}".lower())
+        if token not in {"engineer", "developer", "executive", "associate", "manager", "role"}
+    ]
+    return sorted(set(tokens))[:8]
 
 
 def _experience_range(jd_text="", jd_data=None):
@@ -188,6 +297,11 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
 
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
+    dynamic_hint = _dynamic_role_hint(role_title, jd_text)
+    if dynamic_hint and role_family in {"crm_erp", "other"}:
+        role_family = "other"
+        role_family_confidence = min(role_family_confidence, 54)
+    scoring_mode = _scoring_mode(role_family, role_family_confidence)
     default_must_have = role_family_default_must_have(role_family)
     defaults_applied = False
     if default_must_have and len(must_have) < 3 and role_family_confidence >= 70:
@@ -209,20 +323,69 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
         seniority = "mid-level" if min_years >= 2 else "unknown"
     hard, soft = _requirement_lines(jd_text)
+    core_groups = dynamic_core_groups(role_family, must_have, jd_text or "")
+    dynamic_role_label = ""
+    if scoring_mode == "dynamic":
+        dynamic_role_label, dynamic_groups = _dynamic_core_groups_from_jd(role_title, jd_text, must_have)
+        if dynamic_groups:
+            core_groups = dynamic_groups
+        if not must_have and core_groups:
+            must_have = normalize_skill_list([
+                skill
+                for options in core_groups.values()
+                for skill in (options or [])
+            ])
+    normalized_role_label = dynamic_role_label or _normalized_role_label(role_title, role_family)
+    profile_warnings = []
+    if scoring_mode == "dynamic":
+        profile_warnings.append("Low role-family confidence; using JD-specific dynamic scoring profile.")
+    elif scoring_mode == "hybrid":
+        profile_warnings.append("Medium role-family confidence; using calibrated template hints with JD-specific requirements.")
+    if defaults_applied:
+        profile_warnings.append("Role template defaults applied because JD had too few explicit required skills.")
+    profile_confidence = _profile_confidence(scoring_mode, role_family_confidence, must_have, core_groups)
+    profile_hash = _stable_hash({
+        "role_title": role_title,
+        "jd_text": jd_text or "",
+        "must_have_skills": must_have,
+        "nice_to_have_skills": nice_to_have,
+        "min_experience_years": min_years,
+        "max_experience_years": max_years,
+        "profile_version": JD_PROFILE_VERSION,
+    })
 
     return {
+        "jd_profile_version": JD_PROFILE_VERSION,
+        "profile_jd_hash": profile_hash,
         "role_title": role_title,
+        "normalized_role_label": normalized_role_label,
         "role_family": role_family,
+        "detected_role_family": role_family,
         "role_family_confidence": role_family_confidence,
+        "scoring_mode": scoring_mode,
+        "dynamic_profile_used": scoring_mode == "dynamic",
+        "known_template_used": scoring_mode == "known_template",
+        "hybrid_profile_used": scoring_mode == "hybrid",
+        "profile_confidence": profile_confidence,
         "seniority_level": seniority,
         "min_experience_years": min_years,
         "max_experience_years": max_years,
         "must_have_skills": must_have,
         "nice_to_have_skills": nice_to_have,
-        "core_skill_groups": dynamic_core_groups(role_family, must_have, jd_text or ""),
+        "mandatory_skill_groups": core_groups,
+        "preferred_skill_groups": {"preferred": nice_to_have} if nice_to_have else {},
+        "core_skill_groups": core_groups,
         "responsibility_signals": _responsibility_signals(jd_text or ""),
+        "responsibility_groups": {"responsibilities": _responsibility_signals(jd_text or "")},
+        "title_signals": _title_signals(role_title, role_family),
+        "adjacent_title_signals": [],
+        "negative_title_signals": [],
         "domain_context": role_family if role_family != "other" else "",
         "hard_requirements": hard,
         "soft_requirements": soft,
+        "scoring_weights": {},
+        "score_caps": {},
+        "score_boosts": {},
+        "profile_warnings": profile_warnings,
         "defaults_applied": defaults_applied,
     }

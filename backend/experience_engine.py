@@ -356,6 +356,9 @@ def process_experience(experience_list):
         return {
             "total_experience_years": 0,
             "last_company_name": None,
+            "last_company_confidence": 0.0,
+            "last_company_source_text": "",
+            "last_company_needs_review": True,
             "last_working_date": None,
             "extracted_date_ranges_raw": raw_ranges,
             "normalized_date_ranges": [],
@@ -379,6 +382,8 @@ def process_experience(experience_list):
     total_experience_years = round(total_days / 365, 2)
 
     last_company = latest_job.get("company_name")
+    last_company_confidence = 0.9 if last_company else 0.15
+    last_company_needs_review = not bool(last_company)
 
     if latest_job.get("is_current") or latest_job["end"].date() >= datetime.now().date():
         last_working_date = "Present"
@@ -390,6 +395,9 @@ def process_experience(experience_list):
         "total_experience_years": total_experience_years,
 
         "last_company_name": last_company,
+        "last_company_confidence": last_company_confidence,
+        "last_company_source_text": last_company or "",
+        "last_company_needs_review": last_company_needs_review,
 
         "last_working_date": last_working_date,
 

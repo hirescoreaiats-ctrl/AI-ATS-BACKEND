@@ -594,6 +594,95 @@ def _qa_role_identity(parsed, mandatory_coverage, professional_group_count):
     }
 
 
+def _generic_role_identity(parsed, jd_profile, mandatory_coverage, role_relevance, evidence_strength):
+    primary_title = str(parsed.get("current_title") or parsed.get("designation") or "").strip()
+    latest_role = _latest_experience_role(parsed)
+    title_text = f"{primary_title} {latest_role}".lower()
+    role_title = str(jd_profile.get("role_title") or "").lower()
+    title_tokens = {
+        token for token in re.findall(r"[a-z][a-z0-9+#.]{2,}", role_title)
+        if token not in {"engineer", "developer", "executive", "associate", "manager", "role"}
+    }
+    token_hits = [token for token in title_tokens if re.search(r"\b" + re.escape(token) + r"\b", title_text, re.I)]
+    primary_family = parsed.get("role_family") or parsed.get("domain") or "unknown"
+    direct_years = _safe_float(parsed.get("direct_relevant_experience_years"))
+    relevant_years = _safe_float(parsed.get("relevant_experience_years"))
+
+    if token_hits and (role_relevance >= 65 or direct_years >= 1):
+        alignment = "direct"
+        reason = "Candidate title and work evidence match the JD role family."
+    elif role_relevance >= 60 and evidence_strength >= 45:
+        alignment = "adjacent"
+        reason = "Candidate has related professional evidence for this JD."
+    elif relevant_years >= 1 or mandatory_coverage >= 55:
+        alignment = "transferable"
+        reason = "Candidate has some transferable JD evidence but not a direct role identity."
+    elif mandatory_coverage >= 30 or role_relevance >= 30:
+        alignment = "weak"
+        reason = "Candidate has weak or mostly keyword-based JD overlap."
+    else:
+        alignment = "mismatch"
+        reason = "Candidate profile does not align with this JD."
+
+    return {
+        "role_alignment": alignment,
+        "primary_role_family": primary_family,
+        "primary_role_label": primary_title or latest_role,
+        "latest_role_label": latest_role,
+        "primary_is_developer": bool(SOFTWARE_DEV_TITLE_RE.search(primary_title)),
+        "role_alignment_reason": reason,
+        "role_alignment_confidence": round(min(100, max(role_relevance, mandatory_coverage, evidence_strength)), 2),
+    }
+
+
+def _attach_jd_profile_metadata(score_data, jd_profile, parsed=None, role_identity=None):
+    score_data = score_data or {}
+    jd_profile = jd_profile or {}
+    parsed = parsed or {}
+    score_data.setdefault("jd_profile_version", jd_profile.get("jd_profile_version"))
+    score_data.setdefault("scoring_mode", jd_profile.get("scoring_mode") or "legacy")
+    score_data.setdefault("dynamic_profile_used", bool(jd_profile.get("dynamic_profile_used")))
+    score_data.setdefault("known_template_used", bool(jd_profile.get("known_template_used")))
+    score_data.setdefault("detected_role_family", jd_profile.get("detected_role_family") or jd_profile.get("role_family"))
+    score_data.setdefault("normalized_role_label", jd_profile.get("normalized_role_label") or jd_profile.get("role_title") or "")
+    score_data.setdefault("profile_confidence", jd_profile.get("profile_confidence"))
+    score_data.setdefault("profile_warnings", jd_profile.get("profile_warnings") or [])
+    score_data.setdefault("final_score_after_caps", score_data.get("final_score"))
+    score_data.setdefault("applied_caps", score_data.get("score_caps_applied") or [])
+    score_data.setdefault("applied_boosts", score_data.get("score_boosts_applied") or [])
+    score_data.setdefault("total_professional_experience_years", parsed.get("total_experience_years"))
+    score_data.setdefault("jd_relevant_experience_years", parsed.get("relevant_experience_years"))
+    score_data.setdefault("direct_role_experience_years", parsed.get("direct_relevant_experience_years"))
+    score_data.setdefault("adjacent_role_experience_years", parsed.get("transferable_experience_years"))
+    total = _safe_float(parsed.get("total_experience_years"))
+    relevant = _safe_float(parsed.get("relevant_experience_years"))
+    score_data.setdefault("unrelated_experience_years", round(max(0, total - relevant), 2))
+    score_data.setdefault("experience_confidence", parsed.get("role_relevance_score"))
+    if role_identity:
+        score_data.setdefault("primary_role_label", role_identity.get("primary_role_label"))
+        score_data.setdefault("primary_role_family", role_identity.get("primary_role_family"))
+        score_data.setdefault("role_alignment", role_identity.get("role_alignment"))
+        score_data.setdefault("role_alignment_reason", role_identity.get("role_alignment_reason"))
+        score_data.setdefault("role_alignment_confidence", role_identity.get("role_alignment_confidence"))
+    breakdown = score_data.setdefault("scoring_breakdown", {})
+    if isinstance(breakdown, dict):
+        breakdown.update({
+            "jd_profile_version": score_data.get("jd_profile_version"),
+            "scoring_mode": score_data.get("scoring_mode"),
+            "dynamic_profile_used": score_data.get("dynamic_profile_used"),
+            "known_template_used": score_data.get("known_template_used"),
+            "detected_role_family": score_data.get("detected_role_family"),
+            "profile_confidence": score_data.get("profile_confidence"),
+            "profile_warnings": score_data.get("profile_warnings"),
+            "final_score_after_caps": score_data.get("final_score_after_caps"),
+            "applied_caps": score_data.get("applied_caps"),
+            "applied_boosts": score_data.get("applied_boosts"),
+            "role_alignment": score_data.get("role_alignment"),
+            "role_alignment_reason": score_data.get("role_alignment_reason"),
+        })
+    return score_data
+
+
 def _is_data_analyst_jd(jd_text, jd_data, required_skills):
     text = " ".join([
         str(jd_data.get("role") or ""),
@@ -1793,9 +1882,25 @@ def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_sco
 
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
     if (jd_profile.get("role_family") or "").lower() == "full_stack":
-        return _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        result = _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        role_identity = _generic_role_identity(
+            parsed,
+            jd_profile,
+            result.get("mandatory_skill_coverage") or result.get("skill_match_percent") or 0,
+            _safe_float(parsed.get("role_relevance_score")),
+            _safe_float((result.get("scoring_breakdown") or {}).get("project_work_strength")),
+        )
+        return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
     if (jd_profile.get("role_family") or "").lower() == "software_backend":
-        return _score_candidate_backend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        result = _score_candidate_backend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        role_identity = _generic_role_identity(
+            parsed,
+            jd_profile,
+            result.get("mandatory_skill_coverage") or result.get("skill_match_percent") or 0,
+            _safe_float(parsed.get("role_relevance_score")),
+            _safe_float((result.get("scoring_breakdown") or {}).get("project_work_strength")),
+        )
+        return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
 
     candidate_skills = normalize_skill_list(parsed.get("key_skills", []))
     required_skills = normalize_skill_list(jd_profile.get("must_have_skills") or expand_skill_requirements(jd_skills))
@@ -1944,15 +2049,11 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "keyword_only_group_count": 0,
         "training_only_group_count": 0,
     }
-    role_identity = _qa_role_identity(parsed, mandatory_coverage, qa_evidence["professional_group_count"]) if qa_target else {
-        "role_alignment": parsed.get("target_role_alignment") or "unknown",
-        "primary_role_family": jd_profile.get("role_family") or "other",
-        "primary_role_label": parsed.get("current_title") or parsed.get("designation") or "",
-        "latest_role_label": _latest_experience_role(parsed),
-        "primary_is_developer": False,
-        "role_alignment_reason": "",
-        "direct_qa_evidence_blocks": 0,
-    }
+    role_identity = (
+        _qa_role_identity(parsed, mandatory_coverage, qa_evidence["professional_group_count"])
+        if qa_target
+        else _generic_role_identity(parsed, jd_profile, mandatory_coverage, role_relevance, evidence_strength)
+    )
     applied_boosts = []
     if qa_target:
         alignment = role_identity["role_alignment"]
@@ -2073,6 +2174,27 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             elif total_years > 4 and alignment != "direct":
                 cap_at(62, "Non-direct profile is above the junior QA experience band.", "over_experienced", "over_jd_experience_range")
 
+    scoring_mode = jd_profile.get("scoring_mode") or "legacy"
+    profile_confidence = _safe_float(jd_profile.get("profile_confidence"), _safe_float(jd_profile.get("role_family_confidence")))
+    if scoring_mode == "dynamic" and profile_confidence < 75:
+        alignment = role_identity["role_alignment"]
+        if alignment != "direct":
+            cap_at(62, "Dynamic JD profile is low confidence; non-direct candidates cannot exceed review range.", "dynamic_profile_review", "dynamic_profile_low_confidence")
+        if len(missing_core_groups) >= max(1, len((jd_profile.get("core_skill_groups") or {})) // 2):
+            cap_at(58, "Dynamic JD profile has critical mandatory group gaps.", "dynamic_mandatory_gap", "mandatory_skill_gap")
+        dynamic_keyword_matches = [
+            item for item in evidence.values()
+            if item.get("status") in {"matched", "partial", "project_only", "weak"}
+            and item.get("evidence_level") in {"skills_section_only", "keyword_only"}
+        ]
+        dynamic_proven_matches = [
+            item for item in evidence.values()
+            if item.get("status") in {"matched", "partial", "project_only"}
+            and item.get("evidence_level") in {"professional_strong", "professional_weak", "project_strong", "project_weak"}
+        ]
+        if dynamic_keyword_matches and len(dynamic_keyword_matches) >= max(1, len(dynamic_proven_matches)):
+            cap_at(55, "Dynamic JD match is mostly keyword-only.", "skill_match_mostly_listed_only", "dynamic_keyword_only")
+
     if missing:
         _append_unique(risk_flags, ["missing_mandatory_skills"])
     if employer_name_only_skills:
@@ -2143,7 +2265,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     if caps:
         ranking_reason += " Caps applied: " + " ".join(item["reason"] for item in caps[:2])
 
-    return {
+    score_result = {
         "final_score": final_score,
         "rank_score": rank_score,
         "fit_band": band,
@@ -2238,7 +2360,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "candidate_name": parsed.get("full_name") or "",
             "current_title": parsed.get("current_title") or parsed.get("designation") or "",
             "most_relevant_title": parsed.get("most_relevant_role") or "",
-            "target_role_alignment": role_identity["role_alignment"] if qa_target else (parsed.get("target_role_alignment") or "weak"),
+            "target_role_alignment": role_identity["role_alignment"],
             "primary_role_family": role_identity["primary_role_family"],
             "role_alignment_reason": role_identity["role_alignment_reason"],
             "qa_evidence_groups": qa_evidence,
@@ -2261,6 +2383,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "parser_quality_flags": parsed.get("parser_quality_flags") or [],
         },
     }
+    return _attach_jd_profile_metadata(score_result, jd_profile, parsed, role_identity)
 
 
 def _contains_skill_text(skill, text):

@@ -47,6 +47,7 @@ class Job(Base):
     generated_generic_post = Column(Text, nullable=True)
     resume_folder_path = Column(Text, nullable=True)
     jd_hash = Column(String, nullable=True, index=True)
+    jd_profile_version = Column(String, nullable=True)
     jd_profile_json = Column(Text, nullable=True)
 
     is_active = Column(Boolean, default=True)
@@ -150,6 +151,7 @@ class Resume(Base):
     jd_profile_snapshot_json = Column(Text, nullable=True)
     score_job_id = Column(String, nullable=True, index=True)
     score_jd_hash = Column(String, nullable=True, index=True)
+    score_jd_profile_version = Column(String, nullable=True, index=True)
 
     # 🔹 AI Explanation
     resume_text = Column(Text, nullable=True)

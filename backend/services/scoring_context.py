@@ -57,6 +57,8 @@ def apply_job_scoring_snapshot(resume, job, jd_profile: dict | None = None) -> d
         resume.score_job_id = getattr(job, "id", None)
     if hasattr(resume, "score_jd_hash"):
         resume.score_jd_hash = job_jd_hash(job)
+    if hasattr(resume, "score_jd_profile_version"):
+        resume.score_jd_profile_version = (profile or {}).get("jd_profile_version")
     if hasattr(resume, "jd_profile_json"):
         resume.jd_profile_json = json.dumps(profile or {}, ensure_ascii=False)
     if hasattr(resume, "jd_profile_snapshot_json"):
@@ -68,6 +70,8 @@ def apply_job_jd_snapshot(job, jd_profile: dict | None = None) -> dict:
     profile = jd_profile or build_job_jd_profile(job)
     if hasattr(job, "jd_hash"):
         job.jd_hash = job_jd_hash(job)
+    if hasattr(job, "jd_profile_version"):
+        job.jd_profile_version = (profile or {}).get("jd_profile_version")
     if hasattr(job, "jd_profile_json"):
         job.jd_profile_json = json.dumps(profile or {}, ensure_ascii=False)
     return profile

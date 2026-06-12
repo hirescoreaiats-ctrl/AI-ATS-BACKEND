@@ -437,12 +437,14 @@ def dynamic_core_groups(role_family, jd_skills=None, jd_text=""):
             skill_pattern = re.escape(str(skill).lower()).replace(r"\ ", r"\s+")
             if re.search(r"\b" + skill_pattern + r"\b", text, re.I):
                 mentions.append(skill)
-            elif any(equivalent_skill(skill, jd_skill) for jd_skill in jd_skill_list):
-                mentions.append(skill)
         if mentions:
             selected[group] = normalize_skill_list(mentions)
 
     default_groups = role_family_default_core_groups(role_family)
+    explicit_skill_count = len(jd_skill_list)
+    if selected and explicit_skill_count >= 3:
+        return selected
+
     if default_groups and len(selected) < 3:
         return default_groups
 

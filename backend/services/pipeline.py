@@ -117,6 +117,17 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     parsed["jd_profile_json"] = jd_profile
     parsed["role_family"] = jd_profile.get("role_family")
     parsed["role_family_confidence"] = jd_profile.get("role_family_confidence")
+    parsed["jd_profile_version"] = jd_profile.get("jd_profile_version")
+    parsed["scoring_mode"] = jd_profile.get("scoring_mode")
+    parsed["dynamic_profile_used"] = jd_profile.get("dynamic_profile_used")
+    parsed["detected_role_family"] = jd_profile.get("detected_role_family")
+    parsed["normalized_role_label"] = jd_profile.get("normalized_role_label")
+    parsed["profile_confidence"] = jd_profile.get("profile_confidence")
+    parsed["profile_warnings"] = jd_profile.get("profile_warnings") or []
+    parsed["last_company_name"] = exp_data.get("last_company_name")
+    parsed["last_company_confidence"] = exp_data.get("last_company_confidence")
+    parsed["last_company_source_text"] = exp_data.get("last_company_source_text")
+    parsed["last_company_needs_review"] = exp_data.get("last_company_needs_review")
 
     pre_score_quality_report = build_parser_quality_report(text, parsed, exp_data, jd_data)
     parsed.update({
@@ -161,6 +172,17 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
             repaired["jd_profile_json"] = jd_profile
             repaired["role_family"] = jd_profile.get("role_family")
             repaired["role_family_confidence"] = jd_profile.get("role_family_confidence")
+            repaired["jd_profile_version"] = jd_profile.get("jd_profile_version")
+            repaired["scoring_mode"] = jd_profile.get("scoring_mode")
+            repaired["dynamic_profile_used"] = jd_profile.get("dynamic_profile_used")
+            repaired["detected_role_family"] = jd_profile.get("detected_role_family")
+            repaired["normalized_role_label"] = jd_profile.get("normalized_role_label")
+            repaired["profile_confidence"] = jd_profile.get("profile_confidence")
+            repaired["profile_warnings"] = jd_profile.get("profile_warnings") or []
+            repaired["last_company_name"] = repaired_exp_data.get("last_company_name")
+            repaired["last_company_confidence"] = repaired_exp_data.get("last_company_confidence")
+            repaired["last_company_source_text"] = repaired_exp_data.get("last_company_source_text")
+            repaired["last_company_needs_review"] = repaired_exp_data.get("last_company_needs_review")
             repaired_quality_report = build_parser_quality_report(text, repaired, repaired_exp_data, jd_data)
             current_critical = sum(
                 1 for item in pre_score_quality_report.get("parser_quality_flags", [])
@@ -268,6 +290,17 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
         "parser_recall_attempted": parsed.get("parser_recall_attempted", False),
         "parser_recall_applied": parsed.get("parser_recall_applied", False),
         "jd_profile_json": jd_profile,
+        "jd_profile_version": jd_profile.get("jd_profile_version"),
+        "scoring_mode": jd_profile.get("scoring_mode"),
+        "dynamic_profile_used": jd_profile.get("dynamic_profile_used"),
+        "detected_role_family": jd_profile.get("detected_role_family"),
+        "normalized_role_label": jd_profile.get("normalized_role_label"),
+        "profile_confidence": jd_profile.get("profile_confidence"),
+        "profile_warnings": jd_profile.get("profile_warnings") or [],
+        "last_company_name": parsed.get("last_company_name"),
+        "last_company_confidence": parsed.get("last_company_confidence"),
+        "last_company_source_text": parsed.get("last_company_source_text"),
+        "last_company_needs_review": parsed.get("last_company_needs_review"),
     })
 
     parsed["ai_recruiter_explanation"] = generate_recruiter_explanation(parsed, jd_data, score_data)

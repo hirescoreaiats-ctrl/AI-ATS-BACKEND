@@ -641,6 +641,8 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
     current_jd_hash = job_jd_hash(job)
     score_job_id = getattr(candidate, "score_job_id", None)
     score_jd_hash = getattr(candidate, "score_jd_hash", None)
+    current_profile_version = getattr(job, "jd_profile_version", None)
+    score_profile_version = getattr(candidate, "score_jd_profile_version", None)
     payload = {
         "resume_id": candidate.id,
         "id": candidate.id,
@@ -706,8 +708,16 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
     payload.update({
         "score_job_id": score_job_id,
         "score_jd_hash": score_jd_hash,
+        "score_jd_profile_version": score_profile_version,
         "current_jd_hash": current_jd_hash,
-        "stale_score": bool((score_job_id and score_job_id != job.id) or not score_jd_hash or score_jd_hash != current_jd_hash),
+        "current_jd_profile_version": current_profile_version,
+        "stale_score": bool(
+            (score_job_id and score_job_id != job.id)
+            or not score_jd_hash
+            or score_jd_hash != current_jd_hash
+            or (current_profile_version and score_profile_version and score_profile_version != current_profile_version)
+            or (current_profile_version and not score_profile_version)
+        ),
         "score_delta_stale": bool(payload.get("stale_score")),
     })
     return payload

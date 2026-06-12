@@ -123,6 +123,7 @@ def ensure_resume_columns():
         add_column("resumes", resume_columns, "jd_profile_snapshot_json", "TEXT")
         add_column("resumes", resume_columns, "score_job_id", "VARCHAR")
         add_column("resumes", resume_columns, "score_jd_hash", "VARCHAR")
+        add_column("resumes", resume_columns, "score_jd_profile_version", "VARCHAR")
         add_column("resumes", resume_columns, "resume_file_path", "TEXT")
         add_column("resumes", resume_columns, "resume_file_url", "TEXT")
         add_column("resumes", resume_columns, "resume_file_key", "TEXT")
@@ -155,6 +156,7 @@ def ensure_resume_columns():
         add_column("jobs", job_columns, "generated_generic_post", "TEXT")
         add_column("jobs", job_columns, "resume_folder_path", "TEXT")
         add_column("jobs", job_columns, "jd_hash", "VARCHAR")
+        add_column("jobs", job_columns, "jd_profile_version", "VARCHAR")
         add_column("jobs", job_columns, "jd_profile_json", "TEXT")
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_jobs_apply_slug ON jobs (apply_slug)"))
 
