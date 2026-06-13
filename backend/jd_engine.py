@@ -18,7 +18,7 @@ JD_SKILL_PATTERNS = [
     ("Visualforce", re.compile(r"\bvisual\s*force\b|\bvisualforce\b", re.I)),
     ("SOQL", re.compile(r"\bsoql\b", re.I)),
     ("SOSL", re.compile(r"\bsosl\b", re.I)),
-    ("Salesforce Flow", re.compile(r"\b(?:salesforce\s+)?flows?\b|\bflow\s+builder\b", re.I)),
+    ("Salesforce Flow", re.compile(r"\bsalesforce\s+flows?\b|\bflow\s+builder\b", re.I)),
     ("Salesforce CPQ", re.compile(r"\bsalesforce\s+cpq\b|\bcpq\b", re.I)),
     ("Sales Cloud", re.compile(r"\bsales\s+cloud\b", re.I)),
     ("Service Cloud", re.compile(r"\bservice\s+cloud\b", re.I)),

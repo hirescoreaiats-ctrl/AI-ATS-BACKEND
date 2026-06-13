@@ -127,6 +127,11 @@ DIRECT_ROLE_PATTERNS = {
         re.I,
     ),
     "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
+    "dotnet_full_stack": re.compile(
+        r"\b(?:(?:senior|sr\.?|lead|principal)\s+)?(?:\.net|dotnet|asp\.?\s*net|c#|software|full[-\s]?stack)\s+"
+        r"(?:developer|engineer)\b|\b(?:senior|sr\.?|lead)\s+software\s+engineer\b",
+        re.I,
+    ),
     "data_analytics": DIRECT_ANALYST_ROLE_RE,
     "salesforce_crm": SALESFORCE_ROLE_RE,
 }
@@ -174,9 +179,10 @@ DIRECT_ROLE_PATTERNS.update({
 
 FULL_STACK_SIGNAL_RE = re.compile(
     r"\b(react|next(?:\.js)?|vue(?:\.js)?|angular|node(?:\.js)?|express(?:\.js)?|django|fastapi|"
-    r"laravel|spring\s+boot|java|rest\s+api|api|apis|graphql|authentication|authorization|"
+    r"laravel|spring\s+boot|java|c\s*#|\.net|dotnet|asp\s*\.?\s*net|entity\s+framework|linq|ado\s*\.?\s*net|"
+    r"web\s+api|rest\s+api|api|apis|graphql|authentication|authorization|"
     r"frontend|front[-\s]?end|backend|back[-\s]?end|database|mongodb|mysql|postgres(?:ql)?|sql|"
-    r"html|css|tailwind|bootstrap|docker|aws|azure|vercel|netlify|digital\s*ocean|git)\b",
+    r"sql\s+server|stored\s+procedures?|html|css|tailwind|bootstrap|kendo|telerik|docker|aws|azure|vercel|netlify|digital\s*ocean|git)\b",
     re.I,
 )
 
@@ -436,10 +442,13 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             role_title_score = 100
         elif role_family == "salesforce_crm" and SALESFORCE_ROLE_RE.search(role):
             role_title_score = 100
-        elif role_family == "full_stack":
+        elif role_family in {"full_stack", "dotnet_full_stack"}:
             full_stack_signals = {match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}
             direct_full_stack_role = bool(FULL_STACK_ROLE_RE.search(role))
-            if re.search(r"\b(full[-\s]?stack|mern|mean)\b", role, re.I):
+            direct_dotnet_role = role_family == "dotnet_full_stack" and bool(DIRECT_ROLE_PATTERNS["dotnet_full_stack"].search(role))
+            if direct_dotnet_role:
+                role_title_score = 100
+            elif re.search(r"\b(full[-\s]?stack|mern|mean)\b", role, re.I):
                 role_title_score = 100
             elif direct_full_stack_role and len(full_stack_signals) >= 2:
                 role_title_score = max(role_title_score, 90)
@@ -481,7 +490,7 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             domain_hits += 1
         if skill_hits:
             domain_hits += 1
-        if role_family == "full_stack" and len({match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}) >= 3:
+        if role_family in {"full_stack", "dotnet_full_stack"} and len({match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}) >= 3:
             domain_hits += 2
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:

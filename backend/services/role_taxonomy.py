@@ -61,6 +61,49 @@ ROLE_FAMILIES = {
             "defect_tracking": ["Bug Reporting", "Defect Life Cycle", "Jira"],
         },
     },
+    "dotnet_full_stack": {
+        "patterns": [
+            r"\b(?:senior\s+|lead\s+|principal\s+)?(?:\.net|dotnet)\s+full[-\s]?stack\b",
+            r"\bfull[-\s]?stack\b.*\b(?:\.net|dotnet|c#|asp\.?\s*net)\b",
+            r"\b(?:\.net|dotnet|asp\.?\s*net|c#)\b.*\bangular\b",
+            r"\b(?:senior\s+|lead\s+)?(?:\.net|dotnet|asp\.?\s*net|c#)\s+(?:developer|engineer)\b",
+            r"\benterprise\s+(?:\.net|dotnet)\s+engineer\b",
+        ],
+        "skills": [
+            ".NET", ".NET Core", ".NET Framework", "ASP.NET", "ASP.NET Core",
+            "ASP.NET MVC", "C#", "Web API", "ASP.NET Web API", "REST API",
+            "RESTful APIs", "Entity Framework", "LINQ", "ADO.NET", "Angular",
+            "AngularJS", "TypeScript", "JavaScript", "HTML", "CSS", "Bootstrap",
+            "Kendo UI", "Telerik", "SQL Server", "MS SQL", "SQL", "Stored Procedures",
+            "SQL Performance Tuning", "Database Optimization", "PL/SQL", "T-SQL",
+            "Git", "GitHub", "Azure DevOps", "CI/CD", "Jenkins", "Agile", "Scrum",
+            "Jira", "Azure", "Redis", "Distributed Caching", "OAuth", "OpenID Connect",
+            "SSO", "Authentication", "Authorization", "Microservices", "Docker",
+            "Cursor", "Devin",
+        ],
+        "default_must_have": [
+            ".NET Core", "C#", "ASP.NET Core", "Web API", "Angular", "SQL Server", "Git",
+        ],
+        "default_core_groups": {
+            "backend": [".NET Core", "ASP.NET Core", ".NET Framework", "ASP.NET MVC", "C#", "Web API", "ASP.NET Web API", "REST API", "RESTful APIs", "Entity Framework", "LINQ", "ADO.NET"],
+            "frontend": ["Angular", "AngularJS", "TypeScript", "JavaScript", "HTML", "CSS", "Bootstrap", "Kendo UI", "Telerik"],
+            "database": ["SQL Server", "MS SQL", "SQL", "Stored Procedures", "SQL Performance Tuning", "Database Optimization", "PL/SQL", "T-SQL"],
+            "deployment_tools": ["Git", "GitHub", "Azure DevOps", "CI/CD", "Jenkins", "Agile", "Scrum", "Jira"],
+        },
+        "default_nice_to_have": [
+            "Azure", "Redis", "Distributed Caching", "OAuth", "OpenID Connect", "SSO",
+            "Authentication", "Authorization", "Microservices", "Docker", "Cloud",
+            "Cursor", "Devin",
+        ],
+        "core_groups": {
+            "backend": [".NET Core", "ASP.NET Core", ".NET Framework", "ASP.NET MVC", "C#", "Web API", "ASP.NET Web API", "REST API", "RESTful APIs", "Entity Framework", "LINQ", "ADO.NET"],
+            "frontend": ["Angular", "AngularJS", "TypeScript", "JavaScript", "HTML", "CSS", "Bootstrap", "Kendo UI", "Telerik"],
+            "database": ["SQL Server", "MS SQL", "SQL", "Stored Procedures", "SQL Performance Tuning", "Database Optimization", "PL/SQL", "T-SQL"],
+            "deployment_tools": ["Git", "GitHub", "Azure DevOps", "CI/CD", "Jenkins", "Agile", "Scrum", "Jira"],
+            "auth_security": ["OAuth", "OpenID Connect", "SSO", "Authentication", "Authorization", "RBAC", "JWT", "Identity Server", "Azure AD"],
+            "good_to_have": ["Azure", "Redis", "Distributed Caching", "Microservices", "Docker", "Cloud", "Cursor", "Devin"],
+        },
+    },
     "software_backend": {
         "patterns": [
             r"\bbackend\b",

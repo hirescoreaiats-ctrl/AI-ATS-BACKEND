@@ -1242,7 +1242,9 @@ FULL_STACK_GROUP_WEIGHTS = {
     "backend": 0.25,
     "database": 0.20,
     "api_auth": 0.15,
+    "auth_security": 0.15,
     "deployment_tools": 0.05,
+    "good_to_have": 0.05,
 }
 
 
@@ -1313,10 +1315,10 @@ def _full_stack_project_work_strength(parsed, resume_text):
             for project in parsed.get("projects", [])
         ),
     ]).lower()
-    frontend = bool(re.search(r"\b(react|next(?:\.js)?|vue(?:\.js)?|angular|html|css|tailwind|bootstrap)\b", text, re.I))
-    backend = bool(re.search(r"\b(node(?:\.js)?|express(?:\.js)?|django|fastapi|laravel|spring\s+boot|php|backend|api)\b", text, re.I))
-    database = bool(re.search(r"\b(mongodb|mongo\s*db|mysql|postgres(?:ql)?|sql|database)\b", text, re.I))
-    deployment = bool(re.search(r"\b(deploy(?:ed|ment)?|vercel|netlify|digital\s*ocean|aws|docker|ci\s*/\s*cd|linux)\b", text, re.I))
+    frontend = bool(re.search(r"\b(react|next(?:\.js)?|vue(?:\.js)?|angular(?:js)?|html|css|tailwind|bootstrap|kendo|telerik)\b", text, re.I))
+    backend = bool(re.search(r"\b(node(?:\.js)?|express(?:\.js)?|django|fastapi|laravel|spring\s+boot|php|backend|api|c\s*#|\.net|dotnet|asp\s*\.?\s*net|web\s+api|entity\s+framework|linq|ado\s*\.?\s*net)\b", text, re.I))
+    database = bool(re.search(r"\b(mongodb|mongo\s*db|mysql|postgres(?:ql)?|sql\s+server|ms\s+sql|t[-\s]?sql|pl\s*/\s*sql|sql|stored\s+procedures?|database|query\s+optimization|performance\s+tuning)\b", text, re.I))
+    deployment = bool(re.search(r"\b(deploy(?:ed|ment)?|vercel|netlify|digital\s*ocean|aws|azure|azure\s+devops|docker|ci\s*/\s*cd|jenkins|linux|git)\b", text, re.I))
     production = bool(re.search(r"\b(production|users?|clients?|optimized|performance|scalable|maintained|integrated|authentication|payment|admin\s+dashboard)\b", text, re.I))
     quantified = bool(re.search(r"\b\d+(?:%|k|,\d{3}| users?| clients?| projects?| apis?)\b", text, re.I))
     action_hits = len(set(re.findall(r"\b(built|developed|implemented|designed|deployed|integrated|optimized|maintained|tested|debugged|created)\b", text, re.I)))
@@ -1341,9 +1343,9 @@ def _backend_project_work_strength(parsed, resume_text):
             for project in parsed.get("projects", [])
         ),
     ]).lower()
-    backend_path = bool(re.search(r"\b(node(?:\.js)?|express(?:\.js)?|django|fastapi|flask|laravel|spring\s+boot|java|python|php|backend)\b", text, re.I))
-    api = bool(re.search(r"\b(rest(?:ful)?\s+apis?|graphql|crud|api\s+integration|business\s+logic|protected\s+routes?)\b", text, re.I))
-    database = bool(re.search(r"\b(mongodb|mongo\s*db|mysql|postgres(?:ql)?|sql\s+server|sql|database|schema|queries?|data\s+model)\b", text, re.I))
+    backend_path = bool(re.search(r"\b(node(?:\.js)?|express(?:\.js)?|django|fastapi|flask|laravel|spring\s+boot|java|python|php|backend|c\s*#|\.net|dotnet|asp\s*\.?\s*net|entity\s+framework|linq|ado\s*\.?\s*net)\b", text, re.I))
+    api = bool(re.search(r"\b(rest(?:ful)?\s+apis?|web\s+apis?|graphql|crud|api\s+integration|business\s+logic|protected\s+routes?)\b", text, re.I))
+    database = bool(re.search(r"\b(mongodb|mongo\s*db|mysql|postgres(?:ql)?|sql\s+server|ms\s+sql|t[-\s]?sql|pl\s*/\s*sql|sql|stored\s+procedures?|database|schema|queries?|data\s+model|query\s+optimization|performance\s+tuning)\b", text, re.I))
     auth = bool(re.search(r"\b(jwt|oauth|spring\s+security|firebase\s+auth|auth0|cognito|bcrypt|password\s+hash|authentication|authorization|rbac|session|token|access\s+control)\b", text, re.I))
     deployment = bool(re.search(r"\b(deploy(?:ed|ment)?|render|digital\s*ocean|aws|azure|docker|kubernetes|nginx|linux|ci\s*/\s*cd|server)\b", text, re.I))
     reliability = bool(re.search(r"\b(logging|error\s+handling|exception|validation|rate\s+limiting|secure|security|optimized|performance|scalable|background\s+jobs?|queues?)\b", text, re.I))
@@ -1469,6 +1471,8 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         for group, options in core_groups.items()
         if group in FULL_STACK_GROUP_WEIGHTS
     }
+    role_family = (jd_profile.get("role_family") or "full_stack").lower()
+    dotnet_target = role_family == "dotnet_full_stack"
     if "frontend_foundation" in group_results and "frontend" in group_results:
         # Foundation skills help, but framework evidence carries the real frontend gate.
         group_results["frontend"]["score"] = max(
@@ -1478,15 +1482,18 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
 
     weighted_core = 0.0
     total_weight = 0.0
+    optional_core_groups = {"auth_security", "good_to_have"} if dotnet_target else set()
     for group, weight in FULL_STACK_GROUP_WEIGHTS.items():
         if group not in group_results:
+            continue
+        if group in optional_core_groups:
             continue
         weighted_core += group_results[group]["score"] * weight
         total_weight += weight
     core_skill_percent = round((weighted_core / max(total_weight, 0.01)) * 100, 2)
     missing_core_groups = [
         group for group, result in group_results.items()
-        if group != "frontend_foundation" and result["score"] < 0.35
+        if group not in {"frontend_foundation", "good_to_have"} and result["score"] < 0.35
     ]
 
     matched_skill_evidence = []
@@ -1501,6 +1508,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     role_relevance = max(
         _safe_float(parsed.get("role_relevance_score")),
         85 if re.search(r"\b(full[-\s]?stack|mern|web\s+developer|software\s+engineer)\b", str(parsed.get("designation") or ""), re.I) else 0,
+        92 if dotnet_target and re.search(r"\b(software\s+engineer|software\s+developer|lead\s+engineer|\.net|dotnet|asp\.?\s*net|c#)\b", str(parsed.get("designation") or ""), re.I) else 0,
     )
     deployment_score = (group_results.get("deployment_tools") or {}).get("score", 0) * 100
 
@@ -1520,14 +1528,31 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     if project_work_strength >= 60:
         _append_unique(recruiter_flags, ["strong_professional_evidence"])
 
-    final_score = (
-        core_skill_percent * 0.35
-        + project_work_strength * 0.25
-        + experience_fit["score"] * 0.15
-        + role_relevance * 0.15
-        + deployment_score * 0.05
-        + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.05
-    )
+    if dotnet_target:
+        seniority_score = 92 if re.search(r"\b(senior|sr\.?|lead|tech\s+lead|architect|mentor|code\s+review)\b", " ".join([
+            str(parsed.get("designation") or ""),
+            " ".join(str((job or {}).get("role") or "") for job in parsed.get("experience") or [] if isinstance(job, dict)),
+        ]), re.I) else 70
+        good_to_have_score = (group_results.get("good_to_have") or {}).get("score", 0) * 100
+        final_score = (
+            core_skill_percent * 0.40
+            + experience_fit["score"] * 0.25
+            + project_work_strength * 0.15
+            + seniority_score * 0.10
+            + min(100, deployment_score) * 0.05
+            + good_to_have_score * 0.05
+        )
+    else:
+        seniority_score = 0
+        good_to_have_score = 0
+        final_score = (
+            core_skill_percent * 0.35
+            + project_work_strength * 0.25
+            + experience_fit["score"] * 0.15
+            + role_relevance * 0.15
+            + deployment_score * 0.05
+            + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.05
+        )
 
     if len(missing_core_groups) >= 3:
         caps.append({"cap": 60, "reason": "Three or more full-stack core groups are missing."})
@@ -1539,7 +1564,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         else:
             caps.append({"cap": 72, "reason": "JD-related professional experience is below the minimum required range."})
     if experience_fit["label"] == "senior_overqualified":
-        caps.append({"cap": 78, "reason": "Senior/overqualified for this 1-3 year role; recruiter review recommended."})
+        caps.append({"cap": 88 if dotnet_target else 78, "reason": "Senior/overqualified for this role; recruiter review recommended."})
     if parsed.get("parser_quality_action") == "manual_review_required":
         caps.append({"cap": 58, "reason": "Parser quality requires manual review."})
         _append_unique(risk_flags, ["parser_quality"])
@@ -1551,7 +1576,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     confidence = round(min(100, 35 + core_skill_percent * 0.25 + project_work_strength * 0.22 + role_relevance * 0.18 + _safe_float(parsed.get("resume_quality_score"), 75) * 0.12), 2)
     rank_score = round(min(100, final_score + (3 if confidence >= 65 and not risk_flags else 0)), 2)
 
-    if final_score >= 78 and core_skill_percent >= 68 and not experience_fit["under_experienced"] and not experience_fit["overqualified"] and len(missing_core_groups) <= 1:
+    if final_score >= 78 and core_skill_percent >= 68 and not experience_fit["under_experienced"] and (dotnet_target or not experience_fit["overqualified"]) and len(missing_core_groups) <= 1:
         recommendation = "shortlisted"
         _append_unique(recruiter_flags, ["strong_match" if final_score >= 88 else "good_match"])
     elif final_score < 45 or (len(missing_core_groups) >= 3 and final_score < 60):
@@ -1559,7 +1584,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
     else:
         recommendation = "in_review"
 
-    if experience_fit["overqualified"] and recommendation == "shortlisted":
+    if experience_fit["overqualified"] and recommendation == "shortlisted" and not dotnet_target:
         recommendation = "in_review"
 
     missing_skills = []
@@ -1619,7 +1644,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         "experience_fit": experience_fit["label"],
         "project_strength_score": project_work_strength,
         "all_critical_requirements_met": not missing_core_groups,
-        "jd_role_family": "full_stack",
+        "jd_role_family": role_family,
         "jd_skill_groups": core_groups,
         "evidence_group_scores": group_results,
         "role_relevance_label": parsed.get("experience_relevance_label") or "",
@@ -1630,6 +1655,10 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
             "experience_fit_component": round(experience_fit["score"] * 0.15, 2),
             "role_relevance_component": round(role_relevance * 0.15, 2),
             "deployment_tools_component": round(deployment_score * 0.05, 2),
+            "dotnet_weights_applied": dotnet_target,
+            "mandatory_skill_coverage_component": round(core_skill_percent * (0.40 if dotnet_target else 0.35), 2),
+            "seniority_component": round(seniority_score * 0.10, 2) if dotnet_target else 0,
+            "good_to_have_component": round(good_to_have_score * 0.05, 2) if dotnet_target else 0,
             "evidence_group_scores": group_results,
             "missing_core_skill_groups": missing_core_groups,
             "score_caps_applied": caps,
@@ -1911,7 +1940,7 @@ def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_sco
 
 
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
-    if (jd_profile.get("role_family") or "").lower() == "full_stack":
+    if (jd_profile.get("role_family") or "").lower() in {"full_stack", "dotnet_full_stack"}:
         result = _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
         role_identity = _generic_role_identity(
             parsed,

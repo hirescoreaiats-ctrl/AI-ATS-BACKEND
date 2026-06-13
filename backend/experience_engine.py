@@ -25,6 +25,7 @@ INVALID_COMPANY_TOKENS = {
     "turkey", "boston ma", "usa remote", "city state", "city state gpa",
     "digitalrealty usa remote", "da ta analy st", "data analyst", "business analyst",
     "assistant manager", "event co-chair", "co-chair",
+    "cba", "employment history", "professional experience", "work experience",
 }
 
 ROLE_ONLY_RE = re.compile(
@@ -236,13 +237,23 @@ def _fmt_date(value):
 
 def _normalize_company_name(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip(" ,-|")
+    text = re.sub(r"^(?:employment\s+history|professional\s+experience|work\s+experience)\s+", "", text, flags=re.I).strip(" ,-|")
+    text = re.sub(r"^(?:company|employer|client)\s*:\s*", "", text, flags=re.I).strip(" ,-|")
     text = re.sub(r"\s*[-–—]\s*(?:remote|hybrid|onsite|india|usa|u\.s\.a?|pakistan|sri\s+lanka)\s*$", "", text, flags=re.I).strip(" ,-|")
     if "|" in text:
         parts = [part.strip(" .,-|") for part in text.split("|") if part.strip(" .,-|")]
         if parts:
             company_side = parts[0]
             role_side = parts[-1]
-            if re.search(r"\b(qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|analyst|lead)\b", role_side, re.I):
+            if _valid_company_name(company_side) and (
+                re.search(r"\b(qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|analyst|lead)\b", role_side, re.I)
+                or re.fullmatch(
+                    r"(?:remote|hybrid|onsite|india|usa|u\.s\.a?|pakistan|sri\s+lanka|"
+                    r"hyderabad|chennai|bengaluru|bangalore|pune|mumbai|delhi|noida|kolkata)",
+                    role_side,
+                    re.I,
+                )
+            ):
                 text = company_side
     comma_parts = [part.strip(" .,-|") for part in re.split(r"\s*[,|]\s*", text) if part.strip(" .,-|")]
     if len(comma_parts) >= 2:

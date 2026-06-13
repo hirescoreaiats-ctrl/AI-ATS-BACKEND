@@ -275,6 +275,65 @@ def _split_full_stack_requirements(role_family, role_title, jd_text, must_have, 
     return filtered, nice
 
 
+def _split_dotnet_requirements(role_family, must_have, nice_to_have):
+    if role_family != "dotnet_full_stack":
+        return normalize_skill_list(must_have), normalize_skill_list(nice_to_have)
+    default_required = role_family_default_must_have("dotnet_full_stack")
+    default_nice = role_family_default_nice_to_have("dotnet_full_stack")
+    required_stack = {
+        item.lower()
+        for item in default_required
+        + [
+            ".NET", ".NET Framework", "ASP.NET", "ASP.NET MVC", "ASP.NET Web API",
+            "REST API", "RESTful APIs", "Entity Framework", "LINQ", "ADO.NET",
+            "AngularJS", "TypeScript", "JavaScript", "HTML", "CSS", "Bootstrap",
+            "Kendo UI", "Telerik", "SQL", "MS SQL", "Stored Procedures", "T-SQL",
+            "PL/SQL", "SQL Performance Tuning", "Database Optimization",
+        ]
+    }
+    explicit_stack = [skill for skill in must_have or [] if str(skill).lower() in required_stack]
+    must = normalize_skill_list(explicit_stack + default_required)
+    must_keys = {item.lower() for item in must}
+    demoted = [skill for skill in must_have or [] if str(skill).lower() not in must_keys]
+    nice = normalize_skill_list((nice_to_have or []) + demoted + [skill for skill in default_nice if skill.lower() not in must_keys])
+    return must, nice
+
+
+AUTH_REQUIREMENT_RE = re.compile(
+    r"\b(oauth|openid\s+connect|open\s+id\s+connect|oidc|sso|single\s+sign[-\s]?on|"
+    r"authentication|authorization|authorisation|rbac|jwt|identity\s+server|azure\s+ad|"
+    r"auth\s+flow|secure\s+login|access\s+control)\b",
+    re.I,
+)
+
+
+def _auth_required(role_title="", jd_text="", must_have=None, nice_to_have=None):
+    text = " ".join([
+        str(role_title or ""),
+        str(jd_text or ""),
+        " ".join(str(item) for item in must_have or []),
+        " ".join(str(item) for item in nice_to_have or []),
+    ])
+    return bool(AUTH_REQUIREMENT_RE.search(text))
+
+
+def _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have):
+    groups = dict(core_groups or {})
+    if _auth_required(role_title, jd_text, must_have, nice_to_have):
+        if "api_auth" in groups:
+            groups["api_auth"] = normalize_skill_list([
+                skill for skill in groups["api_auth"]
+                if skill not in {"REST API", "RESTful APIs", "Web API", "ASP.NET Web API", "GraphQL", "Swagger", "OpenAPI"}
+            ] or ["OAuth", "OpenID Connect", "SSO", "Authentication", "Authorization", "JWT", "RBAC"])
+        if "auth_security" in groups:
+            groups["auth_security"] = normalize_skill_list(groups["auth_security"])
+        return groups
+
+    groups.pop("api_auth", None)
+    groups.pop("auth_security", None)
+    return groups
+
+
 def _requirement_lines(jd_text=""):
     hard = []
     soft = []
@@ -355,17 +414,20 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             if skill.lower() not in {item.lower() for item in must_have}
         ])
     must_have, nice_to_have = _split_full_stack_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
+    must_have, nice_to_have = _split_dotnet_requirements(role_family, must_have, nice_to_have)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
         seniority = "mid-level" if min_years >= 2 else "unknown"
     hard, soft = _requirement_lines(jd_text)
     core_groups = dynamic_core_groups(role_family, must_have, jd_text or "")
+    core_groups = _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have)
     dynamic_role_label = ""
     if scoring_mode == "dynamic":
         dynamic_role_label, dynamic_groups = _dynamic_core_groups_from_jd(role_title, jd_text, must_have)
         if dynamic_groups:
             core_groups = dynamic_groups
+            core_groups = _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have)
         if not must_have and core_groups:
             must_have = normalize_skill_list([
                 skill
@@ -413,6 +475,12 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "mandatory_skill_groups": core_groups,
         "preferred_skill_groups": {"preferred": nice_to_have} if nice_to_have else {},
         "core_skill_groups": core_groups,
+        "backend_groups": {key: value for key, value in core_groups.items() if key in {"backend", "backend_path", "api_logic"}},
+        "frontend_groups": {key: value for key, value in core_groups.items() if key in {"frontend", "frontend_foundation"}},
+        "database_groups": {key: value for key, value in core_groups.items() if "database" in key},
+        "cloud_devops_groups": {key: value for key, value in core_groups.items() if key in {"deployment_tools", "tooling_deployment", "good_to_have"}},
+        "auth_security_groups": {key: value for key, value in core_groups.items() if key in {"api_auth", "auth_security"}},
+        "tools_process_groups": {key: value for key, value in core_groups.items() if key in {"deployment_tools", "tooling_deployment"}},
         "responsibility_signals": responsibility_signals,
         "responsibility_groups": {"responsibilities": responsibility_signals},
         "title_signals": _title_signals(role_title, role_family),
