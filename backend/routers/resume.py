@@ -21,6 +21,7 @@ from backend.services.canonical_parser import parse_resume_document
 from backend.ai.vector_search import enrich_candidate_embedding
 from backend.jd_engine import normalize_jd_skills
 from backend.services.candidate_intelligence import apply_resume_intelligence_fields, resume_intelligence_payload
+from backend.services.candidate_report_normalizer import normalize_candidate_report, serialize_candidate_report
 from backend.services.document_classifier import classify_resume_document
 from backend.services.jd_enrichment import enrich_jd_for_scoring
 from backend.services.sourcing import build_apply_links, normalize_application_source, resolve_job_identifier
@@ -1645,8 +1646,9 @@ def get_ai_explanation(resume_id: str, force: bool = Query(False)):
 
         # 🔹 NORMAL MODE (NO NEW CALL)
         if candidate.explanation and not force:
+            report = normalize_candidate_report(candidate.explanation, candidate_payload)
             return {
-                "explanation": candidate.explanation,
+                "explanation": report,
                 "projects": projects,
                 "candidate": candidate_payload,
                 "cached": True,
@@ -1672,13 +1674,14 @@ def get_ai_explanation(resume_id: str, force: bool = Query(False)):
         )
 
         # 🔥 REPLACE OLD
-        candidate.explanation = explanation
+        report = normalize_candidate_report(explanation, candidate_payload)
+        candidate.explanation = serialize_candidate_report(report, candidate_payload)
         candidate.explanation_generated_at = datetime.utcnow()
 
         db.commit()
 
         return {
-            "explanation": explanation,
+            "explanation": report,
             "projects": projects,
             "candidate": candidate_payload,
             "cached": False,
