@@ -30,6 +30,11 @@ INVALID_COMPANY_TOKENS = {
     "frontend", "front end", "front-end", "backend", "api auth", "database",
     "company and its associated businesses", "functionality and improvements",
     "dynamic data driven interfaces", "project evidence", "skill gaps",
+    "web performance", "service workers", "tools and best practices", "technologies",
+    "projects", "react hook form", "styled components", "style modules", "webpack",
+    "github", "frontend engineer with expertise", "summary labels", "csv",
+    "api routes", "google share drive", "nodes", "relationships", "nodes and relationships",
+    "documentation", "data integration",
 }
 
 ROLE_ONLY_RE = re.compile(
@@ -63,7 +68,11 @@ def _valid_company_name(value):
     if re.search(r"[\u202a-\u202e\u200e\u200f]", text) and not re.search(r"[a-zA-Z]{2,}", re.sub(r"[\u202a-\u202e\u200e\u200f]", "", text)):
         return False
     if re.fullmatch(
-        r"(cms|seo(?:,\s*web\s+performance)?|frontend|front[-\s]?end|backend|api\s+auth|database|"
+        r"(cms|seo(?:,\s*web\s+performance)?|web\s+performance|service\s+workers?|"
+        r"tools\s+and\s+best\s+practices|technologies|projects?|react\s+hook\s+form|"
+        r"styled\s+components|style\s+modules|webpack|github|csv|api\s+routes?|"
+        r"google\s+share\s+drive|nodes(?:\s+and\s+relationships)?|relationships|documentation|data\s+integration|"
+        r"frontend|front[-\s]?end|backend|api\s+auth|database|"
         r"company\s+and\s+its\s+associated\s+businesses|functionality\s+and\s+improvements)",
         lowered,
         re.I,
@@ -105,7 +114,9 @@ def _valid_company_name(value):
         r"(wa|net|us|usa|u\.s\.|u\.s\.a\.|application|html\s+css|java|js|react|node\.?js|"
         r"express\.?js|api|api\s*&|css|sms|machine\s+learning|website|lead|&\s*team\s+lead|"
         r"sde(?:-\d+|\s+\d+)?|senior\s+backend|backend\s+(?:engineer|developer)|"
-        r"senior\s+software\s+engineer|software\s+(?:engineer|developer)|elasticseach|elasticsearch)",
+        r"senior\s+software\s+engineer|software\s+(?:engineer|developer)|elasticseach|elasticsearch|"
+        r"react\s+hook\s+form|styled\s+components|style\s+modules|service\s+workers?|webpack|github|"
+        r"csv|api\s+routes?|google\s+share\s+drive|nodes|relationships)",
         lowered,
         re.I,
     ):
@@ -270,6 +281,20 @@ def _normalize_company_name(value):
                 )
             ):
                 text = company_side
+    dash_parts = [part.strip(" .,-|") for part in re.split(r"\s+(?:-|â€“|â€”|\u2013|\u2014)\s+", text) if part.strip(" .,-|")]
+    if len(dash_parts) >= 2:
+        left = dash_parts[0]
+        right = " - ".join(dash_parts[1:])
+        right_role_or_meta = bool(
+            re.search(
+                r"\b(sde|qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|"
+                r"analyst|lead|consultant|manager|intern|trainee|remote|hybrid|onsite)\b",
+                right,
+                re.I,
+            )
+        )
+        if _valid_company_name(left) and right_role_or_meta:
+            text = left
     comma_parts = [part.strip(" .,-|") for part in re.split(r"\s*[,|]\s*", text) if part.strip(" .,-|")]
     if len(comma_parts) >= 2:
         prefix = " ".join(comma_parts[:-1])

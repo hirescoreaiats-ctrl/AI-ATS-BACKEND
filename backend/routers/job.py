@@ -925,6 +925,7 @@ def _candidate_recruiter_trust(candidate: Resume, job: Job | None = None):
     project_evidence = intelligence.get("jd_aligned_project_evidence") or []
     parser_flags = _as_list(intelligence.get("parser_quality_flags"))
     risk_flags = _as_list(intelligence.get("risk_flags"))
+    recruiter_flags = _as_list(intelligence.get("recruiter_flags"))
 
     evidence = []
     if matched_evidence:
@@ -977,7 +978,7 @@ def _candidate_recruiter_trust(candidate: Resume, job: Job | None = None):
         risk_points.append("AI confidence is moderate/low, review resume evidence before client submission.")
     review_flags = [
         _human_label(flag.get("flag") if isinstance(flag, dict) else flag)
-        for flag in parser_flags + risk_flags
+        for flag in parser_flags + risk_flags + recruiter_flags
     ]
     review_flags = [flag for flag in review_flags if flag]
     if review_flags:
@@ -985,7 +986,23 @@ def _candidate_recruiter_trust(candidate: Resume, job: Job | None = None):
     if not candidate.email and not candidate.form_email:
         risk_points.append("Candidate email is missing.")
 
-    recommendation = "send_to_client" if (score or 0) >= 75 and not risk_points[:1] else "recruiter_review"
+    client_blocking_flags = {
+        "overqualified",
+        "overqualified review",
+        "senior overqualified",
+        "strongly overqualified",
+        "over jd experience range",
+        "below jd experience range",
+        "under experienced",
+        "missing core skill groups",
+        "missing core skills",
+        "parser quality",
+        "parser manual review",
+        "location budget mismatch",
+        "salary budget mismatch",
+    }
+    has_client_blocker = any(flag.lower() in client_blocking_flags for flag in review_flags)
+    recommendation = "send_to_client" if (score or 0) >= 75 and not risk_points[:1] and not has_client_blocker else "recruiter_review"
     if (score or 0) < 50:
         recommendation = "backup_only"
 

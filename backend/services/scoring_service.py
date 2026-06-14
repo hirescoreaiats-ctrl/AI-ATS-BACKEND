@@ -1416,6 +1416,41 @@ def _frontend_project_work_strength(parsed, resume_text):
     return min(100, round(score, 2))
 
 
+FRONTEND_API_PRODUCT_EVIDENCE_RE = re.compile(
+    r"\b(rest(?:ful)?\s+apis?|api\s+integration|axios|fetch|tanstack\s+query|react\s+query|"
+    r"dynamic\s+data|data[-\s]?driven\s+ui|server[-\s]?side\s+data|backend[-\s]?connected|"
+    r"integrat(?:e|ed|ion|ing)\s+(?:api|backend|payment|payments?|gateway|webview|webviews?)|"
+    r"payment\s+(?:methods?|gateway|integration)|prepaid\s+payment|upi|cards?|net\s+banking|"
+    r"webviews?|role[-\s]?based\s+dashboards?|dashboards?|listing\s+pages?|customer[-\s]?facing|"
+    r"react\s+hook\s+form|forms?|checkout|cart|order\s+flow|admin\s+panel)\b",
+    re.I,
+)
+
+
+def _frontend_api_integration_signal(parsed, resume_text):
+    text = " ".join([
+        resume_text or "",
+        " ".join(
+            f"{job.get('role', '')} {job.get('description', '')}"
+            for job in parsed.get("experience", []) if isinstance(job, dict)
+        ),
+        " ".join(
+            " ".join(str(value or "") for value in project.values()) if isinstance(project, dict) else str(project)
+            for project in parsed.get("projects", [])
+        ),
+    ])
+    hits = sorted({match.group(0) for match in FRONTEND_API_PRODUCT_EVIDENCE_RE.finditer(text)})
+    frontend_context = bool(
+        re.search(
+            r"\b(react(?:\.js|js)?|next(?:\.js)?|vue(?:\.js)?|angular|javascript|typescript|"
+            r"html5?|css3?|frontend|front[-\s]?end|ui|web\s+app(?:lication)?s?)\b",
+            text,
+            re.I,
+        )
+    )
+    return hits if frontend_context and hits else []
+
+
 def _frontend_experience_fit(parsed, jd_profile):
     relevant = _safe_float(parsed.get("relevant_experience_years"))
     total = _safe_float(parsed.get("total_experience_years"))
@@ -1661,6 +1696,24 @@ def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, 
         group: _full_stack_group_score(group, options, parsed, resume_text, candidate_skills)
         for group, options in core_groups.items()
     }
+    api_product_hits = _frontend_api_integration_signal(parsed, resume_text)
+    if api_product_hits and (group_results.get("api_integration") or {}).get("score", 0) < 0.5:
+        group_results["api_integration"] = {
+            "group": "api_integration",
+            "score": 0.62,
+            "matched": ["API Integration"],
+            "best_evidence_level": "professional_weak",
+            "best_source": "frontend_product_evidence",
+            "evidence": [{
+                "skill": "API Integration",
+                "status": "matched",
+                "evidence_level": "professional_weak",
+                "depth": "work_experience_evidence",
+                "source": "frontend_product_evidence",
+                "weight": 0.62,
+                "matched_terms": api_product_hits[:8],
+            }],
+        }
 
     weighted_core = 0.0
     total_weight = 0.0
@@ -1674,6 +1727,14 @@ def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, 
         group for group, result in group_results.items()
         if group in FRONTEND_GROUP_WEIGHTS and result["score"] < 0.35
     ]
+    senior_react_profile = (
+        _safe_float(parsed.get("total_experience_years")) >= 5
+        and (group_results.get("react_core") or {}).get("score", 0) >= 0.55
+    )
+    state_management_soft_gap = False
+    if senior_react_profile and "state_management" in missing_core_groups:
+        missing_core_groups = [group for group in missing_core_groups if group != "state_management"]
+        state_management_soft_gap = True
 
     matched_skill_evidence = []
     matched_skills = []
@@ -1728,6 +1789,8 @@ def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, 
         _append_unique(recruiter_flags, [salary_fit["flag"]])
     if project_work_strength >= 55:
         _append_unique(recruiter_flags, ["frontend_project_evidence", "strong_professional_evidence"])
+    if state_management_soft_gap:
+        _append_unique(recruiter_flags, ["state_management_validation"])
 
     if len(missing_core_groups) >= 4:
         caps.append({"cap": 58, "reason": "Four or more frontend core groups are missing."})

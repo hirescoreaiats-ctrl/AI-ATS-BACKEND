@@ -1,6 +1,9 @@
 from backend.experience_engine import process_experience
 from backend.jd_engine import normalize_jd_skills
+from backend.models import Job, Resume
+from backend.routers.job import _candidate_recruiter_trust
 from backend.services.jd_profile_engine import build_jd_profile
+from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.scoring_service import score_candidate
 
 
@@ -191,6 +194,62 @@ def test_senior_india_frontend_profile_is_overqualified_review_not_fake_database
     assert "Api Auth" not in result["missing_skills"]
     assert "Database" not in result["missing_skills"]
     assert "overqualified_review" in result["recruiter_flags"]
+    assert result["recommendation"] == "in_review"
+
+
+def test_frontend_api_product_work_counts_without_literal_rest_api_keyword():
+    parsed = {
+        "full_name": "Frontend Product Engineer",
+        "designation": "SDE-2",
+        "location": "Gurugram, India",
+        "key_skills": [
+            "React", "Next.js", "HTML", "CSS", "JavaScript", "TypeScript",
+            "GitHub", "Webpack", "Responsive Design", "SEO", "Performance Optimization",
+        ],
+        "total_experience_years": 3.8,
+        "relevant_experience_years": 3.44,
+        "role_relevance_score": 88,
+        "experience": [{
+            "company_name": "Fashnear Technologies Private Limited (Meesho)",
+            "role": "SDE-2",
+            "description": (
+                "Built React and Next.js customer-facing listing pages, prepaid payment methods, "
+                "UPI/card/net banking flows, native webviews, role-based dashboards, React Hook Form "
+                "forms, and dynamic data-driven UI for production commerce workflows."
+            ),
+        }],
+        "resume_quality_score": 89,
+    }
+
+    _, result = score_frontend(parsed)
+
+    assert "Api Integration" not in result["missing_skills"]
+    assert "api_integration" in result["matched_core_skill_groups"]
+    assert "API Integration" in result["matched_skills"]
+    assert result["evidence_group_scores"]["api_integration"]["best_source"] == "frontend_product_evidence"
+
+
+def test_frontend_relevance_credits_sde_with_product_api_frontend_evidence():
+    profile = frontend_profile()
+    parsed = {
+        "total_experience_years": 3.8,
+        "experience": [{
+            "company_name": "Fashnear Technologies Private Limited (Meesho)",
+            "role": "SDE-2",
+            "start_date": "Oct 2022",
+            "end_date": "Jun 2026",
+            "description": (
+                "Developed React and Next.js frontend interfaces, payment method integration, "
+                "webviews, role-based dashboards, listing pages, and dynamic data-driven UI."
+            ),
+        }],
+    }
+
+    relevance = estimate_relevant_experience_v2(parsed, FRONTEND_JD, profile)
+
+    assert relevance["relevant_experience_years"] >= 3.0
+    assert relevance["experience_relevance_label"] == "direct_match"
+    assert relevance["experience_evidence"][0]["label"] == "direct"
 
 
 def test_frontend_company_parser_rejects_headings_skills_and_unicode_noise():
@@ -211,3 +270,93 @@ def test_frontend_company_parser_rejects_headings_skills_and_unicode_noise():
     assert invalid["SEO, Web Performance"] is False
     assert invalid["company and its associated businesses"] is False
     assert invalid["\u202c"] is False
+
+
+def test_frontend_company_parser_prefers_latest_real_company_over_skill_headings():
+    result = process_experience([
+        {"company_name": "Web Performance", "role": "Frontend Engineer", "start_date": "Jan 2025", "end_date": "Present"},
+        {"company_name": "Fashnear Technologies Private Limited (Meesho) - SDE-2", "role": "SDE-2", "start_date": "Oct 2023", "end_date": "Present"},
+        {"company_name": "Cogoport Private Limited", "role": "Software Engineer", "start_date": "Jun 2021", "end_date": "Sep 2023"},
+    ])
+
+    assert result["last_company_name"] == "Fashnear Technologies Private Limited (Meesho)"
+    invalid = {
+        item["company_name"]: item["company_valid"]
+        for item in result["extracted_date_ranges_raw"]
+    }
+    assert invalid["Web Performance"] is False
+    assert invalid["Fashnear Technologies Private Limited (Meesho) - SDE-2"] is True
+
+
+def test_company_parser_rejects_csv_api_route_and_graph_terms_as_companies():
+    result = process_experience([
+        {"company_name": "CSV", "role": "Frontend Engineer", "start_date": "Jan 2026", "end_date": "Present"},
+        {"company_name": "API routes", "role": "Software Engineer", "start_date": "Jan 2025", "end_date": "Dec 2025"},
+        {"company_name": "Google Share Drive", "role": "Developer", "start_date": "Jan 2024", "end_date": "Dec 2024"},
+        {"company_name": "nodes and relationships", "role": "Developer", "start_date": "Jan 2023", "end_date": "Dec 2023"},
+        {"company_name": "Outlier AI", "role": "Software Engineer", "start_date": "Jan 2022", "end_date": "Dec 2022"},
+    ])
+
+    assert result["last_company_name"] == "Outlier AI"
+    invalid = {
+        item["company_name"]: item["company_valid"]
+        for item in result["extracted_date_ranges_raw"]
+    }
+    assert invalid["CSV"] is False
+    assert invalid["API routes"] is False
+    assert invalid["Google Share Drive"] is False
+    assert invalid["nodes and relationships"] is False
+
+
+def test_senior_react_profile_gets_soft_state_management_validation_not_hard_gap():
+    parsed = {
+        "full_name": "Senior React Consultant",
+        "designation": "Senior Consultant",
+        "location": "India",
+        "key_skills": [
+            "React", "Next.js", "HTML", "CSS", "JavaScript", "TypeScript",
+            "REST API", "GitHub", "Webpack", "Responsive Design", "Performance Optimization",
+        ],
+        "total_experience_years": 7.2,
+        "relevant_experience_years": 7.2,
+        "role_relevance_score": 92,
+        "experience": [{
+            "company_name": "Deloitte",
+            "role": "Senior Consultant",
+            "description": (
+                "Developed React and Next.js enterprise dashboards using HTML, CSS, JavaScript, "
+                "TypeScript, REST API integrations, Webpack, GitHub, responsive layouts, browser "
+                "debugging, and performance optimization."
+            ),
+        }],
+        "resume_quality_score": 90,
+    }
+
+    _, result = score_frontend(parsed)
+
+    assert "State Management" not in result["missing_skills"]
+    assert "state_management" not in result["missing_core_skill_groups"]
+    assert "state_management_validation" in result["recruiter_flags"]
+    assert result["label"] == "Overqualified review"
+
+
+def test_overqualified_recruiter_trust_never_sends_to_client_even_above_75():
+    candidate = Resume(
+        full_name="Senior Frontend Candidate",
+        email="candidate@example.com",
+        designation="Senior Frontend Developer",
+        final_score=78,
+        rank_score=78,
+        skill_match_percent=82,
+        confidence_score=80,
+        matched_skills="React,JavaScript,REST API",
+        missing_skills="",
+        recruiter_flags='["overqualified", "overqualified_review"]',
+        risk_flags='["over_jd_experience_range"]',
+    )
+    job = Job(required_skills="React,JavaScript,REST API", preferred_skills="TypeScript")
+
+    trust = _candidate_recruiter_trust(candidate, job)
+
+    assert trust["recruiter_recommendation"] == "recruiter_review"
+    assert any("overqualified" in point.lower() for point in trust["risk_points"])

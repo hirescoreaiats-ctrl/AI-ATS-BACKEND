@@ -126,6 +126,11 @@ DIRECT_ROLE_PATTERNS = {
         r"(?:developer|engineer)\b",
         re.I,
     ),
+    "software_frontend": re.compile(
+        r"\b(?:front[-\s]?end|frontend|react|ui|web)\s+"
+        r"(?:developer|engineer)\b|\b(?:software\s+engineer|software\s+developer|sde[-\s]?\d*)\b",
+        re.I,
+    ),
     "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
     "dotnet_full_stack": re.compile(
         r"\b(?:(?:senior|sr\.?|lead|principal)\s+)?(?:\.net|dotnet|asp\.?\s*net|c#|software|full[-\s]?stack)\s+"
@@ -183,6 +188,24 @@ FULL_STACK_SIGNAL_RE = re.compile(
     r"web\s+api|rest\s+api|api|apis|graphql|authentication|authorization|"
     r"frontend|front[-\s]?end|backend|back[-\s]?end|database|mongodb|mysql|postgres(?:ql)?|sql|"
     r"sql\s+server|stored\s+procedures?|html|css|tailwind|bootstrap|kendo|telerik|docker|aws|azure|vercel|netlify|digital\s*ocean|git)\b",
+    re.I,
+)
+
+FRONTEND_SIGNAL_RE = re.compile(
+    r"\b(?:react(?:\.js|js)?|next(?:\.js)?|vue(?:\.js)?|angular|html5?|css3?|scss|sass|"
+    r"javascript|typescript|jsx|tsx|redux|context\s+api|zustand|jotai|recoil|mobx|"
+    r"responsive|mobile[-\s]?first|cross[-\s]?browser|ui/ux|tailwind|bootstrap|material\s+ui|"
+    r"vite|webpack|npm|frontend|front[-\s]?end|web\s+app(?:lication)?s?)\b",
+    re.I,
+)
+
+FRONTEND_PRODUCT_API_SIGNAL_RE = re.compile(
+    r"\b(?:rest(?:ful)?\s+apis?|api\s+integration|axios|fetch|tanstack\s+query|react\s+query|"
+    r"dynamic\s+data|data[-\s]?driven\s+ui|server[-\s]?side\s+data|backend[-\s]?connected|"
+    r"integrat(?:e|ed|ion|ing)\s+(?:api|backend|payment|payments?|gateway|webview|webviews?)|"
+    r"payment\s+(?:methods?|gateway|integration)|prepaid\s+payment|upi|cards?|net\s+banking|"
+    r"webviews?|role[-\s]?based\s+dashboards?|dashboards?|listing\s+pages?|customer[-\s]?facing|"
+    r"react\s+hook\s+form|forms?|checkout|cart|order\s+flow|admin\s+panel|cms\s+ui)\b",
     re.I,
 )
 
@@ -455,6 +478,23 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif direct_full_stack_role:
                 role_title_score = max(role_title_score, 72)
 
+        frontend_signals = set()
+        frontend_api_signals = set()
+        frontend_direct_role = False
+        if role_family == "software_frontend":
+            frontend_signals = {match.group(0).lower() for match in FRONTEND_SIGNAL_RE.finditer(block_text)}
+            frontend_api_signals = {match.group(0).lower() for match in FRONTEND_PRODUCT_API_SIGNAL_RE.finditer(block_text)}
+            frontend_direct_role = bool(
+                re.search(r"\b(front[-\s]?end|frontend|react|ui|web)\s+(developer|engineer)\b", role, re.I)
+            )
+            software_role = bool(re.search(r"\b(?:software\s+(?:engineer|developer)|sde[-\s]?\d*)\b", role, re.I))
+            if frontend_direct_role:
+                role_title_score = 100
+            elif software_role and len(frontend_signals) >= 2:
+                role_title_score = max(role_title_score, 88)
+            elif software_role and frontend_signals:
+                role_title_score = max(role_title_score, 72)
+
         ba_evidence_hits = set()
         ba_direct_role = False
         ba_adjacent_role = False
@@ -482,6 +522,12 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         responsibility_match_score = _score_ratio(len(set(responsibility_hits)), min(max(len(required_signals), 1), 5))
         if ba_evidence_hits:
             responsibility_match_score = max(responsibility_match_score, min(100, len(ba_evidence_hits) * 24))
+        if role_family == "software_frontend":
+            if frontend_api_signals and (frontend_signals or frontend_direct_role):
+                skill_evidence_score = max(skill_evidence_score, min(100, 48 + len(frontend_signals) * 8))
+                responsibility_match_score = max(responsibility_match_score, min(100, 45 + len(frontend_api_signals) * 11))
+            elif len(frontend_signals) >= 3:
+                skill_evidence_score = max(skill_evidence_score, min(100, 38 + len(frontend_signals) * 7))
 
         domain_hits = 0
         if domain_context and domain_context.lower() in block_lower:
@@ -492,6 +538,11 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             domain_hits += 1
         if role_family in {"full_stack", "dotnet_full_stack"} and len({match.group(0).lower() for match in FULL_STACK_SIGNAL_RE.finditer(block_text)}) >= 3:
             domain_hits += 2
+        if role_family == "software_frontend":
+            if len(frontend_signals) >= 3:
+                domain_hits += 2
+            if frontend_api_signals:
+                domain_hits += 1
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_evidence_hits:
