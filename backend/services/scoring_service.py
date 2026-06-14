@@ -1258,6 +1258,29 @@ BACKEND_GROUP_WEIGHTS = {
 }
 
 
+FRONTEND_GROUP_WEIGHTS = {
+    "frontend_core": 0.18,
+    "react_core": 0.18,
+    "responsive_ui": 0.14,
+    "api_integration": 0.14,
+    "state_management": 0.12,
+    "frontend_tooling": 0.12,
+    "performance_debugging": 0.12,
+}
+
+
+FRONTEND_SKILL_DISPLAY_ORDER = [
+    "React", "Next.js", "HTML", "CSS", "JavaScript", "TypeScript",
+    "Redux", "Context API", "Zustand", "Jotai", "Recoil", "MobX",
+    "REST API", "API Integration", "Fetch", "Axios", "TanStack Query",
+    "Responsive Design", "Mobile-first Design", "Browser Compatibility",
+    "Git", "GitHub", "GitLab", "Vite", "Webpack", "npm",
+    "Jest", "React Testing Library", "Cypress", "Performance Optimization",
+    "Web Vitals", "SEO", "Accessibility", "Tailwind CSS", "Bootstrap",
+    "Material UI", "Vercel", "Netlify", "AWS", "Node.js", "Express",
+]
+
+
 def _full_stack_group_score(group, options, parsed, resume_text, candidate_skills):
     evidences = []
     for skill in normalize_skill_list(options or []):
@@ -1361,6 +1384,168 @@ def _backend_project_work_strength(parsed, resume_text):
     return min(100, round(score, 2))
 
 
+def _frontend_project_work_strength(parsed, resume_text):
+    text = " ".join([
+        resume_text or "",
+        " ".join(
+            f"{job.get('role', '')} {job.get('description', '')}"
+            for job in parsed.get("experience", []) if isinstance(job, dict)
+        ),
+        " ".join(
+            " ".join(str(value or "") for value in project.values()) if isinstance(project, dict) else str(project)
+            for project in parsed.get("projects", [])
+        ),
+    ]).lower()
+    frontend_core = bool(re.search(r"\b(html5?|css3?|javascript|es6|scss|sass)\b", text, re.I))
+    react = bool(re.search(r"\breact(?:\.js|js)?\b|\bnext(?:\.js)?\b|\bjsx\b", text, re.I))
+    responsive = bool(re.search(r"\bresponsive|mobile[-\s]?first|cross[-\s]?browser|ui/ux|accessibility|wcag\b", text, re.I))
+    api = bool(re.search(r"\b(rest(?:ful)?\s+apis?|api\s+integration|axios|fetch|tanstack\s+query|react\s+query|dynamic\s+data)\b", text, re.I))
+    state = bool(re.search(r"\b(redux|context\s+api|zustand|jotai|recoil|mobx)\b", text, re.I))
+    tooling = bool(re.search(r"\b(vite|webpack|npm|git(?:hub|lab)?|chrome\s+devtools|build\s+tools)\b", text, re.I))
+    performance = bool(re.search(r"\b(performance|page\s+speed|web\s*vitals|seo|debug(?:ging)?|optimized?|code\s+quality)\b", text, re.I))
+    action_hits = len(set(re.findall(r"\b(built|developed|implemented|designed|integrated|optimized|maintained|tested|debugged|created|converted)\b", text, re.I)))
+    quantified = bool(re.search(r"\b\d+(?:%|k|,\d{3}| users?| pages?| components?| dashboards?| modules?)\b", text, re.I))
+    score = action_hits * 7
+    score += 18 if frontend_core and react else 0
+    score += 10 if responsive else 0
+    score += 12 if api else 0
+    score += 10 if state else 0
+    score += 8 if tooling else 0
+    score += 8 if performance else 0
+    score += 5 if quantified else 0
+    return min(100, round(score, 2))
+
+
+def _frontend_experience_fit(parsed, jd_profile):
+    relevant = _safe_float(parsed.get("relevant_experience_years"))
+    total = _safe_float(parsed.get("total_experience_years"))
+    role_relevance = _safe_float(parsed.get("role_relevance_score"))
+    if relevant <= 0 and role_relevance >= 65:
+        relevant = min(total, 1.0) if total else 0.5
+
+    jd_min = _safe_float(jd_profile.get("min_experience_years")) or 1.0
+    jd_max = _safe_float(jd_profile.get("max_experience_years")) or 3.0
+    label = "unknown"
+    score = 55
+    overqualified = False
+    strong_overqualified = False
+    under = False
+
+    if relevant <= 0:
+        label = "fresher_or_intern_risk"
+        under = True
+        score = 40
+    elif relevant < jd_min:
+        label = "junior_review"
+        under = True
+        score = min(70, 48 + (relevant / max(jd_min, 1)) * 22)
+    elif relevant <= jd_max:
+        label = "ideal_1_3_years"
+        score = 94
+    elif relevant <= 4.5:
+        label = "slightly_over_range"
+        score = 84
+        overqualified = True
+    elif relevant <= 6:
+        label = "overqualified_review"
+        score = 70
+        overqualified = True
+    elif relevant <= 8:
+        label = "senior_overqualified"
+        score = 58
+        overqualified = True
+        strong_overqualified = True
+    else:
+        label = "senior_overqualified"
+        score = 48
+        overqualified = True
+        strong_overqualified = True
+
+    if jd_max <= 3 and total >= 10:
+        label = "senior_overqualified"
+        score = min(score, 45)
+        overqualified = True
+        strong_overqualified = True
+    elif jd_max <= 3 and total >= 8:
+        label = "senior_overqualified"
+        score = min(score, 55)
+        overqualified = True
+        strong_overqualified = True
+    elif jd_max <= 3 and total >= 6:
+        label = "overqualified_review"
+        score = min(score, 65)
+        overqualified = True
+
+    return {
+        "score": round(score, 2),
+        "label": label,
+        "relevant_years": relevant,
+        "total_years": total,
+        "overqualified": overqualified,
+        "strong_overqualified": strong_overqualified,
+        "under_experienced": under,
+        "jd_min": jd_min or None,
+        "jd_max": jd_max or None,
+    }
+
+
+def _frontend_location_fit(parsed, jd_data, jd_text):
+    candidate_location = str(parsed.get("location") or parsed.get("current_location") or "").lower()
+    jd_location = " ".join([
+        str((jd_data or {}).get("location") or ""),
+        str((jd_data or {}).get("work_mode") or ""),
+        jd_text or "",
+    ]).lower()
+    india_jd = bool(re.search(r"\b(noida|gurugram|gurgaon|delhi|ncr|india|hybrid|onsite)\b", jd_location))
+    global_remote = bool(re.search(r"\bglobal\s+remote|worldwide|anywhere\b", jd_location))
+    india_candidate = bool(re.search(r"\b(india|noida|gurugram|gurgaon|delhi|ncr|mumbai|bengaluru|bangalore|hyderabad|pune|chennai|kolkata|mangalore)\b", candidate_location))
+    ncr_candidate = bool(re.search(r"\b(noida|gurugram|gurgaon|delhi|ncr)\b", candidate_location))
+    foreign_candidate = bool(re.search(r"\b(los angeles|california|san francisco|usa|united states|greece|london|uk|poland|malaysia|idaho|new york|austin|tx|ca)\b", candidate_location))
+
+    if not candidate_location:
+        return {"score": 65, "label": "location_needs_validation", "flag": "location_needs_validation"}
+    if global_remote:
+        return {"score": 85, "label": "global_remote_acceptable", "flag": ""}
+    if india_jd and ncr_candidate:
+        return {"score": 100, "label": "location_strong_fit", "flag": ""}
+    if india_jd and india_candidate:
+        return {"score": 85, "label": "india_remote_fit", "flag": ""}
+    if india_jd and foreign_candidate:
+        return {"score": 35, "label": "location_budget_mismatch", "flag": "location_budget_mismatch"}
+    return {"score": 70, "label": "location_unclear", "flag": "location_needs_validation"}
+
+
+def _frontend_salary_fit(parsed, jd_data, jd_text, location_fit):
+    text = " ".join([
+        str((jd_data or {}).get("salary") or ""),
+        str((jd_data or {}).get("salary_range") or ""),
+        jd_text or "",
+    ]).lower()
+    low_budget_india = bool(re.search(r"\b(?:4\s*[-–]\s*5|4\s*to\s*5)\s*lpa\b|\b5\s*lpa\b", text, re.I))
+    candidate_salary = str(parsed.get("expected_salary") or parsed.get("salary") or "").lower()
+    if candidate_salary and low_budget_india and re.search(r"\b([6-9]|1\d)\s*lpa\b", candidate_salary):
+        return {"score": 35, "label": "salary_above_budget", "flag": "salary_budget_mismatch"}
+    if low_budget_india and location_fit.get("flag") == "location_budget_mismatch":
+        return {"score": 30, "label": "salary_location_mismatch", "flag": "salary_budget_mismatch"}
+    if low_budget_india:
+        return {"score": 70, "label": "salary_needs_validation", "flag": "salary_needs_validation"}
+    return {"score": 75, "label": "salary_not_specified", "flag": "salary_needs_validation"}
+
+
+def _ordered_frontend_skills(skills):
+    normalized = normalize_skill_list(skills or [])
+    lower_map = {skill.lower(): skill for skill in normalized}
+    ordered = []
+    for skill in FRONTEND_SKILL_DISPLAY_ORDER:
+        value = lower_map.get(skill.lower())
+        if value and value not in ordered:
+            ordered.append(value)
+    for skill in normalized:
+        if skill not in ordered:
+            ordered.append(skill)
+    return ordered
+
+
 def _full_stack_experience_fit(parsed, jd_profile):
     relevant = _safe_float(parsed.get("relevant_experience_years"))
     total = _safe_float(parsed.get("total_experience_years"))
@@ -1450,6 +1635,245 @@ def _backend_experience_fit(parsed, jd_profile):
         "under_experienced": under,
         "jd_min": jd_min or None,
         "jd_max": jd_max or None,
+    }
+
+
+def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
+    candidate_skills = normalize_skill_list(parsed.get("key_skills", []))
+    core_groups = {
+        group: options
+        for group, options in (jd_profile.get("core_skill_groups") or {}).items()
+        if group in FRONTEND_GROUP_WEIGHTS or group == "good_to_have"
+    }
+    if not core_groups:
+        core_groups = {
+            "frontend_core": ["HTML", "CSS", "JavaScript"],
+            "react_core": ["React", "JSX", "Component-based Development"],
+            "responsive_ui": ["Responsive Design", "Mobile-first Design", "Browser Compatibility", "UI/UX"],
+            "api_integration": ["REST API", "API Integration", "Fetch", "Axios"],
+            "state_management": ["Redux", "Context API", "Zustand"],
+            "frontend_tooling": ["Git", "GitHub", "npm", "Vite", "Webpack"],
+            "performance_debugging": ["Performance Optimization", "Page Speed", "Web Vitals", "Debugging"],
+            "good_to_have": ["TypeScript", "Next.js", "Tailwind CSS", "Bootstrap", "Material UI", "Jest", "Cypress", "Vercel", "Netlify", "AWS", "Node.js", "Express"],
+        }
+
+    group_results = {
+        group: _full_stack_group_score(group, options, parsed, resume_text, candidate_skills)
+        for group, options in core_groups.items()
+    }
+
+    weighted_core = 0.0
+    total_weight = 0.0
+    for group, weight in FRONTEND_GROUP_WEIGHTS.items():
+        if group not in group_results:
+            continue
+        weighted_core += group_results[group]["score"] * weight
+        total_weight += weight
+    core_skill_percent = round((weighted_core / max(total_weight, 0.01)) * 100, 2)
+    missing_core_groups = [
+        group for group, result in group_results.items()
+        if group in FRONTEND_GROUP_WEIGHTS and result["score"] < 0.35
+    ]
+
+    matched_skill_evidence = []
+    matched_skills = []
+    for group in FRONTEND_GROUP_WEIGHTS:
+        result = group_results.get(group) or {}
+        matched_skills.extend(result.get("matched") or [])
+        matched_skill_evidence.extend(result.get("evidence") or [])
+    good_to_have_result = group_results.get("good_to_have") or {}
+    preferred_skills = good_to_have_result.get("matched") or []
+    matched_skills = _ordered_frontend_skills(matched_skills + preferred_skills)
+
+    project_work_strength = _frontend_project_work_strength(parsed, resume_text)
+    experience_fit = _frontend_experience_fit(parsed, jd_profile)
+    location_fit = _frontend_location_fit(parsed, jd_data or {}, jd_text or "")
+    salary_fit = _frontend_salary_fit(parsed, jd_data or {}, jd_text or "", location_fit)
+    designation = str(parsed.get("designation") or parsed.get("current_title") or "")
+    role_relevance = max(
+        _safe_float(parsed.get("role_relevance_score")),
+        94 if re.search(r"\b(front[-\s]?end|frontend|react|ui\s+developer|web\s+developer)\b", designation, re.I) else 0,
+        80 if re.search(r"\b(full[-\s]?stack|software\s+(?:engineer|developer)|sde)\b", designation, re.I) and core_skill_percent >= 60 else 0,
+    )
+    good_to_have_score = (good_to_have_result.get("score") or 0) * 100
+
+    final_score = (
+        core_skill_percent * 0.40
+        + experience_fit["score"] * 0.20
+        + project_work_strength * 0.15
+        + location_fit["score"] * 0.10
+        + salary_fit["score"] * 0.10
+        + good_to_have_score * 0.05
+    )
+
+    risk_flags = []
+    recruiter_flags = []
+    caps = []
+    if missing_core_groups:
+        _append_unique(risk_flags, ["missing_core_skill_groups"])
+        _append_unique(recruiter_flags, ["missing_core_skills"])
+    if experience_fit["under_experienced"]:
+        _append_unique(recruiter_flags, ["under_experienced"])
+        _append_unique(risk_flags, ["below_jd_experience_range"])
+    if experience_fit["overqualified"]:
+        _append_unique(recruiter_flags, ["overqualified", "overqualified_review"])
+        _append_unique(risk_flags, ["over_jd_experience_range"])
+    if experience_fit.get("strong_overqualified"):
+        _append_unique(recruiter_flags, ["strongly_overqualified"])
+    if location_fit.get("flag"):
+        _append_unique(recruiter_flags, [location_fit["flag"]])
+        if location_fit["flag"] == "location_budget_mismatch":
+            _append_unique(risk_flags, ["location_budget_mismatch"])
+    if salary_fit.get("flag"):
+        _append_unique(recruiter_flags, [salary_fit["flag"]])
+    if project_work_strength >= 55:
+        _append_unique(recruiter_flags, ["frontend_project_evidence", "strong_professional_evidence"])
+
+    if len(missing_core_groups) >= 4:
+        caps.append({"cap": 58, "reason": "Four or more frontend core groups are missing."})
+    elif len(missing_core_groups) >= 3:
+        caps.append({"cap": 68, "reason": "Three frontend core groups need validation."})
+    elif len(missing_core_groups) >= 2:
+        caps.append({"cap": 76, "reason": "Two frontend core groups need validation."})
+    if experience_fit["label"] == "fresher_or_intern_risk":
+        caps.append({"cap": 58, "reason": "No proven professional frontend experience; recruiter review required."})
+    elif experience_fit["label"] == "junior_review":
+        caps.append({"cap": 76, "reason": "Below the frontend JD experience band; validate project depth."})
+    elif experience_fit["label"] == "slightly_over_range":
+        caps.append({"cap": 86, "reason": "Slightly above the 1-3 year frontend range; validate budget fit."})
+    elif experience_fit["label"] == "overqualified_review":
+        caps.append({"cap": 74, "reason": "Above the 1-3 year frontend range; recruiter review recommended."})
+    elif experience_fit["label"] == "senior_overqualified":
+        caps.append({"cap": 64 if experience_fit.get("strong_overqualified") else 70, "reason": "Senior/overqualified for this 1-3 year frontend role; recruiter review recommended."})
+    if location_fit.get("flag") == "location_budget_mismatch":
+        caps.append({"cap": 72, "reason": "Location/budget mismatch for this India frontend role."})
+    if parsed.get("parser_quality_action") == "manual_review_required":
+        caps.append({"cap": 58, "reason": "Parser quality requires manual review."})
+        _append_unique(risk_flags, ["parser_quality"])
+        _append_unique(recruiter_flags, ["parser_manual_review"])
+
+    for cap in caps:
+        final_score = min(final_score, cap["cap"])
+
+    final_score = round(max(0, min(100, final_score)), 2)
+    confidence = round(min(100, 35 + core_skill_percent * 0.27 + project_work_strength * 0.20 + role_relevance * 0.14 + _safe_float(parsed.get("resume_quality_score"), 75) * 0.12 + experience_fit["score"] * 0.10), 2)
+    rank_score = round(min(100, final_score + (3 if confidence >= 70 and not risk_flags else 0)), 2)
+
+    if (
+        final_score >= 78
+        and core_skill_percent >= 68
+        and experience_fit["label"] in {"ideal_1_3_years", "slightly_over_range"}
+        and len(missing_core_groups) <= 1
+        and location_fit.get("flag") != "location_budget_mismatch"
+    ):
+        recommendation = "shortlisted"
+        _append_unique(recruiter_flags, ["strong_match" if final_score >= 86 else "good_match"])
+    elif final_score < 42 or (len(missing_core_groups) >= 4 and final_score < 58):
+        recommendation = "rejected"
+    else:
+        recommendation = "in_review"
+
+    if experience_fit["overqualified"] and recommendation == "shortlisted":
+        recommendation = "in_review"
+
+    missing_skills = [group.replace("_", " ").title() for group in missing_core_groups]
+    label = (
+        "Strong fit" if recommendation == "shortlisted" and final_score >= 84
+        else "Good fit" if recommendation == "shortlisted"
+        else "Location/Budget Mismatch" if location_fit.get("flag") == "location_budget_mismatch"
+        else "Overqualified review" if experience_fit["overqualified"]
+        else "Below experience range" if experience_fit["under_experienced"]
+        else "Skill validation needed" if missing_core_groups
+        else "Review required"
+    )
+    ranking_reason = (
+        f"Rank score {rank_score}/100 with {confidence}% confidence: "
+        f"{core_skill_percent}% frontend group coverage, {experience_fit['relevant_years']:g}/{experience_fit['total_years']:g} relevant/total years, "
+        f"location fit {location_fit['label']}, salary fit {salary_fit['label']}."
+    )
+    if missing_core_groups:
+        ranking_reason += f" Missing frontend groups: {', '.join(missing_core_groups)}."
+    if caps:
+        ranking_reason += " Caps applied: " + " ".join(item["reason"] for item in caps[:2])
+
+    return {
+        "final_score": final_score,
+        "rank_score": rank_score,
+        "fit_band": "strong_match" if final_score >= 84 else "good_match" if final_score >= 68 else "review" if final_score >= 45 else "low_match",
+        "skill_score": round(core_skill_percent * 0.40, 2),
+        "experience_score": round(experience_fit["score"] * 0.20, 2),
+        "semantic_score": parsed.get("semantic_score", 0),
+        "semantic_weight": 0,
+        "role_similarity": parsed.get("role_similarity", 0),
+        "role_weight": round(role_relevance * 0.14, 2),
+        "education_score": 0,
+        "matched_skills": matched_skills,
+        "direct_matched_skills": matched_skills,
+        "transferable_skills": [],
+        "preferred_matched_skills": _ordered_frontend_skills(preferred_skills),
+        "missing_skills": missing_skills,
+        "skill_evidence_depth": {skill: evidence.get("depth", evidence.get("evidence_level", "")) for evidence in matched_skill_evidence for skill in [evidence.get("skill")] if skill},
+        "skill_evidence": {skill: evidence for evidence in matched_skill_evidence for skill in [evidence.get("skill")] if skill},
+        "matched_skill_evidence": matched_skill_evidence,
+        "missing_or_weak_skills": [
+            {"skill": group.replace("_", " ").title(), "status": "missing", "evidence_level": "missing"}
+            for group in missing_core_groups
+        ],
+        "employer_name_only_skills": [],
+        "skill_match_percent": core_skill_percent,
+        "mandatory_skill_coverage": core_skill_percent,
+        "preferred_skill_coverage": round(good_to_have_score, 2),
+        "core_skill_match_percent": core_skill_percent,
+        "matched_core_skill_groups": [group for group, result in group_results.items() if group in FRONTEND_GROUP_WEIGHTS and result["score"] >= 0.35],
+        "missing_core_skill_groups": missing_core_groups,
+        "confidence_score": confidence,
+        "seniority_level": parsed.get("seniority_level") or infer_seniority(parsed.get("designation"), experience_fit["relevant_years"]),
+        "target_seniority_level": jd_profile.get("seniority_level"),
+        "recommendation": recommendation,
+        "label": label,
+        "score_caps_applied": caps,
+        "recruiter_flags": recruiter_flags,
+        "risk_flags": risk_flags,
+        "ranking_reason": ranking_reason,
+        "experience_fit": experience_fit["label"],
+        "project_strength_score": project_work_strength,
+        "all_critical_requirements_met": not missing_core_groups,
+        "jd_role_family": "software_frontend",
+        "jd_skill_groups": core_groups,
+        "evidence_group_scores": group_results,
+        "role_relevance_label": parsed.get("experience_relevance_label") or "",
+        "experience_fit_label": experience_fit["label"],
+        "location_fit": location_fit,
+        "salary_budget_fit": salary_fit,
+        "scoring_breakdown": {
+            "frontend_group_component": round(core_skill_percent * 0.40, 2),
+            "experience_fit_component": round(experience_fit["score"] * 0.20, 2),
+            "project_work_component": round(project_work_strength * 0.15, 2),
+            "location_fit_component": round(location_fit["score"] * 0.10, 2),
+            "salary_budget_component": round(salary_fit["score"] * 0.10, 2),
+            "good_to_have_component": round(good_to_have_score * 0.05, 2),
+            "evidence_group_scores": group_results,
+            "missing_core_skill_groups": missing_core_groups,
+            "score_caps_applied": caps,
+        },
+        "candidate_screening_summary": {
+            "candidate_name": parsed.get("full_name") or "",
+            "current_title": parsed.get("current_title") or parsed.get("designation") or "",
+            "target_role_alignment": "strong" if role_relevance >= 75 else "partial" if role_relevance >= 45 else "weak",
+            "total_experience_years": experience_fit["total_years"],
+            "jd_relevant_experience_years": experience_fit["relevant_years"],
+            "seniority_fit": experience_fit["label"],
+            "location_fit": location_fit["label"],
+            "salary_budget_fit": salary_fit["label"],
+            "final_score": final_score,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "label": label,
+            "matched_skills": matched_skill_evidence,
+            "missing_or_weak_skills": missing_skills,
+            "risk_flags": risk_flags,
+            "parser_quality_flags": parsed.get("parser_quality_flags") or [],
+        },
     }
 
 
@@ -1940,6 +2364,16 @@ def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_sco
 
 
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
+    if (jd_profile.get("role_family") or "").lower() == "software_frontend":
+        result = _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        role_identity = _generic_role_identity(
+            parsed,
+            jd_profile,
+            result.get("mandatory_skill_coverage") or result.get("skill_match_percent") or 0,
+            _safe_float(parsed.get("role_relevance_score")),
+            _safe_float(result.get("project_strength_score")),
+        )
+        return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
     if (jd_profile.get("role_family") or "").lower() in {"full_stack", "dotnet_full_stack"}:
         result = _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
         role_identity = _generic_role_identity(

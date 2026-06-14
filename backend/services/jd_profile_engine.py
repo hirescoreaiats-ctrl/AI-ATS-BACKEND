@@ -299,6 +299,55 @@ def _split_dotnet_requirements(role_family, must_have, nice_to_have):
     return must, nice
 
 
+DATABASE_REQUIREMENT_RE = re.compile(
+    r"\b(sql|mongodb|mongo\s*db|postgres(?:ql)?|mysql|database|schema\s+design|"
+    r"query\s+optimization|prisma|supabase)\b",
+    re.I,
+)
+
+
+FRONTEND_BACKEND_OPTIONAL = {
+    "Node.js", "Express", "MongoDB", "SQL", "PostgreSQL", "MySQL", "SQL Server",
+    "Database Design", "Prisma", "Supabase", "Authentication", "Authorization",
+    "RBAC", "JWT", "OAuth", "SSO", "OpenID Connect",
+}
+
+
+def _split_frontend_requirements(role_family, role_title, jd_text, must_have, nice_to_have):
+    if role_family != "software_frontend":
+        return normalize_skill_list(must_have), normalize_skill_list(nice_to_have)
+
+    text = f"{role_title or ''}\n{jd_text or ''}".lower()
+    default_required = role_family_default_must_have("software_frontend")
+    default_nice = role_family_default_nice_to_have("software_frontend")
+    auth_required = _auth_required(role_title, jd_text, must_have, nice_to_have)
+    database_required = bool(DATABASE_REQUIREMENT_RE.search(text))
+
+    required = []
+    demoted = []
+    for skill in normalize_skill_list(must_have or []):
+        if skill in FRONTEND_BACKEND_OPTIONAL:
+            if skill in {"Authentication", "Authorization", "RBAC", "JWT", "OAuth", "SSO", "OpenID Connect"} and not auth_required:
+                demoted.append(skill)
+                continue
+            if skill in {"MongoDB", "SQL", "PostgreSQL", "MySQL", "SQL Server", "Database Design", "Prisma", "Supabase"} and not database_required:
+                demoted.append(skill)
+                continue
+            if skill in {"Node.js", "Express"} and not re.search(r"\b(required|must|mandatory)\b.{0,80}\b(node(?:\.js)?|express)\b", text, re.I):
+                demoted.append(skill)
+                continue
+        required.append(skill)
+
+    required = normalize_skill_list(required + default_required)
+    required_keys = {item.lower() for item in required}
+    nice = normalize_skill_list(
+        (nice_to_have or [])
+        + demoted
+        + [skill for skill in default_nice if skill.lower() not in required_keys]
+    )
+    return required, nice
+
+
 AUTH_REQUIREMENT_RE = re.compile(
     r"\b(oauth|openid\s+connect|open\s+id\s+connect|oidc|sso|single\s+sign[-\s]?on|"
     r"authentication|authorization|authorisation|rbac|jwt|identity\s+server|azure\s+ad|"
@@ -415,6 +464,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         ])
     must_have, nice_to_have = _split_full_stack_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
     must_have, nice_to_have = _split_dotnet_requirements(role_family, must_have, nice_to_have)
+    must_have, nice_to_have = _split_frontend_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
@@ -476,7 +526,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "preferred_skill_groups": {"preferred": nice_to_have} if nice_to_have else {},
         "core_skill_groups": core_groups,
         "backend_groups": {key: value for key, value in core_groups.items() if key in {"backend", "backend_path", "api_logic"}},
-        "frontend_groups": {key: value for key, value in core_groups.items() if key in {"frontend", "frontend_foundation"}},
+        "frontend_groups": {key: value for key, value in core_groups.items() if key in {"frontend", "frontend_foundation", "frontend_core", "react_core", "responsive_ui", "state_management", "frontend_tooling", "performance_debugging"}},
         "database_groups": {key: value for key, value in core_groups.items() if "database" in key},
         "cloud_devops_groups": {key: value for key, value in core_groups.items() if key in {"deployment_tools", "tooling_deployment", "good_to_have"}},
         "auth_security_groups": {key: value for key, value in core_groups.items() if key in {"api_auth", "auth_security"}},

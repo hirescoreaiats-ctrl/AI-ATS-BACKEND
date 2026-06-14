@@ -26,6 +26,10 @@ INVALID_COMPANY_TOKENS = {
     "digitalrealty usa remote", "da ta analy st", "data analyst", "business analyst",
     "assistant manager", "event co-chair", "co-chair",
     "cba", "employment history", "professional experience", "work experience",
+    "cms", "seo", "seo web performance", "seo, web performance",
+    "frontend", "front end", "front-end", "backend", "api auth", "database",
+    "company and its associated businesses", "functionality and improvements",
+    "dynamic data driven interfaces", "project evidence", "skill gaps",
 }
 
 ROLE_ONLY_RE = re.compile(
@@ -53,6 +57,17 @@ def _valid_company_name(value):
         return False
     lowered = text.lower().strip(" :-|")
     if lowered in INVALID_COMPANY_TOKENS:
+        return False
+    if not re.search(r"[a-zA-Z]{2,}", text):
+        return False
+    if re.search(r"[\u202a-\u202e\u200e\u200f]", text) and not re.search(r"[a-zA-Z]{2,}", re.sub(r"[\u202a-\u202e\u200e\u200f]", "", text)):
+        return False
+    if re.fullmatch(
+        r"(cms|seo(?:,\s*web\s+performance)?|frontend|front[-\s]?end|backend|api\s+auth|database|"
+        r"company\s+and\s+its\s+associated\s+businesses|functionality\s+and\s+improvements)",
+        lowered,
+        re.I,
+    ):
         return False
     if ROLE_ONLY_RE.fullmatch(lowered):
         return False
@@ -104,7 +119,7 @@ def _valid_company_name(value):
         re.I,
     ):
         return False
-    if re.search(r"\b(react|node\.?js|express\.?js|html|css|java|python|django|fastapi|api)\b", lowered, re.I) and not re.search(
+    if re.search(r"\b(react|node\.?js|express\.?js|html|css|java|python|django|fastapi|api|seo|cms|frontend|backend)\b", lowered, re.I) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|systems|labs|studio|media|group|microsoft|amazon|infosys|capgemini)\b",
         lowered,
         re.I,
