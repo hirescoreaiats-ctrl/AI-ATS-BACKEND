@@ -107,12 +107,60 @@ APPLIED_ML_CORE_GROUPS = {
     ],
 }
 
+PRODUCT_ARCHITECT_RE = re.compile(
+    r"\b(?:senior\s+architect|lead\s+architect|product\s+engineering\s+architect|"
+    r"software\s+architect|backend\s+architect|technical\s+architect|principal\s+engineer|staff\s+engineer)\b",
+    re.I,
+)
+
+PRODUCT_ARCHITECT_POSITIVE_RE = re.compile(
+    r"\b(product\s+engineering|system\s+design|software\s+architecture|backend\s+architecture|"
+    r"api\s+design|distributed\s+systems?|scalab(?:le|ility)|performance|security|"
+    r"node(?:\.js)?|python|docker|microservices?|startup|0[-\s]?to[-\s]?1|zero\s+to\s+one|"
+    r"b2b\s+saas|ownership|code\s+reviews?|technical\s+leadership|tech\s+lead|mentorship|"
+    r"architecture\s+review)\b",
+    re.I,
+)
+
+PRODUCT_ARCHITECT_CORE_GROUPS = {
+    "architecture_system_design": [
+        "System Design", "Software Architecture", "Backend Architecture",
+        "API Design", "Distributed Systems", "Scalability",
+        "Performance Optimization", "Security", "High-scale Systems",
+    ],
+    "hands_on_backend": [
+        "Node.js", "Python", "Express", "FastAPI", "Django", "REST API",
+        "SQL", "PostgreSQL", "MongoDB", "Microservices", "Database Design",
+    ],
+    "devops_delivery": [
+        "Docker", "Kubernetes", "CI/CD", "Git", "GitHub Actions",
+        "AWS", "Azure", "Cloud Architecture", "Deployment",
+    ],
+    "product_startup_ownership": [
+        "Product Engineering", "Startup Experience", "Product Startup",
+        "0-to-1 Product", "B2B SaaS", "Founder Collaboration", "Ownership",
+    ],
+    "technical_leadership": [
+        "Technical Leadership", "Code Review", "Engineering Mentorship",
+        "Architecture Review", "Tech Lead", "Mentorship",
+    ],
+}
+
 
 def _is_applied_ml_hybrid(role_title="", jd_text="", skills=None):
     text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
     advanced_hits = {match.group(0).lower() for match in APPLIED_ML_HYBRID_RE.finditer(text)}
     ai_title = bool(re.search(r"\b(data\s+scientist|applied\s+(?:ml|machine\s+learning)|machine\s+learning|ml\s+engineer|ai\s+engineer)\b", text, re.I))
     return ai_title and len(advanced_hits) >= 2
+
+
+def _is_product_software_architect(role_title="", jd_text="", skills=None):
+    text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
+    title_hit = bool(PRODUCT_ARCHITECT_RE.search(text))
+    positive_hits = {match.group(0).lower() for match in PRODUCT_ARCHITECT_POSITIVE_RE.finditer(text)}
+    explicit_product_architect = bool(re.search(r"\barchitect\s*[-/]\s*product\s+engineering\b", text, re.I))
+    wrong_domain = bool(re.search(r"\b(civil|construction|building|interior|landscape)\s+architect\b", text, re.I))
+    return not wrong_domain and title_hit and (explicit_product_architect or len(positive_hits) >= 4)
 
 
 def _apply_applied_ml_profile(must_have, nice_to_have, jd_text=""):
@@ -130,6 +178,24 @@ def _apply_applied_ml_profile(must_have, nice_to_have, jd_text=""):
     ])
     nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
     return must, nice, dict(APPLIED_ML_CORE_GROUPS)
+
+
+def _apply_product_architect_profile(must_have, nice_to_have, jd_text=""):
+    explicit = normalize_skill_list(must_have or known_skills_in_text(jd_text or ""))
+    grouped = [
+        skill
+        for options in PRODUCT_ARCHITECT_CORE_GROUPS.values()
+        for skill in options
+    ]
+    must = normalize_skill_list(explicit + grouped)
+    nice = normalize_skill_list([
+        *(nice_to_have or []),
+        "Kubernetes", "AWS", "Azure", "Redis", "Kafka",
+        "Event-driven Architecture", "Observability", "Monitoring",
+        "Cost Optimization", "SaaS",
+    ])
+    nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
+    return must, nice, dict(PRODUCT_ARCHITECT_CORE_GROUPS)
 
 
 def _as_list(value):
@@ -499,10 +565,15 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
     applied_ml_hybrid = _is_applied_ml_hybrid(role_title, jd_text, must_have + nice_to_have)
+    product_architect_profile = _is_product_software_architect(role_title, jd_text, must_have + nice_to_have)
     applied_ml_core_groups = {}
+    product_architect_core_groups = {}
     if applied_ml_hybrid:
         role_family = "applied_ml_engineer"
         role_family_confidence = max(role_family_confidence, 92)
+    if product_architect_profile:
+        role_family = "product_software_architect"
+        role_family_confidence = max(role_family_confidence, 94)
     if role_family == "business_analysis":
         role_family = "business_analyst"
     dynamic_hint = _dynamic_role_hint(role_title, jd_text)
@@ -530,6 +601,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     must_have, nice_to_have = _split_frontend_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
     if role_family == "applied_ml_engineer":
         must_have, nice_to_have, applied_ml_core_groups = _apply_applied_ml_profile(must_have, nice_to_have, jd_text)
+    if role_family == "product_software_architect":
+        must_have, nice_to_have, product_architect_core_groups = _apply_product_architect_profile(must_have, nice_to_have, jd_text)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
@@ -538,6 +611,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     core_groups = dynamic_core_groups(role_family, must_have, jd_text or "")
     if applied_ml_core_groups:
         core_groups = applied_ml_core_groups
+    if product_architect_core_groups:
+        core_groups = product_architect_core_groups
     core_groups = _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have)
     dynamic_role_label = ""
     if scoring_mode == "dynamic":
@@ -562,6 +637,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         profile_warnings.append("Role template defaults applied because JD had too few explicit required skills.")
     if applied_ml_hybrid:
         profile_warnings.append("Hybrid Applied ML profile detected from CV/OCR/LLM/VLM/production ML requirements.")
+    if product_architect_profile:
+        profile_warnings.append("JD-first Product Software Architect profile detected from product engineering, architecture, backend, Docker, and leadership requirements.")
     profile_confidence = _profile_confidence(scoring_mode, role_family_confidence, must_have, core_groups)
     profile_hash = _stable_hash({
         "role_title": role_title,
@@ -580,16 +657,32 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "normalized_role_label": normalized_role_label,
         "role_family": role_family,
         "detected_role_family": role_family,
-        "primary_role": "Applied ML Engineer" if role_family == "applied_ml_engineer" else role_title,
-        "secondary_roles": ["Data Scientist"] if role_family == "applied_ml_engineer" and re.search(r"\bdata\s+scientist\b", family_text, re.I) else [],
-        "role_group": "AI / ML" if role_family == "applied_ml_engineer" else "",
-        "specialization": ["Computer Vision", "OCR", "Document AI", "LLM/VLM", "Multimodal AI", "Production ML"] if role_family == "applied_ml_engineer" else [],
+        "primary_role": (
+            "Applied ML Engineer" if role_family == "applied_ml_engineer"
+            else "Product Software Architect" if role_family == "product_software_architect"
+            else role_title
+        ),
+        "secondary_roles": (
+            ["Data Scientist"] if role_family == "applied_ml_engineer" and re.search(r"\bdata\s+scientist\b", family_text, re.I)
+            else ["Software Architect", "Backend Architect", "Principal Engineer"] if role_family == "product_software_architect"
+            else []
+        ),
+        "role_group": (
+            "AI / ML" if role_family == "applied_ml_engineer"
+            else "Product Engineering / Software Architecture" if role_family == "product_software_architect"
+            else ""
+        ),
+        "specialization": (
+            ["Computer Vision", "OCR", "Document AI", "LLM/VLM", "Multimodal AI", "Production ML"] if role_family == "applied_ml_engineer"
+            else ["System Design", "Backend Architecture", "Product Engineering", "Hands-on Coding", "Technical Leadership"] if role_family == "product_software_architect"
+            else []
+        ),
         "role_family_confidence": role_family_confidence,
         "scoring_mode": scoring_mode,
         "dynamic_profile_used": scoring_mode == "dynamic",
         "known_template_used": scoring_mode == "known_template",
-        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid,
-        "hybrid_role_detected": bool(applied_ml_hybrid or scoring_mode == "hybrid"),
+        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid or product_architect_profile,
+        "hybrid_role_detected": bool(applied_ml_hybrid or product_architect_profile or scoring_mode == "hybrid"),
         "profile_confidence": profile_confidence,
         "seniority_level": seniority,
         "min_experience_years": min_years,
@@ -610,16 +703,40 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "title_signals": _title_signals(role_title, role_family),
         "adjacent_title_signals": [],
         "negative_title_signals": [],
-        "domain_context": role_family if role_family != "other" else "",
+        "domain_context": "product software architecture" if role_family == "product_software_architect" else (role_family if role_family != "other" else ""),
         "hard_requirements": hard,
         "soft_requirements": soft,
-        "scoring_weights": {
-            "ml_dl_fundamentals": 20,
-            "cv_ocr_document_ai": 30,
-            "llm_nlp_vlm_multimodal": 25,
-            "production_ml_mlops": 20,
-            "experience_fit": 5,
-        } if role_family == "applied_ml_engineer" else {},
+        "positive_signals": [
+            "System Design", "Software Architecture", "Backend Architecture",
+            "Node.js or Python", "Docker", "Product/startup ownership",
+            "Technical leadership",
+        ] if role_family == "product_software_architect" else [],
+        "negative_signals": [
+            "Civil/construction architect", "Cloud-only architect without coding",
+            "Enterprise architect without hands-on product engineering",
+            "Project/Delivery/Scrum manager", "Generic senior engineer without architecture ownership",
+        ] if role_family == "product_software_architect" else [],
+        "do_not_mix_with": [
+            "Civil Architect", "Construction Architect", "Cloud-only Architect",
+            "Enterprise Architect without coding", "Project Manager",
+            "Delivery Manager", "Scrum Master", "Pure DevOps Engineer",
+        ] if role_family == "product_software_architect" else [],
+        "scoring_weights": (
+            {
+                "ml_dl_fundamentals": 20,
+                "cv_ocr_document_ai": 30,
+                "llm_nlp_vlm_multimodal": 25,
+                "production_ml_mlops": 20,
+                "experience_fit": 5,
+            } if role_family == "applied_ml_engineer" else {
+                "architecture_system_design": 30,
+                "hands_on_backend": 25,
+                "product_startup_ownership": 20,
+                "technical_leadership": 15,
+                "devops_delivery": 5,
+                "experience_fit": 5,
+            } if role_family == "product_software_architect" else {}
+        ),
         "score_caps": {},
         "score_boosts": {},
         "profile_warnings": profile_warnings,

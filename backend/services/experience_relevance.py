@@ -137,6 +137,11 @@ DIRECT_ROLE_PATTERNS = {
         r"data\s+scientist)\b",
         re.I,
     ),
+    "product_software_architect": re.compile(
+        r"\b(?:(?:senior|lead|principal)\s+)?(?:software|backend|product\s+engineering|technical)\s+architect\b|"
+        r"\b(?:principal|staff)\s+(?:software\s+)?engineer\b|\btech\s+lead\b",
+        re.I,
+    ),
     "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
     "dotnet_full_stack": re.compile(
         r"\b(?:(?:senior|sr\.?|lead|principal)\s+)?(?:\.net|dotnet|asp\.?\s*net|c#|software|full[-\s]?stack)\s+"
@@ -239,6 +244,45 @@ APPLIED_ML_CORE_GROUP_RE = {
     ),
     "production_ml_mlops": re.compile(
         r"\b(mlops|llmops|mlflow|docker|kubernetes|fastapi|model\s+(?:deployment|serving)|inference\s+(?:pipeline|optimization)|production|deployed|latency\s+optimization|cost\s+optimization)\b",
+        re.I,
+    ),
+}
+
+PRODUCT_ARCHITECT_WORK_SIGNAL_RE = re.compile(
+    r"\b(system\s+design|software\s+architecture|backend\s+architecture|api\s+design|"
+    r"distributed\s+systems?|scalab(?:le|ility)|performance\s+optimization|security|"
+    r"node(?:\.js)?|python|express(?:\.js)?|fastapi|rest(?:ful)?\s+apis?|"
+    r"microservices?|database\s+design|docker(?:i[sz]ed)?|kubernetes|ci/cd|cloud\s+architecture|"
+    r"product\s+engineering|startup|0[-\s]?to[-\s]?1|b2b\s+saas|ownership|"
+    r"technical\s+leadership|tech\s+lead|code\s+reviews?|mentored|mentorship|"
+    r"architecture\s+review|architected|designed|owned|led)\b",
+    re.I,
+)
+
+PRODUCT_ARCHITECT_CORE_GROUP_RE = {
+    "architecture_system_design": re.compile(
+        r"\b(system\s+design|software\s+architecture|backend\s+architecture|api\s+design|"
+        r"distributed\s+systems?|scalab(?:le|ility)|performance\s+optimization|security|"
+        r"high[-\s]?scale\s+systems?|architected)\b",
+        re.I,
+    ),
+    "hands_on_backend": re.compile(
+        r"\b(node(?:\.js)?|python|express(?:\.js)?|fastapi|django|rest(?:ful)?\s+apis?|"
+        r"sql|postgres(?:ql)?|mongodb|database\s+design|microservices?)\b",
+        re.I,
+    ),
+    "devops_delivery": re.compile(
+        r"\b(docker(?:i[sz]ed)?|kubernetes|ci/cd|github\s+actions|aws|azure|cloud\s+architecture|deployment|deployed)\b",
+        re.I,
+    ),
+    "product_startup_ownership": re.compile(
+        r"\b(product\s+engineering|product\s+startup|startup|0[-\s]?to[-\s]?1|zero\s+to\s+one|"
+        r"b2b\s+saas|founder|ownership|owned|end[-\s]?to[-\s]?end)\b",
+        re.I,
+    ),
+    "technical_leadership": re.compile(
+        r"\b(technical\s+leadership|tech\s+lead|code\s+reviews?|mentored|mentorship|"
+        r"architecture\s+review|design\s+review|led\s+(?:team|engineers?)|guided)\b",
         re.I,
     ),
 }
@@ -545,6 +589,22 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif len(applied_ml_hits) >= 3:
                 role_title_score = max(role_title_score, 76)
 
+        product_architect_hits = set()
+        product_architect_group_hits = {}
+        if role_family == "product_software_architect":
+            product_architect_hits = {match.group(0).lower() for match in PRODUCT_ARCHITECT_WORK_SIGNAL_RE.finditer(block_text)}
+            product_architect_group_hits = {
+                group: {match.group(0).lower() for match in pattern.finditer(block_text)}
+                for group, pattern in PRODUCT_ARCHITECT_CORE_GROUP_RE.items()
+            }
+            architect_direct_role = bool(DIRECT_ROLE_PATTERNS["product_software_architect"].search(role))
+            if architect_direct_role and product_architect_hits:
+                role_title_score = 100
+            elif architect_direct_role:
+                role_title_score = max(role_title_score, 74)
+            elif len(product_architect_hits) >= 4:
+                role_title_score = max(role_title_score, 78)
+
         ba_evidence_hits = set()
         ba_direct_role = False
         ba_adjacent_role = False
@@ -582,6 +642,10 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             group_hit_count = sum(1 for hits in applied_ml_group_hits.values() if hits)
             skill_evidence_score = max(skill_evidence_score, min(100, 42 + len(applied_ml_hits) * 6))
             responsibility_match_score = max(responsibility_match_score, min(100, 36 + group_hit_count * 18 + len(applied_ml_hits) * 2))
+        if role_family == "product_software_architect" and product_architect_hits:
+            group_hit_count = sum(1 for hits in product_architect_group_hits.values() if hits)
+            skill_evidence_score = max(skill_evidence_score, min(100, 40 + len(product_architect_hits) * 5))
+            responsibility_match_score = max(responsibility_match_score, min(100, 34 + group_hit_count * 14 + len(product_architect_hits) * 2))
 
         domain_hits = 0
         if domain_context and domain_context.lower() in block_lower:
@@ -599,6 +663,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
                 domain_hits += 1
         if role_family == "applied_ml_engineer":
             domain_hits += sum(1 for hits in applied_ml_group_hits.values() if hits)
+        if role_family == "product_software_architect":
+            domain_hits += sum(1 for hits in product_architect_group_hits.values() if hits)
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_evidence_hits:
