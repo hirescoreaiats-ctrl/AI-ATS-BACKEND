@@ -73,6 +73,64 @@ DYNAMIC_ROLE_GROUP_RULES = [
     ),
 ]
 
+APPLIED_ML_HYBRID_RE = re.compile(
+    r"\b(?:ocr|computer\s+vision|document\s+ai|document\s+intelligence|vlm|vision[-\s]?language|"
+    r"multimodal|multi[-\s]?modal|image\s+(?:enhancement|processing|recognition|classification|segmentation)|"
+    r"object\s+detection|clip|dino|blip|real[-\s]?esrgan|trocr|paddle\s*ocr|doctr|tesseract|"
+    r"form\s+recognition|document\s+vqa|model\s+benchmarking|inference\s+optimization|"
+    r"model\s+(?:serving|deployment)|production\s+ml|mlops|llmops|rag|langchain)\b",
+    re.I,
+)
+
+APPLIED_ML_CORE_GROUPS = {
+    "ml_dl_fundamentals": [
+        "Machine Learning", "Deep Learning", "Python", "PyTorch", "TensorFlow",
+        "Scikit-learn", "Model Evaluation", "Model Benchmarking", "Regression Testing",
+    ],
+    "cv_ocr_document_ai": [
+        "Computer Vision", "OCR", "Document AI", "OpenCV", "Image Processing",
+        "Object Detection", "Image Classification", "Segmentation", "YOLO", "R-CNN",
+        "PaddleOCR", "Tesseract", "TrOCR", "DocTR", "OMR", "Handwriting Recognition",
+        "Label Extraction", "Document VQA", "Image Enhancement", "Real-ESRGAN",
+    ],
+    "llm_nlp_vlm_multimodal": [
+        "NLP", "LLM", "Generative AI", "RAG", "LangChain", "LlamaIndex",
+        "Hugging Face", "Transformers", "VLM", "Multimodal AI",
+        "Vision-Language Model", "CLIP", "DINO", "BLIP", "vLLM",
+        "Fine-tuning", "Prompt Engineering", "Vector Database",
+    ],
+    "production_ml_mlops": [
+        "MLOps", "LLMOps", "MLflow", "Docker", "Kubernetes", "FastAPI",
+        "Flask", "Model Deployment", "Model Serving", "Inference Pipeline",
+        "CI/CD", "SageMaker", "Vertex AI", "Azure ML", "Monitoring",
+        "Latency Optimization", "Cost Optimization", "Production",
+    ],
+}
+
+
+def _is_applied_ml_hybrid(role_title="", jd_text="", skills=None):
+    text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
+    advanced_hits = {match.group(0).lower() for match in APPLIED_ML_HYBRID_RE.finditer(text)}
+    ai_title = bool(re.search(r"\b(data\s+scientist|applied\s+(?:ml|machine\s+learning)|machine\s+learning|ml\s+engineer|ai\s+engineer)\b", text, re.I))
+    return ai_title and len(advanced_hits) >= 2
+
+
+def _apply_applied_ml_profile(must_have, nice_to_have, jd_text=""):
+    explicit = normalize_skill_list(must_have or known_skills_in_text(jd_text or ""))
+    grouped = [
+        skill
+        for options in APPLIED_ML_CORE_GROUPS.values()
+        for skill in options
+    ]
+    must = normalize_skill_list(explicit + grouped[:])
+    nice = normalize_skill_list([
+        *(nice_to_have or []),
+        "Real-ESRGAN", "SDXL", "Whisper", "IndicTrans2", "NLLB",
+        "Pinecone", "Chroma", "FAISS", "LoRA", "qLoRA", "Bedrock",
+    ])
+    nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
+    return must, nice, dict(APPLIED_ML_CORE_GROUPS)
+
 
 def _as_list(value):
     if not value:
@@ -440,6 +498,11 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
 
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
+    applied_ml_hybrid = _is_applied_ml_hybrid(role_title, jd_text, must_have + nice_to_have)
+    applied_ml_core_groups = {}
+    if applied_ml_hybrid:
+        role_family = "applied_ml_engineer"
+        role_family_confidence = max(role_family_confidence, 92)
     if role_family == "business_analysis":
         role_family = "business_analyst"
     dynamic_hint = _dynamic_role_hint(role_title, jd_text)
@@ -465,12 +528,16 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     must_have, nice_to_have = _split_full_stack_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
     must_have, nice_to_have = _split_dotnet_requirements(role_family, must_have, nice_to_have)
     must_have, nice_to_have = _split_frontend_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
+    if role_family == "applied_ml_engineer":
+        must_have, nice_to_have, applied_ml_core_groups = _apply_applied_ml_profile(must_have, nice_to_have, jd_text)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
         seniority = "mid-level" if min_years >= 2 else "unknown"
     hard, soft = _requirement_lines(jd_text)
     core_groups = dynamic_core_groups(role_family, must_have, jd_text or "")
+    if applied_ml_core_groups:
+        core_groups = applied_ml_core_groups
     core_groups = _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have)
     dynamic_role_label = ""
     if scoring_mode == "dynamic":
@@ -493,6 +560,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         profile_warnings.append("Medium role-family confidence; using calibrated template hints with JD-specific requirements.")
     if defaults_applied:
         profile_warnings.append("Role template defaults applied because JD had too few explicit required skills.")
+    if applied_ml_hybrid:
+        profile_warnings.append("Hybrid Applied ML profile detected from CV/OCR/LLM/VLM/production ML requirements.")
     profile_confidence = _profile_confidence(scoring_mode, role_family_confidence, must_have, core_groups)
     profile_hash = _stable_hash({
         "role_title": role_title,
@@ -511,11 +580,16 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "normalized_role_label": normalized_role_label,
         "role_family": role_family,
         "detected_role_family": role_family,
+        "primary_role": "Applied ML Engineer" if role_family == "applied_ml_engineer" else role_title,
+        "secondary_roles": ["Data Scientist"] if role_family == "applied_ml_engineer" and re.search(r"\bdata\s+scientist\b", family_text, re.I) else [],
+        "role_group": "AI / ML" if role_family == "applied_ml_engineer" else "",
+        "specialization": ["Computer Vision", "OCR", "Document AI", "LLM/VLM", "Multimodal AI", "Production ML"] if role_family == "applied_ml_engineer" else [],
         "role_family_confidence": role_family_confidence,
         "scoring_mode": scoring_mode,
         "dynamic_profile_used": scoring_mode == "dynamic",
         "known_template_used": scoring_mode == "known_template",
-        "hybrid_profile_used": scoring_mode == "hybrid",
+        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid,
+        "hybrid_role_detected": bool(applied_ml_hybrid or scoring_mode == "hybrid"),
         "profile_confidence": profile_confidence,
         "seniority_level": seniority,
         "min_experience_years": min_years,
@@ -539,7 +613,13 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "domain_context": role_family if role_family != "other" else "",
         "hard_requirements": hard,
         "soft_requirements": soft,
-        "scoring_weights": {},
+        "scoring_weights": {
+            "ml_dl_fundamentals": 20,
+            "cv_ocr_document_ai": 30,
+            "llm_nlp_vlm_multimodal": 25,
+            "production_ml_mlops": 20,
+            "experience_fit": 5,
+        } if role_family == "applied_ml_engineer" else {},
         "score_caps": {},
         "score_boosts": {},
         "profile_warnings": profile_warnings,

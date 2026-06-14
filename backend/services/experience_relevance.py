@@ -131,6 +131,12 @@ DIRECT_ROLE_PATTERNS = {
         r"(?:developer|engineer)\b|\b(?:software\s+engineer|software\s+developer|sde[-\s]?\d*)\b",
         re.I,
     ),
+    "applied_ml_engineer": re.compile(
+        r"\b(?:applied\s+(?:ml|machine\s+learning)\s+engineer|machine\s+learning\s+engineer|"
+        r"ml\s+engineer|ai\s+research\s+scientist|applied\s+scientist|computer\s+vision\s+engineer|"
+        r"data\s+scientist)\b",
+        re.I,
+    ),
     "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
     "dotnet_full_stack": re.compile(
         r"\b(?:(?:senior|sr\.?|lead|principal)\s+)?(?:\.net|dotnet|asp\.?\s*net|c#|software|full[-\s]?stack)\s+"
@@ -208,6 +214,34 @@ FRONTEND_PRODUCT_API_SIGNAL_RE = re.compile(
     r"react\s+hook\s+form|forms?|checkout|cart|order\s+flow|admin\s+panel|cms\s+ui)\b",
     re.I,
 )
+
+APPLIED_ML_WORK_SIGNAL_RE = re.compile(
+    r"\b(machine\s+learning|deep\s+learning|model\s+(?:training|evaluation|benchmarking|deployment|serving)|"
+    r"computer\s+vision|ocr|document\s+(?:ai|intelligence|extraction)|opencv|image\s+(?:processing|enhancement|classification)|"
+    r"object\s+detection|segmentation|yolo(?:v\d+)?|r[-\s]?cnn|monai|medical\s+imaging|paddle\s*ocr|tesseract|"
+    r"trocr|doctr|omr|handwriting\s+recognition|label\s+extraction|document\s+vqa|nlp|llms?|generative\s+ai|genai|"
+    r"rag|langchain|hugging\s*face|transformers?|vlm|multimodal|clip|dino|blip|vllm|fine[-\s]?tun(?:e|ed|ing)|"
+    r"mlops|llmops|mlflow|docker|kubernetes|fastapi|inference\s+(?:pipeline|optimization)|production|deployed|"
+    r"latency\s+optimization|cost\s+optimization)\b",
+    re.I,
+)
+
+APPLIED_ML_CORE_GROUP_RE = {
+    "cv_ocr_document_ai": re.compile(
+        r"\b(computer\s+vision|ocr|document\s+(?:ai|intelligence|extraction)|opencv|image\s+(?:processing|enhancement|classification)|"
+        r"object\s+detection|segmentation|yolo(?:v\d+)?|r[-\s]?cnn|monai|medical\s+imaging|paddle\s*ocr|tesseract|"
+        r"trocr|doctr|omr|handwriting\s+recognition|label\s+extraction|document\s+vqa)\b",
+        re.I,
+    ),
+    "llm_nlp_vlm_multimodal": re.compile(
+        r"\b(nlp|llms?|generative\s+ai|genai|rag|langchain|hugging\s*face|transformers?|vlm|multimodal|clip|dino|blip|vllm|fine[-\s]?tun(?:e|ed|ing))\b",
+        re.I,
+    ),
+    "production_ml_mlops": re.compile(
+        r"\b(mlops|llmops|mlflow|docker|kubernetes|fastapi|model\s+(?:deployment|serving)|inference\s+(?:pipeline|optimization)|production|deployed|latency\s+optimization|cost\s+optimization)\b",
+        re.I,
+    ),
+}
 
 
 def estimate_salesforce_experience_years(parsed, resume_text=""):
@@ -495,6 +529,22 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif software_role and frontend_signals:
                 role_title_score = max(role_title_score, 72)
 
+        applied_ml_hits = set()
+        applied_ml_group_hits = {}
+        if role_family == "applied_ml_engineer":
+            applied_ml_hits = {match.group(0).lower() for match in APPLIED_ML_WORK_SIGNAL_RE.finditer(block_text)}
+            applied_ml_group_hits = {
+                group: {match.group(0).lower() for match in pattern.finditer(block_text)}
+                for group, pattern in APPLIED_ML_CORE_GROUP_RE.items()
+            }
+            applied_direct_role = bool(DIRECT_ROLE_PATTERNS["applied_ml_engineer"].search(role))
+            if applied_direct_role and applied_ml_hits:
+                role_title_score = 100
+            elif applied_direct_role:
+                role_title_score = max(role_title_score, 74)
+            elif len(applied_ml_hits) >= 3:
+                role_title_score = max(role_title_score, 76)
+
         ba_evidence_hits = set()
         ba_direct_role = False
         ba_adjacent_role = False
@@ -528,6 +578,10 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
                 responsibility_match_score = max(responsibility_match_score, min(100, 45 + len(frontend_api_signals) * 11))
             elif len(frontend_signals) >= 3:
                 skill_evidence_score = max(skill_evidence_score, min(100, 38 + len(frontend_signals) * 7))
+        if role_family == "applied_ml_engineer" and applied_ml_hits:
+            group_hit_count = sum(1 for hits in applied_ml_group_hits.values() if hits)
+            skill_evidence_score = max(skill_evidence_score, min(100, 42 + len(applied_ml_hits) * 6))
+            responsibility_match_score = max(responsibility_match_score, min(100, 36 + group_hit_count * 18 + len(applied_ml_hits) * 2))
 
         domain_hits = 0
         if domain_context and domain_context.lower() in block_lower:
@@ -543,6 +597,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
                 domain_hits += 2
             if frontend_api_signals:
                 domain_hits += 1
+        if role_family == "applied_ml_engineer":
+            domain_hits += sum(1 for hits in applied_ml_group_hits.values() if hits)
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_evidence_hits:

@@ -2426,7 +2426,334 @@ def _recommendation_label(recommendation, recruiter_flags, risk_flags, final_sco
     return "Review required"
 
 
+APPLIED_ML_GROUP_WEIGHTS = {
+    "ml_dl_fundamentals": 0.20,
+    "cv_ocr_document_ai": 0.30,
+    "llm_nlp_vlm_multimodal": 0.25,
+    "production_ml_mlops": 0.20,
+}
+
+APPLIED_ML_GROUP_PATTERNS = {
+    "ml_dl_fundamentals": re.compile(
+        r"\b(machine\s+learning|deep\s+learning|model\s+(?:training|evaluation|benchmarking)|"
+        r"regression\s+testing|pytorch|tensorflow|scikit[-\s]?learn|keras|xgboost|random\s+forest)\b",
+        re.I,
+    ),
+    "cv_ocr_document_ai": re.compile(
+        r"\b(computer\s+vision|ocr|document\s+(?:ai|intelligence|extraction|understanding)|"
+        r"opencv|image\s+(?:processing|enhancement|classification|recognition)|object\s+detection|"
+        r"segmentation|yolo(?:v\d+)?|r[-\s]?cnn|faster\s+r[-\s]?cnn|mask\s+r[-\s]?cnn|"
+        r"vit|monai|medical\s+imaging|mri|ct\s+segmentation|retinal|ultrasound|"
+        r"paddle\s*ocr|tesseract|trocr|doctr|easy\s*ocr|omr|handwriting\s+recognition|"
+        r"form\s+recognition|table\s+(?:recognition|extraction|structure)|receipt\s+extraction|"
+        r"invoice\s+extraction|(?:vial\s+)?label\s+extraction|qr\s+extraction|lcd\s+panel\s+extraction|"
+        r"document\s+vqa|document\s+visual\s+question\s+answering|layout\s+detection|real[-\s]?esrgan)\b",
+        re.I,
+    ),
+    "llm_nlp_vlm_multimodal": re.compile(
+        r"\b(nlp|natural\s+language\s+processing|llms?|large\s+language\s+models?|generative\s+ai|genai|"
+        r"rag|langchain|llama\s*index|gpt|llama|mistral|mixtral|gemini|deepseek|hugging\s*face|"
+        r"transformers?|vllm|prompt\s+engineering|fine[-\s]?tun(?:e|ed|ing)|lora|qlora|"
+        r"vector\s+(?:db|database)|embeddings?|chroma|pinecone|faiss|multimodal|multi[-\s]?modal|"
+        r"vision[-\s]?language\s+models?|vlms?|clip|dino|blip)\b",
+        re.I,
+    ),
+    "production_ml_mlops": re.compile(
+        r"\b(mlops|llmops|mlflow|docker|kubernetes|fastapi|flask|model\s+(?:deployment|serving|lifecycle)|"
+        r"inference\s+(?:pipeline|service|optimization)|ci/cd|github\s+actions|sagemaker|bedrock|"
+        r"vertex\s+ai|azure\s+ml|cloud\s+run|lambda|production|deployed|monitoring|latency\s+optimization|"
+        r"cost\s+optimization|autoscaling|api\s+deployment)\b",
+        re.I,
+    ),
+}
+
+
+def _applied_ml_text_sections(parsed, resume_text):
+    work = []
+    projects = []
+    for job in parsed.get("experience") or []:
+        if isinstance(job, dict):
+            work.append(" ".join(str(job.get(key) or "") for key in ("role", "company_name", "description")))
+    for project in parsed.get("projects") or []:
+        if isinstance(project, dict):
+            projects.append(" ".join(str(value or "") for value in project.values()))
+        else:
+            projects.append(str(project or ""))
+    skills = " ".join(str(skill or "") for skill in parsed.get("key_skills") or [])
+    return {
+        "work": "\n".join(work),
+        "projects": "\n".join(projects),
+        "skills": skills,
+        "all": "\n".join([resume_text or "", "\n".join(work), "\n".join(projects), skills]),
+    }
+
+
+def _group_strength_from_text(group, sections):
+    pattern = APPLIED_ML_GROUP_PATTERNS[group]
+    work_hits = sorted({match.group(0) for match in pattern.finditer(sections["work"])})
+    project_hits = sorted({match.group(0) for match in pattern.finditer(sections["projects"])})
+    skill_hits = sorted({match.group(0) for match in pattern.finditer(sections["skills"])})
+    all_hits = sorted({match.group(0) for match in pattern.finditer(sections["all"])})
+
+    if work_hits:
+        level = "professional_strong" if _strong_context(sections["work"]) else "professional_weak"
+        score = min(100, 52 + len(work_hits) * 12 + (12 if level == "professional_strong" else 0))
+        source = "work_experience"
+    elif project_hits:
+        level = "project_strong" if _strong_context(sections["projects"]) else "project_weak"
+        score = min(82, 38 + len(project_hits) * 10 + (10 if level == "project_strong" else 0))
+        source = "project"
+    elif skill_hits:
+        level = "keyword_only"
+        score = min(38, 16 + len(skill_hits) * 5)
+        source = "skills_section"
+    elif all_hits:
+        level = "keyword_only"
+        score = min(32, 14 + len(all_hits) * 4)
+        source = "resume_text"
+    else:
+        level = "missing"
+        score = 0
+        source = ""
+
+    return {
+        "group": group,
+        "score": round(score, 2),
+        "evidence_level": level,
+        "source": source,
+        "matched_terms": all_hits[:12],
+        "matched": all_hits[:12],
+        "strong": score >= 60 and level in {"professional_strong", "professional_weak", "project_strong"},
+        "missing": score <= 0,
+    }
+
+
+def _applied_ml_experience_fit(parsed, jd_profile):
+    relevant = _safe_float(parsed.get("relevant_experience_years"))
+    total = _safe_float(parsed.get("total_experience_years"))
+    role_relevance = _safe_float(parsed.get("role_relevance_score"))
+    if relevant <= 0 and role_relevance >= 65:
+        relevant = min(total, 1.0) if total else 0.5
+    min_years = _safe_float(jd_profile.get("min_experience_years")) or 4.0
+    max_years = _safe_float(jd_profile.get("max_experience_years")) or 6.0
+    if relevant <= 0:
+        return {"score": 25, "label": "unproven", "relevant_years": relevant, "total_years": total, "fit": "under"}
+    if relevant < 3:
+        return {"score": 42, "label": "under_experienced", "relevant_years": relevant, "total_years": total, "fit": "under"}
+    if relevant < min_years:
+        return {"score": 72, "label": "slight_experience_gap", "relevant_years": relevant, "total_years": total, "fit": "slight_under"}
+    if relevant <= max_years:
+        return {"score": 100, "label": "ideal_4_6_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
+    if relevant <= 8:
+        return {"score": 78, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 58, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
+
+
+def _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
+    parsed = parsed or {}
+    sections = _applied_ml_text_sections(parsed, resume_text)
+    group_results = {
+        group: _group_strength_from_text(group, sections)
+        for group in APPLIED_ML_GROUP_WEIGHTS
+    }
+    weighted_groups = sum(group_results[group]["score"] * weight for group, weight in APPLIED_ML_GROUP_WEIGHTS.items())
+    experience_fit = _applied_ml_experience_fit(parsed, jd_profile)
+    final_score = weighted_groups + experience_fit["score"] * 0.05
+
+    mandatory_groups = ["cv_ocr_document_ai", "llm_nlp_vlm_multimodal", "production_ml_mlops"]
+    strong_mandatory = [group for group in mandatory_groups if group_results[group]["strong"]]
+    missing_mandatory = [group for group in mandatory_groups if group_results[group]["score"] < 25]
+    weak_mandatory = [group for group in mandatory_groups if group not in missing_mandatory and group_results[group]["score"] < 60]
+    caps = []
+    risk_flags = []
+    recruiter_flags = []
+
+    def cap_at(limit, reason, flag=None, risk=None):
+        nonlocal final_score
+        if final_score > limit:
+            final_score = limit
+        caps.append({"cap": limit, "reason": reason})
+        if flag:
+            _append_unique(recruiter_flags, [flag])
+        if risk:
+            _append_unique(risk_flags, [risk])
+
+    if "cv_ocr_document_ai" in missing_mandatory:
+        cap_at(70, "Computer Vision/OCR/Document AI evidence is missing for this Applied ML JD.", "missing_cv_ocr_document_ai", "mandatory_group_gap")
+    if "llm_nlp_vlm_multimodal" in missing_mandatory:
+        cap_at(72, "LLM/NLP/VLM/Multimodal evidence is missing for this Applied ML JD.", "missing_llm_vlm", "mandatory_group_gap")
+    if "production_ml_mlops" in missing_mandatory:
+        cap_at(75, "Production ML/MLOps evidence is missing for this Applied ML JD.", "missing_production_ml", "mandatory_group_gap")
+    if len(strong_mandatory) <= 1:
+        cap_at(62, "Only one Applied ML mandatory group has strong evidence.", "applied_ml_mandatory_group_gap", "mandatory_group_gap")
+    elif weak_mandatory:
+        cap_at(78, "Two mandatory groups are strong but at least one Applied ML group needs validation.", "applied_ml_partial_group_gap", "mandatory_group_gap")
+
+    proven_groups = [
+        group for group, result in group_results.items()
+        if result["evidence_level"] in {"professional_strong", "professional_weak", "project_strong", "project_weak"}
+    ]
+    keyword_groups = [
+        group for group, result in group_results.items()
+        if result["evidence_level"] == "keyword_only"
+    ]
+    if keyword_groups and len(keyword_groups) >= max(1, len(proven_groups)):
+        cap_at(60, "Applied ML match is mostly keyword-only with weak work/project proof.", "skill_match_mostly_listed_only", "keyword_only_match")
+
+    generic_data_only = (
+        group_results["ml_dl_fundamentals"]["score"] < 45
+        and all(group_results[group]["score"] < 25 for group in mandatory_groups)
+        and re.search(r"\b(sql|excel|power\s*bi|tableau|dashboards?|reporting|a/b\s+testing|regression|statistics)\b", sections["all"], re.I)
+    )
+    if generic_data_only:
+        cap_at(45, "Generic analytics/data-science overlap without Applied ML core evidence.", "generic_data_profile", "role_relevance")
+    if group_results["ml_dl_fundamentals"]["score"] >= 60 and group_results["cv_ocr_document_ai"]["score"] < 25 and group_results["llm_nlp_vlm_multimodal"]["score"] < 25:
+        cap_at(55, "Pure ML evidence without OCR/CV/LLM depth cannot rank highly for this Applied ML JD.", "pure_ml_without_applied_depth", "mandatory_group_gap")
+    if experience_fit["fit"] == "under":
+        cap_at(70, "JD-related Applied ML experience is below the target range.", "under_experienced", "below_jd_experience_range")
+    elif experience_fit["fit"] == "over":
+        _append_unique(recruiter_flags, ["over_experienced"])
+        _append_unique(risk_flags, ["over_jd_experience_range"])
+
+    final_score = round(max(0, min(100, final_score)), 2)
+    mandatory_coverage = round((sum(group_results[group]["score"] for group in mandatory_groups) / 300) * 100, 2)
+    core_percent = round((sum(group["score"] for group in group_results.values()) / 400) * 100, 2)
+    confidence = round(min(100, 38 + core_percent * 0.25 + mandatory_coverage * 0.30 + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.18), 2)
+    rank_score = round(min(100, final_score + (3 if not risk_flags and confidence >= 70 else 0)), 2)
+
+    if final_score >= 80 and not missing_mandatory and len(strong_mandatory) == 3:
+        recommendation = "shortlisted"
+        label = "Strong Match"
+        _append_unique(recruiter_flags, ["strong_match"])
+    elif final_score >= 70 and len(strong_mandatory) >= 2 and not missing_mandatory:
+        recommendation = "shortlisted"
+        label = "Good Match"
+        _append_unique(recruiter_flags, ["good_match"])
+    elif final_score < 50:
+        recommendation = "rejected"
+        label = "Low Fit"
+    elif experience_fit["fit"] == "under":
+        recommendation = "in_review"
+        label = "Experience Gap"
+    elif experience_fit["fit"] == "over":
+        recommendation = "in_review"
+        label = "Overqualified Review"
+    else:
+        recommendation = "in_review"
+        label = "Partial Fit - Validate Core Skills" if missing_mandatory or weak_mandatory else "Review Required"
+
+    matched_groups = {group: result for group, result in group_results.items() if result["score"] >= 25}
+    matched_skills = normalize_skill_list([
+        term
+        for result in group_results.values()
+        for term in result.get("matched_terms") or []
+    ])
+    missing_skills = [group.replace("_", " ").title() for group in missing_mandatory + weak_mandatory]
+    ranking_reason = (
+        f"Rank score {rank_score}/100: Applied ML groups "
+        f"ML/DL {group_results['ml_dl_fundamentals']['score']}/100, "
+        f"CV/OCR/Document AI {group_results['cv_ocr_document_ai']['score']}/100, "
+        f"LLM/VLM {group_results['llm_nlp_vlm_multimodal']['score']}/100, "
+        f"Production ML {group_results['production_ml_mlops']['score']}/100, "
+        f"{experience_fit['relevant_years']:g}/{experience_fit['total_years']:g} relevant/total years."
+    )
+    if missing_mandatory:
+        ranking_reason += f" Missing mandatory groups: {', '.join(missing_mandatory)}."
+    if caps:
+        ranking_reason += " Caps applied: " + " ".join(item["reason"] for item in caps[:2])
+
+    result = {
+        "final_score": final_score,
+        "rank_score": rank_score,
+        "fit_band": "strong_match" if final_score >= 80 else "good_match" if final_score >= 70 else "review" if final_score >= 50 else "low_match",
+        "skill_score": round(weighted_groups, 2),
+        "experience_score": round(experience_fit["score"] * 0.05, 2),
+        "semantic_score": parsed.get("semantic_score", 0),
+        "semantic_weight": 0,
+        "role_similarity": parsed.get("role_similarity", 0),
+        "role_weight": round(_safe_float(parsed.get("role_relevance_score")) * 0.10, 2),
+        "education_score": 0,
+        "matched_skills": matched_skills,
+        "direct_matched_skills": matched_skills,
+        "transferable_skills": [],
+        "preferred_matched_skills": [],
+        "missing_skills": missing_skills,
+        "skill_evidence_depth": {group: data["evidence_level"] for group, data in group_results.items()},
+        "skill_evidence": group_results,
+        "matched_skill_evidence": [
+            {
+                "skill": group.replace("_", " ").title(),
+                "status": "matched" if data["score"] >= 25 else "missing",
+                "evidence_level": data["evidence_level"],
+                "source": data["source"],
+                "weight": round(data["score"] / 100, 2),
+                "matched_terms": data["matched_terms"],
+            }
+            for group, data in group_results.items()
+        ],
+        "missing_or_weak_skills": [
+            {
+                "skill": group.replace("_", " ").title(),
+                "status": "missing" if group in missing_mandatory else "weak",
+                "evidence_level": group_results[group]["evidence_level"],
+            }
+            for group in missing_mandatory + weak_mandatory
+        ],
+        "employer_name_only_skills": [],
+        "skill_match_percent": mandatory_coverage,
+        "mandatory_skill_coverage": mandatory_coverage,
+        "preferred_skill_coverage": 0,
+        "core_skill_match_percent": core_percent,
+        "matched_core_skill_groups": matched_groups,
+        "missing_core_skill_groups": missing_mandatory + weak_mandatory,
+        "confidence_score": confidence,
+        "seniority_level": parsed.get("seniority_level") or infer_seniority(parsed.get("designation"), experience_fit["relevant_years"]),
+        "target_seniority_level": jd_profile.get("seniority_level"),
+        "recommendation": recommendation,
+        "label": label,
+        "score_caps_applied": caps,
+        "recruiter_flags": recruiter_flags,
+        "risk_flags": risk_flags,
+        "ranking_reason": ranking_reason,
+        "experience_fit": experience_fit["label"],
+        "all_critical_requirements_met": not missing_mandatory and not weak_mandatory,
+        "jd_role_family": "applied_ml_engineer",
+        "jd_skill_groups": jd_profile.get("core_skill_groups") or {},
+        "evidence_group_scores": group_results,
+        "role_relevance_label": parsed.get("experience_relevance_label") or "",
+        "experience_fit_label": experience_fit["label"],
+        "scoring_breakdown": {
+            "applied_ml_group_scores": group_results,
+            "mandatory_group_status": {
+                "strong": strong_mandatory,
+                "weak": weak_mandatory,
+                "missing": missing_mandatory,
+            },
+            "experience_fit": experience_fit,
+            "score_caps_applied": caps,
+            "missing_core_skill_groups": missing_mandatory + weak_mandatory,
+        },
+        "candidate_screening_summary": {
+            "candidate_name": parsed.get("full_name") or "",
+            "current_title": parsed.get("designation") or parsed.get("current_title") or "",
+            "total_experience_years": experience_fit["total_years"],
+            "jd_relevant_experience_years": experience_fit["relevant_years"],
+            "final_score": final_score,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "label": label,
+            "matched_mandatory_groups": strong_mandatory,
+            "missing_mandatory_groups": missing_mandatory,
+            "risk_flags": risk_flags,
+        },
+    }
+    role_identity = _generic_role_identity(parsed, jd_profile, mandatory_coverage, _safe_float(parsed.get("role_relevance_score")), core_percent)
+    return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
+
+
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
+    if (jd_profile.get("role_family") or "").lower() == "applied_ml_engineer":
+        return _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
     if (jd_profile.get("role_family") or "").lower() == "software_frontend":
         result = _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
         role_identity = _generic_role_identity(

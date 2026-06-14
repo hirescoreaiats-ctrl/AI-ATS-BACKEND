@@ -35,6 +35,14 @@ INVALID_COMPANY_TOKENS = {
     "github", "frontend engineer with expertise", "summary labels", "csv",
     "api routes", "google share drive", "nodes", "relationships", "nodes and relationships",
     "documentation", "data integration",
+    "gpu", "cpu", "nltk", "tensorflow", "pytorch", "opencv", "aws", "azure", "gcp",
+    "google cloud", "flask", "fastapi", "pandas", "numpy", "scikit-learn", "scikit learn",
+    "langchain", "rag", "llm", "llms", "nlp", "docker", "kubernetes", "publications",
+    "publication", "github", "linkedin", "research", "part time", "part-time",
+    "london", "canada", "new york", "ahmedabad", "lahore", "pakistan", "atlanta",
+    "paris", "sydney", "chicago", "singapore", "sunnyvale", "flask azure and aws vms",
+    "senior machine learning", "computer vision", "deep learning", "r-cnn", "rcnn",
+    "yolo", "clip", "dino", "blip", "monai", "mri", "ct segmentation",
 }
 
 ROLE_ONLY_RE = re.compile(
@@ -72,6 +80,12 @@ def _valid_company_name(value):
         r"tools\s+and\s+best\s+practices|technologies|projects?|react\s+hook\s+form|"
         r"styled\s+components|style\s+modules|webpack|github|csv|api\s+routes?|"
         r"google\s+share\s+drive|nodes(?:\s+and\s+relationships)?|relationships|documentation|data\s+integration|"
+        r"gpu|cpu|nltk|tensorflow|pytorch|opencv|aws|azure|gcp|google\s+cloud|flask|fastapi|"
+        r"pandas|numpy|scikit[-\s]?learn|langchain|rag|llms?|nlp|docker|kubernetes|"
+        r"publications?|github|linkedin|research|part[-\s]?time|london|canada|new\s+york|"
+        r"ahmedabad|lahore|pakistan|atlanta|paris|sydney|chicago|singapore|sunnyvale|"
+        r"flask\s+azure\s+and\s+aws\s+vms|senior\s+machine\s+learning|computer\s+vision|"
+        r"deep\s+learning|r[-\s]?cnn|yolo|clip|dino|blip|monai|mri|ct\s+segmentation|"
         r"frontend|front[-\s]?end|backend|api\s+auth|database|"
         r"company\s+and\s+its\s+associated\s+businesses|functionality\s+and\s+improvements)",
         lowered,
@@ -132,6 +146,17 @@ def _valid_company_name(value):
         return False
     if re.search(r"\b(react|node\.?js|express\.?js|html|css|java|python|django|fastapi|api|seo|cms|frontend|backend)\b", lowered, re.I) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|systems|labs|studio|media|group|microsoft|amazon|infosys|capgemini)\b",
+        lowered,
+        re.I,
+    ):
+        return False
+    if re.search(
+        r"\b(gpu|cpu|nltk|tensorflow|pytorch|opencv|aws|azure|gcp|flask|fastapi|pandas|numpy|"
+        r"scikit[-\s]?learn|langchain|rag|llms?|nlp|docker|kubernetes|r[-\s]?cnn|yolo|clip|dino|blip|monai)\b",
+        lowered,
+        re.I,
+    ) and not re.search(
+        r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|systems|labs|studio|media|group|microsoft|amazon|infosys|capgemini|nvidia|apple|paypal|qualcomm|kpmg|deloitte)\b",
         lowered,
         re.I,
     ):
