@@ -19,7 +19,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlencode
 import requests
-from sqlalchemy import func
+from sqlalchemy import false, func
 from cryptography.fernet import Fernet, InvalidToken
 
 from backend.jd_engine import normalize_jd_skills
@@ -58,7 +58,7 @@ from backend.utils.sanitize import sanitize_text
 from backend.utils.upload_security import malware_scan
 
 router = APIRouter()
-LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "recruiter", "hiring_manager"))]
+LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))]
 logger = logging.getLogger(__name__)
 
 REQUIRED_GOOGLE_ASSESSMENT_SCOPES = {
@@ -66,6 +66,50 @@ REQUIRED_GOOGLE_ASSESSMENT_SCOPES = {
     "https://www.googleapis.com/auth/forms.body",
     "https://www.googleapis.com/auth/forms.responses.readonly",
 }
+
+GLOBAL_RECRUITER_ROLES = {"admin", "super_admin"}
+
+
+def _is_global_recruiter(user: User) -> bool:
+    return (getattr(user, "role", None) or "").strip().lower() in GLOBAL_RECRUITER_ROLES
+
+
+def _user_organization_id(user: User) -> str | None:
+    organization_id = getattr(user, "organization_id", None)
+    return str(organization_id).strip() if organization_id else None
+
+
+def _scope_jobs_query(query, user: User):
+    if _is_global_recruiter(user):
+        return query
+    organization_id = _user_organization_id(user)
+    if not organization_id:
+        return query.filter(false())
+    return query.filter(Job.organization_id == organization_id)
+
+
+def _scope_resume_job_query(query, user: User):
+    if _is_global_recruiter(user):
+        return query
+    organization_id = _user_organization_id(user)
+    if not organization_id:
+        return query.filter(false())
+    return query.filter(Job.organization_id == organization_id)
+
+
+def _job_visible_to_user(job: Job | None, user: User) -> bool:
+    if not job:
+        return False
+    if _is_global_recruiter(user):
+        return True
+    organization_id = _user_organization_id(user)
+    return bool(organization_id and job.organization_id == organization_id)
+
+
+def _require_job_visible(job: Job | None, user: User):
+    if not _job_visible_to_user(job, user):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 def _text_value(value) -> str:
@@ -1466,8 +1510,8 @@ async def parse_jd_file(file: UploadFile = File(...)):
 
 # ---------------- CREATE JOB ----------------
 
-@router.post("/create-job", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def create_job(job: JobCreate):
+@router.post("/create-job")
+def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
 
     db = SessionLocal()
 
@@ -1511,7 +1555,9 @@ def create_job(job: JobCreate):
             required_skills=",".join(enrichment.get("required_skills", [])),
             preferred_skills=",".join(enrichment.get("preferred_skills", [])),
             min_experience_years=enrichment.get("min_experience_years"),
-            education=edu
+            education=edu,
+            organization_id=_user_organization_id(user),
+            owner_user_id=user.id,
         )
 
         db.add(new_job)
@@ -2116,12 +2162,12 @@ def download_csv(job_id: str):
     )
 # ---------------- GET ALL JOBS (FOR ATS DASHBOARD) ----------------
 
-@router.get("/jobs", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_jobs():
+@router.get("/jobs")
+def get_jobs(user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
 
     db = SessionLocal()
     try:
-        jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+        jobs = _scope_jobs_query(db.query(Job), user).order_by(Job.created_at.desc()).all()
 
         result = []
 
@@ -2691,17 +2737,22 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
         db.close()
 
 
-@router.get("/analytics/applications-by-source", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def applications_by_source(job_id: str | None = Query(default=None)):
+@router.get("/analytics/applications-by-source")
+def applications_by_source(
+    job_id: str | None = Query(default=None),
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
 
     try:
         query = db.query(Resume.application_source, func.count(Resume.id)).filter(Resume.is_active == True)
         if job_id:
             job = resolve_job_identifier(job_id, db)
-            if not job:
-                raise HTTPException(status_code=404, detail="Job not found")
+            _require_job_visible(job, user)
             query = query.filter(Resume.job_id == job.id)
+        else:
+            query = query.join(Job, Resume.job_id == Job.id)
+            query = _scope_resume_job_query(query, user)
 
         counts = {source: 0 for source in [*TRACKED_APPLICATION_SOURCES, "unknown"]}
         for source, count in query.group_by(Resume.application_source).all():
@@ -2731,12 +2782,15 @@ def deactivate_job(job_id: str):
     db.close()
 
     return {"message": "Job deactivated"}
-@router.get("/top-candidate", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_top_candidate():
+@router.get("/top-candidate")
+def get_top_candidate(user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
 
     db = SessionLocal()
 
-    candidate = db.query(Resume)\
+    candidate = _scope_resume_job_query(
+        db.query(Resume).join(Job, Resume.job_id == Job.id),
+        user,
+    )\
         .filter(Resume.is_active == True)\
         .order_by(Resume.final_score.desc())\
         .first()
@@ -2983,14 +3037,16 @@ def activate_job(job_id: str):
     return {"status": "activated"}
 
 
-@router.get("/jobs/{job_identifier}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_job_detail(job_identifier: str):
+@router.get("/jobs/{job_identifier}")
+def get_job_detail(
+    job_identifier: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
 
     try:
         job = resolve_job_identifier(job_identifier, db)
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+        _require_job_visible(job, user)
 
         ensure_apply_slug(job, db)
         if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
@@ -3456,13 +3512,15 @@ def get_shortlisted(job_id: str, min_score: float | None = None):
         db.close()
 
 
-@router.get("/workflow-overview/{job_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def workflow_overview(job_id: str):
+@router.get("/workflow-overview/{job_id}")
+def workflow_overview(
+    job_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
-        if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+        _require_job_visible(job, user)
 
         candidates = db.query(Resume).filter(
             Resume.job_id == job_id,
@@ -3743,12 +3801,17 @@ def move_all_to_communication(job_id: str):
     return move_to_communication(job_id)
 
 
-@router.get("/communication", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_communication(job_id: str):
+@router.get("/communication")
+def get_communication(
+    job_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
 
     db = SessionLocal()
 
     try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
         candidates = db.query(Resume).filter(
             Resume.job_id == job_id,
             Resume.status == "Communication",   # 🔥 MAIN FILTER
@@ -3774,12 +3837,17 @@ def get_communication(job_id: str):
         db.close()
 
 
-@router.get("/communication-filter", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_communication_filter(job_id: str):
+@router.get("/communication-filter")
+def get_communication_filter(
+    job_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
 
     db = SessionLocal()
 
     try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
         candidates = db.query(Resume).filter(
             Resume.job_id == job_id,
             Resume.status == "Communication",
@@ -5434,8 +5502,11 @@ def sync_assessment_results(request: Request, data: dict = Body(...)):
         db.close()
 
 
-@router.post("/move-to-interview-scheduling", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def move_to_interview_scheduling(data: dict = Body(...)):
+@router.post("/move-to-interview-scheduling")
+def move_to_interview_scheduling(
+    data: dict = Body(...),
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     candidate_id = data.get("candidate_id")
     job_id = data.get("job_id")
 
@@ -5483,14 +5554,16 @@ def move_to_interview_scheduling(data: dict = Body(...)):
         db.close()
 
 
-@router.get("/interview-dashboard", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_interview_dashboard():
+@router.get("/interview-dashboard")
+def get_interview_dashboard(user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
     db = SessionLocal()
     try:
-        rows = db.query(Resume, Job).join(
+        query = db.query(Resume, Job).join(
             Job,
             Resume.job_id == Job.id,
-        ).filter(
+        )
+        query = _scope_resume_job_query(query, user)
+        rows = query.filter(
             Resume.is_active == True,
             Resume.stage == "interview_scheduling",
         ).order_by(Resume.created_at.desc()).all()
@@ -5535,8 +5608,11 @@ def get_interview_dashboard():
         db.close()
 
 
-@router.post("/schedule-interview-slot", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def schedule_interview_slot(data: dict = Body(...)):
+@router.post("/schedule-interview-slot")
+def schedule_interview_slot(
+    data: dict = Body(...),
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     candidate_id = data.get("candidate_id")
     job_id = data.get("job_id")
     meeting_url = (data.get("meeting_url") or "").strip()
@@ -5563,6 +5639,8 @@ def schedule_interview_slot(data: dict = Body(...)):
 
     db = SessionLocal()
     try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
         candidate = db.query(Resume).filter(
             Resume.id == candidate_id,
             Resume.job_id == job_id,
@@ -5618,8 +5696,11 @@ def schedule_interview_slot(data: dict = Body(...)):
         db.close()
 
 
-@router.post("/complete-interview-slot", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def complete_interview_slot(data: dict = Body(...)):
+@router.post("/complete-interview-slot")
+def complete_interview_slot(
+    data: dict = Body(...),
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     candidate_id = data.get("candidate_id")
     job_id = data.get("job_id")
     feedback = (data.get("feedback") or "").strip()
@@ -5631,6 +5712,8 @@ def complete_interview_slot(data: dict = Body(...)):
 
     db = SessionLocal()
     try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
         candidate = db.query(Resume).filter(
             Resume.id == candidate_id,
             Resume.job_id == job_id,
