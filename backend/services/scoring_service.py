@@ -2531,6 +2531,93 @@ PRODUCT_ARCHITECT_WRONG_ROLE_PATTERNS = {
     ),
 }
 
+M365_MIGRATION_GROUP_WEIGHTS = {
+    "m365_migration": 0.25,
+    "exchange_migration": 0.15,
+    "workload_migration": 0.15,
+    "tenant_identity": 0.15,
+    "tools_scripting": 0.15,
+    "seniority_delivery": 0.10,
+}
+
+M365_MIGRATION_GROUP_PATTERNS = {
+    "m365_migration": re.compile(
+        r"\b(microsoft\s+365\s+migration|m365\s+migration|office\s+365\s+migration|o365\s+migration|"
+        r"tenant[-\s]?to[-\s]?tenant\s+migration|cross[-\s]?tenant\s+migration|workload\s+migration|"
+        r"mailbox\s+migration|migration\s+batches|cutover|coexistence|migration\s+waves?)\b",
+        re.I,
+    ),
+    "exchange_migration": re.compile(
+        r"\b(exchange\s+online\s+migration|on[-\s]?prem(?:ises)?\s+exchange\s+migration|"
+        r"exchange\s+server\s+migration|hybrid\s+exchange|exchange\s+online|mailbox\s+migration|"
+        r"eac|exchange\s+powershell|mx\s+records|autodiscover|smtp\s+routing)\b",
+        re.I,
+    ),
+    "workload_migration": re.compile(
+        r"\b(teams\s+migration|sharepoint\s+migration|onedrive\s+migration|permissions\s+migration|"
+        r"site\s+migration|document\s+library\s+migration|teams\s+channels?|sharepoint\s+online)\b",
+        re.I,
+    ),
+    "tenant_identity": re.compile(
+        r"\b(tenant[-\s]?to[-\s]?tenant|cross[-\s]?tenant|source\s+tenant|target\s+tenant|domain\s+move|"
+        r"identity\s+mapping|entra\s+id|azure\s+ad|azure\s+active\s+directory|azure\s+ad\s+connect|"
+        r"identity\s+sync|conditional\s+access|mfa)\b",
+        re.I,
+    ),
+    "tools_scripting": re.compile(
+        r"\b(quest\s+odm|quest\s+on\s+demand\s+migration|powershell(?:\s+scripting)?|"
+        r"migrationwiz|bittitan|sharegate|avepoint|microsoft\s+graph|automation\s+scripts?)\b",
+        re.I,
+    ),
+    "seniority_delivery": re.compile(
+        r"\b(sme|consultant|lead|senior\s+engineer|enterprise\s+migration|migration\s+planning|"
+        r"cutover\s+support|hypercare|post[-\s]?migration\s+validation|rollback\s+plan|"
+        r"stakeholder\s+coordination|us\s+shift)\b",
+        re.I,
+    ),
+}
+
+M365_MIGRATION_PROOF_RE = re.compile(
+    r"\b(migration|migrate[sd]?|migrating|tenant[-\s]?to[-\s]?tenant|cross[-\s]?tenant|"
+    r"cutover|coexistence|migration\s+batches|quest\s+odm|migrationwiz|bittitan|"
+    r"sharegate|avepoint|post[-\s]?migration|hypercare)\b",
+    re.I,
+)
+
+M365_WRONG_ROLE_PATTERNS = {
+    "generic_support": re.compile(
+        r"\b(help\s*desk|service\s+desk|desktop\s+support|technical\s+support|it\s+support|"
+        r"ticket(?:ing)?|windows\s+troubleshooting|printer\s+support|hardware\s+support)\b",
+        re.I,
+    ),
+    "generic_admin_without_migration": re.compile(
+        r"\b(m365|microsoft\s+365|office\s+365|o365|exchange|teams|sharepoint)\s+"
+        r"(?:administrator|admin|support)\b|"
+        r"\b(users?|licenses?|mailboxes?|groups?|permissions?)\s+(?:management|administration|provisioning)\b",
+        re.I,
+    ),
+    "azure_only": re.compile(
+        r"\b(azure\s+(?:cloud|infrastructure|devops|engineer|administrator)|terraform|aks|vnet|"
+        r"virtual\s+machines?|landing\s+zones?|resource\s+groups?)\b",
+        re.I,
+    ),
+    "sharepoint_dev_only": re.compile(
+        r"\b(sharepoint\s+developer|spfx|power\s*apps?|power\s+automate|workflow\s+development|"
+        r"webparts?|canvas\s+apps?)\b",
+        re.I,
+    ),
+    "project_manager_only": re.compile(
+        r"\b(project\s+manager|delivery\s+manager|program\s+manager|scrum\s+master|pmo|"
+        r"resource\s+planning|status\s+reporting|project\s+governance)\b",
+        re.I,
+    ),
+    "iam_only": re.compile(
+        r"\b(iam\s+(?:engineer|analyst|administrator)|identity\s+governance|okta|sailpoint|"
+        r"access\s+reviews?)\b",
+        re.I,
+    ),
+}
+
 
 def _applied_ml_text_sections(parsed, resume_text):
     work = []
@@ -3149,11 +3236,354 @@ def _score_candidate_product_architect(parsed, jd_text, jd_skills, jd_data, resu
     return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
 
 
+def _m365_text_sections(parsed, resume_text):
+    work = []
+    projects = []
+    for job in parsed.get("experience") or []:
+        if isinstance(job, dict):
+            work.append(" ".join(str(job.get(key) or "") for key in ("role", "company_name", "description")))
+    for project in parsed.get("projects") or []:
+        if isinstance(project, dict):
+            projects.append(" ".join(str(value or "") for value in project.values()))
+        else:
+            projects.append(str(project or ""))
+    skills = " ".join(str(skill or "") for skill in parsed.get("key_skills") or [])
+    title = " ".join(str(parsed.get(key) or "") for key in ("designation", "current_title", "headline"))
+    return {
+        "work": "\n".join(work),
+        "projects": "\n".join(projects),
+        "skills": skills,
+        "title": title,
+        "all": "\n".join([resume_text or "", title, "\n".join(work), "\n".join(projects), skills]),
+    }
+
+
+def _m365_group_strength(group, sections):
+    pattern = M365_MIGRATION_GROUP_PATTERNS[group]
+    work_hits = sorted({match.group(0) for match in pattern.finditer(sections["work"])})
+    project_hits = sorted({match.group(0) for match in pattern.finditer(sections["projects"])})
+    skill_hits = sorted({match.group(0) for match in pattern.finditer(sections["skills"])})
+    all_hits = sorted({match.group(0) for match in pattern.finditer(sections["all"])})
+
+    if work_hits:
+        level = "professional_strong" if _strong_context(sections["work"]) else "professional_weak"
+        score = min(100, 50 + len(work_hits) * 10 + (10 if level == "professional_strong" else 0))
+        source = "work_experience"
+    elif project_hits:
+        level = "project_strong" if _strong_context(sections["projects"]) else "project_weak"
+        score = min(82, 36 + len(project_hits) * 9 + (10 if level == "project_strong" else 0))
+        source = "project"
+    elif skill_hits:
+        level = "keyword_only"
+        score = min(36, 14 + len(skill_hits) * 5)
+        source = "skills_section"
+    elif all_hits:
+        level = "keyword_only"
+        score = min(30, 12 + len(all_hits) * 4)
+        source = "resume_text"
+    else:
+        level = "missing"
+        score = 0
+        source = ""
+
+    return {
+        "group": group,
+        "score": round(score, 2),
+        "evidence_level": level,
+        "source": source,
+        "matched_terms": all_hits[:12],
+        "matched": all_hits[:12],
+        "strong": score >= 60 and level in {"professional_strong", "professional_weak", "project_strong"},
+        "missing": score <= 0,
+    }
+
+
+def _m365_experience_fit(parsed, jd_profile):
+    relevant = _safe_float(parsed.get("relevant_experience_years"))
+    total = _safe_float(parsed.get("total_experience_years"))
+    role_relevance = _safe_float(parsed.get("role_relevance_score"))
+    if relevant <= 0 and role_relevance >= 65:
+        relevant = min(total, 1.0) if total else 0.5
+    min_years = _safe_float(jd_profile.get("min_experience_years")) or 8.0
+    max_years = _safe_float(jd_profile.get("max_experience_years")) or 10.0
+    if relevant <= 0:
+        return {"score": 20, "label": "unproven", "relevant_years": relevant, "total_years": total, "fit": "under"}
+    if relevant < 5:
+        return {"score": 36, "label": "under_experienced", "relevant_years": relevant, "total_years": total, "fit": "under"}
+    if relevant < min_years:
+        return {"score": 70, "label": "slight_experience_gap", "relevant_years": relevant, "total_years": total, "fit": "slight_under"}
+    if relevant <= max_years:
+        return {"score": 100, "label": "ideal_8_10_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
+    if relevant <= max_years + 2:
+        return {"score": 82, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 58, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
+
+
+def _m365_wrong_role_flags(sections, group_results):
+    text = sections["all"]
+    flags = []
+    for name, pattern in M365_WRONG_ROLE_PATTERNS.items():
+        if pattern.search(text):
+            flags.append(name)
+
+    has_migration = group_results["m365_migration"]["score"] >= 25 and bool(M365_MIGRATION_PROOF_RE.search(sections["work"] + "\n" + sections["projects"]))
+    has_exchange = group_results["exchange_migration"]["score"] >= 25
+    has_workload = group_results["workload_migration"]["score"] >= 25
+    has_tools = group_results["tools_scripting"]["score"] >= 25
+
+    if "generic_admin_without_migration" in flags and has_migration:
+        flags.remove("generic_admin_without_migration")
+    if "azure_only" in flags and has_migration and (has_exchange or has_workload):
+        flags.remove("azure_only")
+    if "sharepoint_dev_only" in flags and has_migration and (has_workload or has_tools):
+        flags.remove("sharepoint_dev_only")
+    if "project_manager_only" in flags and has_migration and has_tools:
+        flags.remove("project_manager_only")
+    if "iam_only" in flags and has_migration and has_exchange:
+        flags.remove("iam_only")
+    return flags
+
+
+def _score_candidate_m365_migration(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
+    parsed = parsed or {}
+    sections = _m365_text_sections(parsed, resume_text)
+    group_results = {
+        group: _m365_group_strength(group, sections)
+        for group in M365_MIGRATION_GROUP_WEIGHTS
+    }
+    weighted_groups = sum(group_results[group]["score"] * weight for group, weight in M365_MIGRATION_GROUP_WEIGHTS.items())
+    experience_fit = _m365_experience_fit(parsed, jd_profile)
+    final_score = weighted_groups + experience_fit["score"] * 0.05
+
+    mandatory_groups = [
+        "m365_migration",
+        "exchange_migration",
+        "workload_migration",
+        "tenant_identity",
+        "tools_scripting",
+        "seniority_delivery",
+    ]
+    strong_mandatory = [group for group in mandatory_groups if group_results[group]["strong"]]
+    missing_mandatory = [group for group in mandatory_groups if group_results[group]["score"] < 25]
+    weak_mandatory = [group for group in mandatory_groups if group not in missing_mandatory and group_results[group]["score"] < 60]
+    caps = []
+    risk_flags = []
+    recruiter_flags = []
+
+    def cap_at(limit, reason, flag=None, risk=None):
+        nonlocal final_score
+        if final_score > limit:
+            final_score = limit
+        caps.append({"cap": limit, "reason": reason})
+        if flag:
+            _append_unique(recruiter_flags, [flag])
+        if risk:
+            _append_unique(risk_flags, [risk])
+
+    work_project_text = sections["work"] + "\n" + sections["projects"]
+    has_professional_migration = bool(M365_MIGRATION_PROOF_RE.search(work_project_text))
+    if "m365_migration" in missing_mandatory:
+        cap_at(62, "Microsoft 365 migration evidence is missing; generic M365 keywords are not enough.", "missing_m365_migration_evidence", "mandatory_group_gap")
+    if not has_professional_migration:
+        cap_at(60, "No work/project migration proof found (tenant migration, cutover, batches, coexistence, or migration tooling).", "missing_work_migration_proof", "keyword_only_match")
+    if "tenant_identity" in missing_mandatory:
+        cap_at(75, "Tenant/cross-tenant or Entra ID/Azure AD migration context is missing.", "missing_tenant_identity", "mandatory_group_gap")
+    if "exchange_migration" in missing_mandatory:
+        cap_at(78, "Exchange Online/on-prem Exchange migration evidence is missing.", "missing_exchange_migration", "mandatory_group_gap")
+    if "workload_migration" in missing_mandatory:
+        cap_at(80, "Teams, SharePoint, or OneDrive migration evidence is missing.", "missing_workload_migration", "mandatory_group_gap")
+    if "tools_scripting" in missing_mandatory:
+        cap_at(78, "Quest ODM/equivalent migration tooling or PowerShell scripting evidence is missing.", "missing_tools_scripting", "mandatory_group_gap")
+    if "seniority_delivery" in missing_mandatory:
+        cap_at(82, "SME/lead/consultant delivery ownership, cutover, validation, or hypercare evidence is missing.", "missing_sme_delivery", "seniority_delivery_gap")
+
+    wrong_role_flags = _m365_wrong_role_flags(sections, group_results)
+    for flag in wrong_role_flags:
+        if flag == "generic_support":
+            cap_at(42, "Helpdesk/desktop support is a wrong-role match for this M365 Migration SME JD.", flag, "wrong_role")
+        elif flag == "azure_only":
+            cap_at(58, "Azure infrastructure/cloud-only profile lacks hands-on Microsoft 365 migration proof.", flag, "wrong_role")
+        elif flag == "sharepoint_dev_only":
+            cap_at(55, "SharePoint development without migration ownership is capped.", flag, "wrong_role")
+        elif flag == "project_manager_only":
+            cap_at(48, "Project/delivery management without hands-on migration execution is capped.", flag, "wrong_role")
+        elif flag == "iam_only":
+            cap_at(55, "IAM-only evidence without M365 migration execution is capped.", flag, "wrong_role")
+        elif flag == "generic_admin_without_migration":
+            cap_at(65, "M365/Exchange/Teams admin evidence without migration execution cannot rank high.", flag, "wrong_role")
+
+    proven_groups = [
+        group for group, result in group_results.items()
+        if result["evidence_level"] in {"professional_strong", "professional_weak", "project_strong", "project_weak"}
+    ]
+    keyword_groups = [group for group, result in group_results.items() if result["evidence_level"] == "keyword_only"]
+    if keyword_groups and len(keyword_groups) >= max(1, len(proven_groups)):
+        cap_at(60, "M365 match is mostly keyword-only with weak work/project proof.", "skill_match_mostly_listed_only", "keyword_only_match")
+    if len(strong_mandatory) <= 2:
+        cap_at(70, "Fewer than three mandatory M365 migration groups have strong evidence.", "m365_migration_mandatory_group_gap", "mandatory_group_gap")
+    elif weak_mandatory:
+        cap_at(82, "Strong M365 migration fit but one or more groups need validation.", "m365_migration_partial_group_gap", "mandatory_group_gap")
+    if experience_fit["fit"] == "under":
+        cap_at(70, "JD-related M365 migration experience is below the 8-10 year target.", "under_experienced", "below_jd_experience_range")
+    elif experience_fit["fit"] == "over":
+        _append_unique(recruiter_flags, ["over_experienced"])
+        _append_unique(risk_flags, ["over_jd_experience_range"])
+
+    final_score = round(max(0, min(100, final_score)), 2)
+    mandatory_coverage = round((sum(group_results[group]["score"] for group in mandatory_groups) / 600) * 100, 2)
+    core_percent = round((sum(group["score"] for group in group_results.values()) / 600) * 100, 2)
+    confidence = round(min(
+        100,
+        38
+        + core_percent * 0.26
+        + mandatory_coverage * 0.30
+        + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.16,
+    ), 2)
+    rank_score = round(min(100, final_score + (3 if not risk_flags and confidence >= 70 else 0)), 2)
+
+    if final_score >= 82 and not missing_mandatory and len(strong_mandatory) >= 4 and not wrong_role_flags:
+        recommendation = "shortlisted"
+        label = "Strong Match"
+        _append_unique(recruiter_flags, ["strong_match"])
+    elif final_score >= 72 and len(strong_mandatory) >= 3 and not wrong_role_flags:
+        recommendation = "shortlisted"
+        label = "Good Match"
+        _append_unique(recruiter_flags, ["good_match"])
+    elif final_score < 50 or wrong_role_flags:
+        recommendation = "rejected"
+        label = "Low Fit"
+    elif experience_fit["fit"] == "under":
+        recommendation = "in_review"
+        label = "Experience Gap"
+    elif experience_fit["fit"] == "over":
+        recommendation = "in_review"
+        label = "Overqualified Review"
+    else:
+        recommendation = "in_review"
+        label = "Partial Fit - Validate Core Skills" if missing_mandatory or weak_mandatory else "Review Required"
+
+    matched_groups = {group: result for group, result in group_results.items() if result["score"] >= 25}
+    matched_skills = normalize_skill_list([
+        term
+        for result in group_results.values()
+        for term in result.get("matched_terms") or []
+    ])
+    missing_skills = [group.replace("_", " ").title() for group in missing_mandatory + weak_mandatory]
+    ranking_reason = (
+        f"Rank score {rank_score}/100: M365 Migration groups "
+        f"M365 Migration {group_results['m365_migration']['score']}/100, "
+        f"Exchange Migration {group_results['exchange_migration']['score']}/100, "
+        f"Workload Migration {group_results['workload_migration']['score']}/100, "
+        f"Tenant/Identity {group_results['tenant_identity']['score']}/100, "
+        f"Tools/Scripting {group_results['tools_scripting']['score']}/100, "
+        f"SME Delivery {group_results['seniority_delivery']['score']}/100, "
+        f"{experience_fit['relevant_years']:g}/{experience_fit['total_years']:g} relevant/total years."
+    )
+    if missing_mandatory:
+        ranking_reason += f" Missing mandatory groups: {', '.join(missing_mandatory)}."
+    if wrong_role_flags:
+        ranking_reason += f" Wrong-role flags: {', '.join(wrong_role_flags)}."
+    if caps:
+        ranking_reason += " Caps applied: " + " ".join(item["reason"] for item in caps[:2])
+
+    result = {
+        "final_score": final_score,
+        "rank_score": rank_score,
+        "fit_band": "strong_match" if final_score >= 82 else "good_match" if final_score >= 72 else "review" if final_score >= 50 else "low_match",
+        "skill_score": round(weighted_groups, 2),
+        "experience_score": round(experience_fit["score"] * 0.05, 2),
+        "semantic_score": parsed.get("semantic_score", 0),
+        "semantic_weight": 0,
+        "role_similarity": parsed.get("role_similarity", 0),
+        "role_weight": round(_safe_float(parsed.get("role_relevance_score")) * 0.10, 2),
+        "education_score": 0,
+        "matched_skills": matched_skills,
+        "direct_matched_skills": matched_skills,
+        "transferable_skills": [],
+        "preferred_matched_skills": [],
+        "missing_skills": missing_skills,
+        "skill_evidence_depth": {group: data["evidence_level"] for group, data in group_results.items()},
+        "skill_evidence": group_results,
+        "matched_skill_evidence": [
+            {
+                "skill": group.replace("_", " ").title(),
+                "status": "matched" if data["score"] >= 25 else "missing",
+                "evidence_level": data["evidence_level"],
+                "source": data["source"],
+                "weight": round(data["score"] / 100, 2),
+                "matched_terms": data["matched_terms"],
+            }
+            for group, data in group_results.items()
+        ],
+        "missing_or_weak_skills": [
+            {
+                "skill": group.replace("_", " ").title(),
+                "status": "missing" if group in missing_mandatory else "weak",
+                "evidence_level": group_results[group]["evidence_level"],
+            }
+            for group in missing_mandatory + weak_mandatory
+        ],
+        "employer_name_only_skills": [],
+        "skill_match_percent": mandatory_coverage,
+        "mandatory_skill_coverage": mandatory_coverage,
+        "preferred_skill_coverage": 0,
+        "core_skill_match_percent": core_percent,
+        "matched_core_skill_groups": matched_groups,
+        "missing_core_skill_groups": missing_mandatory + weak_mandatory,
+        "confidence_score": confidence,
+        "seniority_level": parsed.get("seniority_level") or infer_seniority(parsed.get("designation"), experience_fit["relevant_years"]),
+        "target_seniority_level": jd_profile.get("seniority_level"),
+        "recommendation": recommendation,
+        "label": label,
+        "score_caps_applied": caps,
+        "recruiter_flags": recruiter_flags,
+        "risk_flags": risk_flags,
+        "ranking_reason": ranking_reason,
+        "experience_fit": experience_fit["label"],
+        "all_critical_requirements_met": not missing_mandatory and not weak_mandatory and not wrong_role_flags,
+        "jd_role_family": "m365_migration_sme",
+        "jd_skill_groups": jd_profile.get("core_skill_groups") or {},
+        "evidence_group_scores": group_results,
+        "role_relevance_label": parsed.get("experience_relevance_label") or "",
+        "experience_fit_label": experience_fit["label"],
+        "scoring_breakdown": {
+            "m365_migration_group_scores": group_results,
+            "mandatory_group_status": {
+                "strong": strong_mandatory,
+                "weak": weak_mandatory,
+                "missing": missing_mandatory,
+            },
+            "wrong_role_flags": wrong_role_flags,
+            "experience_fit": experience_fit,
+            "score_caps_applied": caps,
+            "missing_core_skill_groups": missing_mandatory + weak_mandatory,
+        },
+        "candidate_screening_summary": {
+            "candidate_name": parsed.get("full_name") or "",
+            "current_title": parsed.get("designation") or parsed.get("current_title") or "",
+            "total_experience_years": experience_fit["total_years"],
+            "jd_relevant_experience_years": experience_fit["relevant_years"],
+            "final_score": final_score,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "label": label,
+            "matched_mandatory_groups": strong_mandatory,
+            "missing_mandatory_groups": missing_mandatory,
+            "wrong_role_flags": wrong_role_flags,
+            "risk_flags": risk_flags,
+        },
+    }
+    role_identity = _generic_role_identity(parsed, jd_profile, mandatory_coverage, _safe_float(parsed.get("role_relevance_score")), core_percent)
+    return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
+
+
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
     if (jd_profile.get("role_family") or "").lower() == "applied_ml_engineer":
         return _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
     if (jd_profile.get("role_family") or "").lower() == "product_software_architect":
         return _score_candidate_product_architect(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+    if (jd_profile.get("role_family") or "").lower() == "m365_migration_sme":
+        return _score_candidate_m365_migration(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
     if (jd_profile.get("role_family") or "").lower() == "software_frontend":
         result = _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
         role_identity = _generic_role_identity(

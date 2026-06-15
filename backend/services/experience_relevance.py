@@ -142,6 +142,14 @@ DIRECT_ROLE_PATTERNS = {
         r"\b(?:principal|staff)\s+(?:software\s+)?engineer\b|\btech\s+lead\b",
         re.I,
     ),
+    "m365_migration_sme": re.compile(
+        r"\b(?:(?:senior|lead)\s+)?(?:microsoft\s+365|m365|office\s+365|o365)\s+"
+        r"(?:migration\s+)?(?:sme|consultant|engineer|specialist|lead)\b|"
+        r"\btenant[-\s]?to[-\s]?tenant\s+migration\s+(?:specialist|consultant|engineer)\b|"
+        r"\bexchange\s+online\s+migration\s+(?:specialist|consultant|engineer)\b|"
+        r"\bcollaboration\s+migration\s+engineer\b",
+        re.I,
+    ),
     "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
     "dotnet_full_stack": re.compile(
         r"\b(?:(?:senior|sr\.?|lead|principal)\s+)?(?:\.net|dotnet|asp\.?\s*net|c#|software|full[-\s]?stack)\s+"
@@ -283,6 +291,54 @@ PRODUCT_ARCHITECT_CORE_GROUP_RE = {
     "technical_leadership": re.compile(
         r"\b(technical\s+leadership|tech\s+lead|code\s+reviews?|mentored|mentorship|"
         r"architecture\s+review|design\s+review|led\s+(?:team|engineers?)|guided)\b",
+        re.I,
+    ),
+}
+
+M365_MIGRATION_WORK_SIGNAL_RE = re.compile(
+    r"\b(microsoft\s+365\s+migration|m365\s+migration|office\s+365\s+migration|o365\s+migration|"
+    r"tenant[-\s]?to[-\s]?tenant\s+migration|cross[-\s]?tenant\s+migration|"
+    r"exchange\s+online\s+migration|on[-\s]?prem(?:ises)?\s+exchange\s+migration|"
+    r"exchange\s+server\s+migration|hybrid\s+exchange|teams\s+migration|sharepoint\s+migration|"
+    r"onedrive\s+migration|mailbox\s+migration|migration\s+batches|cutover|coexistence|"
+    r"post[-\s]?migration\s+validation|hypercare|entra\s+id|azure\s+ad|azure\s+ad\s+connect|"
+    r"quest\s+odm|quest\s+on\s+demand\s+migration|migrationwiz|bittitan|sharegate|avepoint|"
+    r"powershell(?:\s+scripting)?|dns\s+cutover|mx\s+records|autodiscover|smtp\s+routing)\b",
+    re.I,
+)
+
+M365_MIGRATION_CORE_GROUP_RE = {
+    "m365_migration": re.compile(
+        r"\b(microsoft\s+365\s+migration|m365\s+migration|office\s+365\s+migration|o365\s+migration|"
+        r"tenant[-\s]?to[-\s]?tenant\s+migration|cross[-\s]?tenant\s+migration|workload\s+migration|"
+        r"mailbox\s+migration|migration\s+batches|cutover|coexistence)\b",
+        re.I,
+    ),
+    "exchange_migration": re.compile(
+        r"\b(exchange\s+online\s+migration|on[-\s]?prem(?:ises)?\s+exchange\s+migration|"
+        r"exchange\s+server\s+migration|hybrid\s+exchange|exchange\s+online|mailbox\s+migration|"
+        r"mx\s+records|autodiscover|smtp\s+routing)\b",
+        re.I,
+    ),
+    "workload_migration": re.compile(
+        r"\b(teams\s+migration|sharepoint\s+migration|onedrive\s+migration|permissions\s+migration|"
+        r"site\s+migration|document\s+library\s+migration)\b",
+        re.I,
+    ),
+    "tenant_identity": re.compile(
+        r"\b(tenant[-\s]?to[-\s]?tenant|cross[-\s]?tenant|source\s+tenant|target\s+tenant|"
+        r"domain\s+move|identity\s+mapping|entra\s+id|azure\s+ad|azure\s+active\s+directory|"
+        r"azure\s+ad\s+connect|identity\s+sync)\b",
+        re.I,
+    ),
+    "tools_scripting": re.compile(
+        r"\b(quest\s+odm|quest\s+on\s+demand\s+migration|powershell(?:\s+scripting)?|"
+        r"migrationwiz|bittitan|sharegate|avepoint|microsoft\s+graph|automation\s+scripts?)\b",
+        re.I,
+    ),
+    "seniority_delivery": re.compile(
+        r"\b(sme|consultant|lead|senior\s+engineer|enterprise\s+migration|migration\s+planning|"
+        r"cutover\s+support|hypercare|post[-\s]?migration\s+validation|us\s+shift)\b",
         re.I,
     ),
 }
@@ -605,6 +661,22 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif len(product_architect_hits) >= 4:
                 role_title_score = max(role_title_score, 78)
 
+        m365_migration_hits = set()
+        m365_migration_group_hits = {}
+        if role_family == "m365_migration_sme":
+            m365_migration_hits = {match.group(0).lower() for match in M365_MIGRATION_WORK_SIGNAL_RE.finditer(block_text)}
+            m365_migration_group_hits = {
+                group: {match.group(0).lower() for match in pattern.finditer(block_text)}
+                for group, pattern in M365_MIGRATION_CORE_GROUP_RE.items()
+            }
+            m365_direct_role = bool(DIRECT_ROLE_PATTERNS["m365_migration_sme"].search(role))
+            if m365_direct_role and m365_migration_hits:
+                role_title_score = 100
+            elif m365_direct_role:
+                role_title_score = max(role_title_score, 74)
+            elif len(m365_migration_hits) >= 4:
+                role_title_score = max(role_title_score, 78)
+
         ba_evidence_hits = set()
         ba_direct_role = False
         ba_adjacent_role = False
@@ -646,6 +718,10 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             group_hit_count = sum(1 for hits in product_architect_group_hits.values() if hits)
             skill_evidence_score = max(skill_evidence_score, min(100, 40 + len(product_architect_hits) * 5))
             responsibility_match_score = max(responsibility_match_score, min(100, 34 + group_hit_count * 14 + len(product_architect_hits) * 2))
+        if role_family == "m365_migration_sme" and m365_migration_hits:
+            group_hit_count = sum(1 for hits in m365_migration_group_hits.values() if hits)
+            skill_evidence_score = max(skill_evidence_score, min(100, 38 + len(m365_migration_hits) * 6))
+            responsibility_match_score = max(responsibility_match_score, min(100, 34 + group_hit_count * 14 + len(m365_migration_hits) * 2))
 
         domain_hits = 0
         if domain_context and domain_context.lower() in block_lower:
@@ -665,6 +741,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             domain_hits += sum(1 for hits in applied_ml_group_hits.values() if hits)
         if role_family == "product_software_architect":
             domain_hits += sum(1 for hits in product_architect_group_hits.values() if hits)
+        if role_family == "m365_migration_sme":
+            domain_hits += sum(1 for hits in m365_migration_group_hits.values() if hits)
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_evidence_hits:

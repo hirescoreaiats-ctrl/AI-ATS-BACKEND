@@ -146,6 +146,59 @@ PRODUCT_ARCHITECT_CORE_GROUPS = {
     ],
 }
 
+M365_MIGRATION_RE = re.compile(
+    r"\b(?:microsoft\s+365|m365|office\s+365|o365|collaboration|exchange\s+online|"
+    r"tenant[-\s]?to[-\s]?tenant|cross[-\s]?tenant)\s+"
+    r"(?:migration\s+)?(?:sme|consultant|engineer|specialist|lead)\b|"
+    r"\b(?:microsoft\s+365|m365|office\s+365|o365)\s+migration\b|"
+    r"\btenant[-\s]?to[-\s]?tenant\s+migration\b|"
+    r"\bexchange\s+(?:online\s+)?migration\b",
+    re.I,
+)
+
+M365_MIGRATION_POSITIVE_RE = re.compile(
+    r"\b(microsoft\s+365\s+migration|m365\s+migration|office\s+365\s+migration|o365\s+migration|"
+    r"tenant[-\s]?to[-\s]?tenant\s+migration|cross[-\s]?tenant\s+migration|"
+    r"exchange\s+online\s+migration|on[-\s]?prem(?:ises)?\s+exchange\s+migration|"
+    r"exchange\s+server\s+migration|teams\s+migration|sharepoint\s+migration|"
+    r"onedrive\s+migration|workload\s+migration|mailbox\s+migration|migration\s+batches|"
+    r"cutover|coexistence|post[-\s]?migration\s+validation|hypercare|entra\s+id|"
+    r"azure\s+ad|quest\s+odm|quest\s+on\s+demand\s+migration|migrationwiz|bittitan|"
+    r"sharegate|avepoint|powershell(?:\s+scripting)?|dns\s+cutover|mx\s+records|"
+    r"autodiscover|smtp\s+routing)\b",
+    re.I,
+)
+
+M365_MIGRATION_CORE_GROUPS = {
+    "m365_migration": [
+        "Microsoft 365 Migration", "Office 365 Migration", "Tenant-to-Tenant Migration",
+        "Workload Migration", "Mailbox Migration", "Migration Batches", "Cutover", "Coexistence",
+    ],
+    "exchange_migration": [
+        "Exchange Online Migration", "On-Prem Exchange Migration", "Exchange Online",
+        "Exchange Server", "Hybrid Exchange", "Mailbox Migration", "MX Records",
+        "Autodiscover", "SMTP Routing",
+    ],
+    "workload_migration": [
+        "Teams Migration", "SharePoint Migration", "OneDrive Migration",
+        "Permissions Migration", "Site Migration", "Document Library Migration",
+    ],
+    "tenant_identity": [
+        "Tenant-to-Tenant Migration", "Cross-tenant Migration", "Source Tenant",
+        "Target Tenant", "Domain Move", "Identity Mapping", "Entra ID", "Azure AD",
+        "Azure AD Connect", "Identity Sync",
+    ],
+    "tools_scripting": [
+        "Quest ODM", "Quest On Demand Migration", "PowerShell Scripting",
+        "MigrationWiz", "BitTitan", "ShareGate", "AvePoint", "Microsoft Graph",
+    ],
+    "seniority_delivery": [
+        "SME", "Consultant", "Lead", "Senior Engineer", "Enterprise Migration",
+        "Migration Planning", "Cutover Support", "Hypercare", "Post-migration Validation",
+        "US Shift",
+    ],
+}
+
 
 def _is_applied_ml_hybrid(role_title="", jd_text="", skills=None):
     text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
@@ -161,6 +214,20 @@ def _is_product_software_architect(role_title="", jd_text="", skills=None):
     explicit_product_architect = bool(re.search(r"\barchitect\s*[-/]\s*product\s+engineering\b", text, re.I))
     wrong_domain = bool(re.search(r"\b(civil|construction|building|interior|landscape)\s+architect\b", text, re.I))
     return not wrong_domain and title_hit and (explicit_product_architect or len(positive_hits) >= 4)
+
+
+def _is_m365_migration_sme(role_title="", jd_text="", skills=None):
+    text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
+    title_hit = bool(M365_MIGRATION_RE.search(text))
+    positive_hits = {match.group(0).lower() for match in M365_MIGRATION_POSITIVE_RE.finditer(text)}
+    explicit_title = bool(re.search(r"\b(?:microsoft\s+365|m365|office\s+365|o365)\s+migration\s+sme\b", text, re.I))
+    generic_admin_only = bool(re.search(
+        r"\b(?:m365|microsoft\s+365|office\s+365|o365|exchange|teams|sharepoint)\s+"
+        r"(?:administrator|admin|support)\b",
+        text,
+        re.I,
+    )) and not re.search(r"\bmigration|migrate|tenant[-\s]?to[-\s]?tenant|cutover|coexistence|quest\s+odm\b", text, re.I)
+    return not generic_admin_only and (explicit_title or (title_hit and len(positive_hits) >= 3))
 
 
 def _apply_applied_ml_profile(must_have, nice_to_have, jd_text=""):
@@ -196,6 +263,23 @@ def _apply_product_architect_profile(must_have, nice_to_have, jd_text=""):
     ])
     nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
     return must, nice, dict(PRODUCT_ARCHITECT_CORE_GROUPS)
+
+
+def _apply_m365_migration_profile(must_have, nice_to_have, jd_text=""):
+    explicit = normalize_skill_list(must_have or known_skills_in_text(jd_text or ""))
+    grouped = [
+        skill
+        for options in M365_MIGRATION_CORE_GROUPS.values()
+        for skill in options
+    ]
+    must = normalize_skill_list(explicit + grouped)
+    nice = normalize_skill_list([
+        *(nice_to_have or []),
+        "MigrationWiz", "BitTitan", "ShareGate", "AvePoint", "Hybrid Exchange",
+        "Conditional Access", "MFA", "Compliance", "Retention", "Microsoft Graph",
+    ])
+    nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
+    return must, nice, dict(M365_MIGRATION_CORE_GROUPS)
 
 
 def _as_list(value):
@@ -566,13 +650,18 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
     applied_ml_hybrid = _is_applied_ml_hybrid(role_title, jd_text, must_have + nice_to_have)
     product_architect_profile = _is_product_software_architect(role_title, jd_text, must_have + nice_to_have)
+    m365_migration_profile = _is_m365_migration_sme(role_title, jd_text, must_have + nice_to_have)
     applied_ml_core_groups = {}
     product_architect_core_groups = {}
+    m365_migration_core_groups = {}
     if applied_ml_hybrid:
         role_family = "applied_ml_engineer"
         role_family_confidence = max(role_family_confidence, 92)
     if product_architect_profile:
         role_family = "product_software_architect"
+        role_family_confidence = max(role_family_confidence, 94)
+    if m365_migration_profile:
+        role_family = "m365_migration_sme"
         role_family_confidence = max(role_family_confidence, 94)
     if role_family == "business_analysis":
         role_family = "business_analyst"
@@ -603,6 +692,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         must_have, nice_to_have, applied_ml_core_groups = _apply_applied_ml_profile(must_have, nice_to_have, jd_text)
     if role_family == "product_software_architect":
         must_have, nice_to_have, product_architect_core_groups = _apply_product_architect_profile(must_have, nice_to_have, jd_text)
+    if role_family == "m365_migration_sme":
+        must_have, nice_to_have, m365_migration_core_groups = _apply_m365_migration_profile(must_have, nice_to_have, jd_text)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
@@ -613,6 +704,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         core_groups = applied_ml_core_groups
     if product_architect_core_groups:
         core_groups = product_architect_core_groups
+    if m365_migration_core_groups:
+        core_groups = m365_migration_core_groups
     core_groups = _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have)
     dynamic_role_label = ""
     if scoring_mode == "dynamic":
@@ -639,6 +732,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         profile_warnings.append("Hybrid Applied ML profile detected from CV/OCR/LLM/VLM/production ML requirements.")
     if product_architect_profile:
         profile_warnings.append("JD-first Product Software Architect profile detected from product engineering, architecture, backend, Docker, and leadership requirements.")
+    if m365_migration_profile:
+        profile_warnings.append("JD-first Microsoft 365 Migration SME profile detected; generic M365 admin/support/cloud keywords are not enough for high ranking.")
     profile_confidence = _profile_confidence(scoring_mode, role_family_confidence, must_have, core_groups)
     profile_hash = _stable_hash({
         "role_title": role_title,
@@ -660,29 +755,39 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "primary_role": (
             "Applied ML Engineer" if role_family == "applied_ml_engineer"
             else "Product Software Architect" if role_family == "product_software_architect"
+            else "Microsoft 365 Migration SME" if role_family == "m365_migration_sme"
             else role_title
         ),
         "secondary_roles": (
             ["Data Scientist"] if role_family == "applied_ml_engineer" and re.search(r"\bdata\s+scientist\b", family_text, re.I)
             else ["Software Architect", "Backend Architect", "Principal Engineer"] if role_family == "product_software_architect"
+            else [
+                "M365 Migration Consultant",
+                "Office 365 Migration Engineer",
+                "Exchange Online Migration Specialist",
+                "Tenant-to-Tenant Migration Specialist",
+                "Collaboration Migration Engineer",
+            ] if role_family == "m365_migration_sme"
             else []
         ),
         "role_group": (
             "AI / ML" if role_family == "applied_ml_engineer"
             else "Product Engineering / Software Architecture" if role_family == "product_software_architect"
+            else "Microsoft 365 / Collaboration Migration" if role_family == "m365_migration_sme"
             else ""
         ),
         "specialization": (
             ["Computer Vision", "OCR", "Document AI", "LLM/VLM", "Multimodal AI", "Production ML"] if role_family == "applied_ml_engineer"
             else ["System Design", "Backend Architecture", "Product Engineering", "Hands-on Coding", "Technical Leadership"] if role_family == "product_software_architect"
+            else ["Tenant-to-Tenant Migration", "Exchange Migration", "Teams/SharePoint/OneDrive Migration", "Quest ODM", "PowerShell"] if role_family == "m365_migration_sme"
             else []
         ),
         "role_family_confidence": role_family_confidence,
         "scoring_mode": scoring_mode,
         "dynamic_profile_used": scoring_mode == "dynamic",
         "known_template_used": scoring_mode == "known_template",
-        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid or product_architect_profile,
-        "hybrid_role_detected": bool(applied_ml_hybrid or product_architect_profile or scoring_mode == "hybrid"),
+        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid or product_architect_profile or m365_migration_profile,
+        "hybrid_role_detected": bool(applied_ml_hybrid or product_architect_profile or m365_migration_profile or scoring_mode == "hybrid"),
         "profile_confidence": profile_confidence,
         "seniority_level": seniority,
         "min_experience_years": min_years,
@@ -703,24 +808,46 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "title_signals": _title_signals(role_title, role_family),
         "adjacent_title_signals": [],
         "negative_title_signals": [],
-        "domain_context": "product software architecture" if role_family == "product_software_architect" else (role_family if role_family != "other" else ""),
+        "domain_context": (
+            "product software architecture" if role_family == "product_software_architect"
+            else "microsoft 365 migration" if role_family == "m365_migration_sme"
+            else (role_family if role_family != "other" else "")
+        ),
         "hard_requirements": hard,
         "soft_requirements": soft,
         "positive_signals": [
             "System Design", "Software Architecture", "Backend Architecture",
             "Node.js or Python", "Docker", "Product/startup ownership",
             "Technical leadership",
-        ] if role_family == "product_software_architect" else [],
+        ] if role_family == "product_software_architect" else [
+            "Tenant-to-tenant Microsoft 365 migration",
+            "Exchange Online or on-prem Exchange migration",
+            "Teams, SharePoint, and OneDrive migration",
+            "Quest ODM or equivalent migration tooling",
+            "PowerShell scripting and cutover validation",
+        ] if role_family == "m365_migration_sme" else [],
         "negative_signals": [
             "Civil/construction architect", "Cloud-only architect without coding",
             "Enterprise architect without hands-on product engineering",
             "Project/Delivery/Scrum manager", "Generic senior engineer without architecture ownership",
-        ] if role_family == "product_software_architect" else [],
+        ] if role_family == "product_software_architect" else [
+            "Generic IT support/helpdesk",
+            "M365 admin-only users/licenses/mailbox support",
+            "Azure infrastructure/cloud-only engineer",
+            "SharePoint developer without migration",
+            "Project/delivery manager without hands-on migration",
+        ] if role_family == "m365_migration_sme" else [],
         "do_not_mix_with": [
             "Civil Architect", "Construction Architect", "Cloud-only Architect",
             "Enterprise Architect without coding", "Project Manager",
             "Delivery Manager", "Scrum Master", "Pure DevOps Engineer",
-        ] if role_family == "product_software_architect" else [],
+        ] if role_family == "product_software_architect" else [
+            "Helpdesk Support", "Desktop Support", "Generic System Administrator",
+            "Azure Cloud Engineer without M365 migration", "M365 Administrator only",
+            "SharePoint Developer without migration", "Teams Administrator only",
+            "Exchange Administrator without migration", "IAM-only Engineer",
+            "Project Manager without hands-on migration",
+        ] if role_family == "m365_migration_sme" else [],
         "scoring_weights": (
             {
                 "ml_dl_fundamentals": 20,
@@ -735,7 +862,15 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
                 "technical_leadership": 15,
                 "devops_delivery": 5,
                 "experience_fit": 5,
-            } if role_family == "product_software_architect" else {}
+            } if role_family == "product_software_architect" else {
+                "m365_migration": 25,
+                "exchange_migration": 15,
+                "workload_migration": 15,
+                "tenant_identity": 15,
+                "tools_scripting": 15,
+                "seniority_delivery": 10,
+                "data_quality": 5,
+            } if role_family == "m365_migration_sme" else {}
         ),
         "score_caps": {},
         "score_boosts": {},
