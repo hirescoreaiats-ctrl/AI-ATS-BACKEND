@@ -2651,6 +2651,7 @@ AML_TM_GROUP_PATTERNS = {
         r"\b(aml\s+investigations?|case\s+investigation|financial\s+crime\s+investigation|"
         r"money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
         r"suspicious\s+(?:activity|transaction)\s+review|investigated\s+(?:accounts?|transactions?)|"
+        r"investigat(?:e|ed|ing)\s+suspicious\s+(?:fraudulent\s+)?(?:behavior|activity|transactions?)|"
         r"high[-\s]?risk\s+account\s+investigation|detection\s+to\s+resolution|"
         r"evaluated\s+cases?\s+for\s+(?:closure|escalation)|case\s+(?:closure|escalation)|"
         r"further\s+investigation|investigation\s+unit|complex\s+aml\s+investigations?|"
@@ -2660,7 +2661,8 @@ AML_TM_GROUP_PATTERNS = {
     "case_management": re.compile(
         r"\b(case\s+(?:management|handling|review|disposition|closure|narrative|documentation)|"
         r"managed\s+investigations?\s+from\s+detection\s+to\s+resolution|alert\s+closure|investigation\s+workflow|"
-        r"evaluated\s+cases?|documented\s+findings?|detailed\s+(?:reports?|case\s+narratives?)|"
+        r"evaluated\s+cases?|document(?:ed|ing)?\s+findings?|document\s+research\s+and\s+information|"
+        r"detailed\s+(?:reports?|case\s+narratives?)|"
         r"prepared\s+detailed\s+suspicious\s+activity\s+reports?|verify\s+documentation|verified\s+documentation|"
         r"documentation\s+and\s+licensing|reporting\s+accuracy|investigation\s+time|"
         r"case\s+notes?|investigation\s+documentation|thorough\s+documentation|reports?\s+and\s+presentations|"
@@ -2670,8 +2672,9 @@ AML_TM_GROUP_PATTERNS = {
         re.I,
     ),
     "sar_str": re.compile(
-        r"\b(sars?|strs?|suspicious\s+activity\s+reports?|suspicious\s+activity\s+reporting(?:\s+standards?)?|"
+        r"\b(uars?|sars?|strs?|suspicious\s+activity\s+reports?|suspicious\s+activity\s+reporting(?:\s+standards?)?|"
         r"suspicious\s+transaction\s+reports?|suspicious\s+transaction\s+reporting|"
+        r"report(?:ed|ing)?\s+suspicious\s+activit(?:y|ies)|"
         r"sar\s+(?:filing|reporting|documentation|submissions?|process)|str\s+(?:filing|reporting|documentation|submissions?|process)|"
         r"fiu\s+reporting|financial\s+intelligence\s+unit|fincen\s+compliance|"
         r"prepared\s+(?:data\s+for\s+)?suspicious\s+activity\s+report\s+submissions?|"
@@ -2679,7 +2682,7 @@ AML_TM_GROUP_PATTERNS = {
         re.I,
     ),
     "banking_exposure": re.compile(
-        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi|"
+        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|banks?|financial\s+institution|bfsi|"
         r"financial\s+services|bank\s+accounts?|credit\s+card\s+transactions?|global\s+banking\s+and\s+markets|"
         r"department\s+of\s+banking|money\s+service\s+business(?:es)?|msbs?|financial\s+transactions?|"
         r"bank\s+secrecy\s+act|bsa)\b",
@@ -2715,6 +2718,41 @@ AML_TM_GENERIC_BANKING_RE = re.compile(
 )
 
 AML_TM_FRAUD_RE = re.compile(r"\b(fraud\s+(?:analyst|investigator|investigation)|fraud\s+alerts?|fraud\s+monitoring)\b", re.I)
+
+AML_TM_TOOL_RE = re.compile(
+    r"\b(actimize|global\s+radar|aci\s+worldwide|fico(?:[-\s]?based)?\s+monitoring\s+systems?|"
+    r"verafin|oracle\s+financial\s+services|sas|palantir|aml\s+software|monitoring\s+software)\b",
+    re.I,
+)
+
+AML_TM_FCRM_EVIDENCE_RE = re.compile(
+    r"\b(sars?|strs?|suspicious\s+activity\s+reports?|suspicious\s+activity\s+reporting|"
+    r"suspicious\s+transaction\s+reports?|suspicious\s+transaction\s+reporting|bsa\s*/?\s*aml|"
+    r"bank\s+secrecy\s+act|aml\s+investigations?|transaction\s+monitoring|tm\s+alerts?|"
+    r"transaction\s+alerts?|monitor\s+suspicious\s+account\s+activity|suspicious\s+account\s+activity|"
+    r"suspicious\s+(?:activity|transaction|transfer)s?|financial\s+crime\s+(?:analyst|investigator|activity)|"
+    r"anti[-\s]?money\s+laundering\s+(?:analyst|division)|aml\s+(?:analyst|division|alerts?))\b",
+    re.I,
+)
+
+AML_TM_SYNTHETIC_PROFILE_RE = re.compile(
+    r"\b(ai\s+digital\s+worker|digital\s+worker|ai\s+worker|as\s+an\s+ai\b|"
+    r"trained\s+to\s+complete\s+transaction\s+monitoring|system\s+integrations\s+responsibilities|"
+    r"no\s+human\s+employment\s+history)\b",
+    re.I,
+)
+
+AML_TM_JD_UPLOAD_MARKER_RE = re.compile(
+    r"\b(job\s*description|job\s+title|purpose\s+of\s+role|primary\s+responsibilities(?:\s+of\s+role)?|"
+    r"person\s+specification|department|direct\s+reports|budget\s+responsibility|certified\s+person)\b",
+    re.I,
+)
+
+AML_TM_RESUME_IDENTITY_RE = re.compile(
+    r"\b(work\s+experience|professional\s+experience|employment\s+history|education|skills|"
+    r"resume|curriculum\s+vitae|linkedin|email|phone)\b",
+    re.I,
+)
 
 AML_TM_WRONG_ROLE_PATTERNS = {
     "data_analyst_only": re.compile(r"\b(data\s+analyst|sql|power\s*bi|tableau|dashboard|dashboards?|business\s+intelligence)\b", re.I),
@@ -3802,13 +3840,36 @@ def _aml_wrong_role_flags(sections, group_results):
     return flags
 
 
+def _aml_jd_uploaded_as_resume(parsed, sections):
+    text = re.sub(r"[\u200b-\u200f\ufeff]", "", sections.get("all") or "")
+    head = text[:2500]
+    jd_markers = {match.group(0).lower() for match in AML_TM_JD_UPLOAD_MARKER_RE.finditer(head)}
+    if len(jd_markers) < 3:
+        return False
+
+    full_name = str((parsed or {}).get("full_name") or "").strip().lower()
+    has_candidate_name = bool(full_name and full_name not in {"candidate", "unnamed candidate", "unknown"})
+    experience = [
+        job for job in (parsed or {}).get("experience") or []
+        if isinstance(job, dict) and (job.get("role") or job.get("company_name") or job.get("duration_years"))
+    ]
+    has_resume_identity = bool(AML_TM_RESUME_IDENTITY_RE.search(head))
+    has_work_history = bool(experience) or bool(re.search(r"\b\d{4}\s*(?:-|to)\s*(?:present|current|\d{4})\b", text, re.I))
+
+    return not (has_candidate_name and has_work_history and has_resume_identity)
+
+
 def _aml_recruiter_recommendation(final_score, recommendation, risk_flags, experience_fit):
-    if recommendation == "rejected" or final_score < 60:
+    if "synthetic_or_non_human_profile" in risk_flags or "invalid_document_or_jd_uploaded" in risk_flags:
         return "Reject for this role"
     if "kyc_only_profile" in risk_flags or "generic_banking_only" in risk_flags:
         return "Hold"
     if experience_fit["fit"] in {"under", "over"}:
         return "Review manually"
+    if recommendation == "rejected" or final_score < 50:
+        return "Reject for this role"
+    if final_score < 60:
+        return "Hold"
     if final_score >= 90:
         return "Strong shortlist"
     if final_score >= 80:
@@ -3855,9 +3916,14 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
     has_kyc = bool(AML_TM_KYC_RE.search(sections["all"]))
     has_generic_banking = bool(AML_TM_GENERIC_BANKING_RE.search(sections["all"]))
     has_fraud = bool(AML_TM_FRAUD_RE.search(sections["all"]))
+    has_aml_tools = bool(AML_TM_TOOL_RE.search(sections["all"]))
+    has_fcrm_evidence = bool(AML_TM_FCRM_EVIDENCE_RE.search(sections["all"]))
+    has_aml_or_fcrm_evidence = has_tm or has_investigation or has_sar_str or has_fcrm_evidence
+    synthetic_profile = bool(AML_TM_SYNTHETIC_PROFILE_RE.search(sections["all"]))
+    invalid_jd_upload = _aml_jd_uploaded_as_resume(parsed, sections)
 
     if not has_tm:
-        cap_at(72, "AML Transaction Monitoring evidence is missing.", "missing_aml_transaction_monitoring", "missing_aml_transaction_monitoring")
+        cap_at(65, "AML Transaction Monitoring evidence is missing.", "missing_aml_transaction_monitoring", "missing_aml_transaction_monitoring")
     if not has_investigation:
         cap_at(72, "AML investigation or suspicious activity investigation evidence is missing.", "missing_aml_investigation", "missing_aml_investigation")
     if not has_sar_str:
@@ -3867,9 +3933,14 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
     if not has_banking:
         cap_at(84, "Retail, commercial, correspondent banking, or financial institution exposure is missing.", "no_banking_environment_evidence", "no_banking_environment_evidence")
 
-    if has_kyc and not has_tm:
+    if invalid_jd_upload:
+        cap_at(18, "Document appears to be a job description rather than a candidate resume.", "invalid_document_or_jd_uploaded", "invalid_document_or_jd_uploaded")
+    if synthetic_profile:
+        cap_at(45, "Document describes an AI/digital worker rather than a human employment profile.", "synthetic_or_non_human_profile", "synthetic_or_non_human_profile")
+
+    if has_kyc and not has_aml_or_fcrm_evidence:
         cap_at(65, "KYC/CDD/EDD evidence without AML Transaction Monitoring or AML investigation is KYC-only for this JD.", "kyc_only_profile", "kyc_only_profile")
-    if has_generic_banking and not has_tm and not has_investigation:
+    if has_generic_banking and not has_aml_or_fcrm_evidence:
         cap_at(60, "Generic banking operations without AML investigation cannot rank high for this L2 investigator JD.", "generic_banking_only", "generic_banking_only")
     if has_fraud and not has_tm:
         cap_at(70, "Fraud investigation is only a partial match without AML Transaction Monitoring evidence.", "fraud_only_partial_match", "partial_fraud_match")
@@ -3904,6 +3975,45 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         _append_unique(recruiter_flags, ["fraud_only_partial_match"])
         _append_unique(risk_flags, ["partial_fraud_match"])
 
+    disqualifying_profile = bool(
+        synthetic_profile
+        or invalid_jd_upload
+        or wrong_role_flags
+        or "kyc_only_profile" in risk_flags
+        or "generic_banking_only" in risk_flags
+    )
+    financial_crime_tool_profile = (
+        not disqualifying_profile
+        and group_results["role_fit"]["score"] >= 60
+        and group_results["transaction_monitoring"]["score"] >= 60
+        and has_aml_tools
+        and has_banking
+        and has_aml_or_fcrm_evidence
+        and experience_fit["relevant_years"] >= 4.5
+    )
+    if financial_crime_tool_profile and final_score < 70:
+        final_score = 70
+        _append_unique(recruiter_flags, ["aml_fcrm_tool_profile"])
+    if financial_crime_tool_profile and not has_sar_str and final_score > 78:
+        final_score = 78
+        caps.append({"cap": 78, "reason": "Financial crime tool profile is strong, but SAR/STR process evidence still needs verification."})
+        _append_unique(recruiter_flags, ["aml_fcrm_tool_profile"])
+
+    short_aml_banking_profile = (
+        not disqualifying_profile
+        and 0 < experience_fit["relevant_years"] < 3.0
+        and group_results["role_fit"]["score"] >= 60
+        and has_tm
+        and has_banking
+        and (has_kyc or has_fcrm_evidence)
+    )
+    if short_aml_banking_profile:
+        if final_score < 42:
+            final_score = 42
+        if final_score > 55:
+            final_score = 55
+        _append_unique(recruiter_flags, ["short_aml_banking_profile"])
+
     final_score = round(max(0, min(100, final_score)), 2)
     mandatory_coverage = round((sum(group_results[group]["score"] for group in mandatory_groups) / 400) * 100, 2)
     core_percent = round((sum(group["score"] for group in group_results.values()) / 700) * 100, 2)
@@ -3916,7 +4026,10 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
     ), 2)
     rank_score = round(min(100, final_score + (3 if not risk_flags and confidence >= 70 else 0)), 2)
 
-    if final_score >= 85 and has_tm and has_investigation and has_sar_str and has_case and experience_fit["fit"] == "within":
+    if synthetic_profile or invalid_jd_upload:
+        recommendation = "rejected"
+        label = "Invalid Profile" if invalid_jd_upload else "Synthetic Profile"
+    elif final_score >= 85 and has_tm and has_investigation and has_sar_str and has_case and experience_fit["fit"] == "within":
         recommendation = "shortlisted"
         label = "Strong Match"
         _append_unique(recruiter_flags, ["strong_match"])
@@ -3959,6 +4072,10 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         ranking_reason += f" Missing mandatory groups: {', '.join(missing_mandatory)}."
     if wrong_role_flags:
         ranking_reason += f" Wrong-role flags: {', '.join(wrong_role_flags)}."
+    if invalid_jd_upload:
+        ranking_reason += " Document appears to be a JD uploaded as a resume."
+    if synthetic_profile:
+        ranking_reason += " Document appears to describe an AI/digital worker profile."
     if caps:
         ranking_reason += " Caps applied: " + " ".join(item["reason"] for item in caps[:2])
 
@@ -3972,6 +4089,8 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         "over_experienced_for_l2": "over_experienced_for_l2" in risk_flags,
         "no_case_management_evidence": "no_case_management_evidence" in risk_flags,
         "no_banking_environment_evidence": "no_banking_environment_evidence" in risk_flags,
+        "synthetic_or_non_human_profile": "synthetic_or_non_human_profile" in risk_flags,
+        "invalid_document_or_jd_uploaded": "invalid_document_or_jd_uploaded" in risk_flags,
     }
 
     result = {

@@ -57,6 +57,10 @@ def generate_recruiter_explanation(parsed, jd_data, score_data):
             concerns.append("Candidate appears above the target 5-7 years and should be reviewed for level fit.")
         if "no_case_management_evidence" in flags:
             concerns.append("No clear case management or case narrative documentation evidence was found.")
+        if "synthetic_or_non_human_profile" in flags:
+            concerns.append("Document appears to describe an AI/digital worker rather than a human candidate resume.")
+        if "invalid_document_or_jd_uploaded" in flags:
+            concerns.append("Document appears to be a job description uploaded as a resume.")
 
         return {
             "summary": (
