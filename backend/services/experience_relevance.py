@@ -154,8 +154,11 @@ DIRECT_ROLE_PATTERNS = {
         r"\b(?:aml\s+transaction\s+monitoring|transaction\s+monitoring)\s+"
         r"(?:investigator|analyst|specialist|officer|l2)\b|"
         r"\baml\s+(?:case\s+)?investigator\b|"
+        r"\b(?:assist\.?\s+|assistant\s+)?aml\s+analyst(?:\s+ii|\s+i{1,3})?\b|"
+        r"\banti[-\s]?money\s+laundering\s+analyst\b|"
         r"\baml\s+investigations?\s+(?:analyst|investigator|specialist)\b|"
-        r"\bfinancial\s+crime\s+investigator\b|"
+        r"\bfinancial\s+crime\s+(?:analyst|investigator)\b|"
+        r"\bfinancial\s+crimes\s+specialist\b|"
         r"\bsenior\s+aml\s+analyst\b",
         re.I,
     ),
@@ -354,11 +357,15 @@ M365_MIGRATION_CORE_GROUP_RE = {
 
 AML_TM_WORK_SIGNAL_RE = re.compile(
     r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
-    r"escalated\s+alerts?|alert\s+investigation|monitoring\s+alerts?|transaction\s+review|"
+    r"escalated\s+alerts?|alert\s+investigation|monitoring\s+alerts?|transaction\s+review|transaction\s+alerts?|"
+    r"monitoring\s+systems?|exception\s+reports?|suspicious\s+transactions?|suspicious\s+transfers?|"
+    r"flagged\s+(?:clients?|transactions?)|high[-\s]?risk\s+(?:accounts?|transactions?)|verafin|actimize|global\s+radar|"
+    r"aci\s+worldwide|fico(?:[-\s]?based)?\s+monitoring\s+systems?|aml\s+software|"
     r"suspicious\s+transaction\s+monitoring|aml\s+investigations?|case\s+(?:investigation|management|handling|review|disposition|closure|narrative)|"
     r"financial\s+crime\s+investigation|money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
-    r"sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|regulatory\s+reporting|"
-    r"retail\s+banking|commercial\s+banking|correspondent\s+banking|source\s+of\s+funds|adverse\s+media|"
+    r"sars?|strs?|suspicious\s+activity\s+reports?|suspicious\s+activity\s+reporting|suspicious\s+transaction\s+reports?|"
+    r"fiu\s+reporting|financial\s+intelligence\s+unit|fincen\s+compliance|regulatory\s+reporting|"
+    r"retail\s+banking|commercial\s+banking|correspondent\s+banking|financial\s+services|source\s+of\s+funds|adverse\s+media|"
     r"smurfing|layering|structuring)\b",
     re.I,
 )
@@ -366,25 +373,38 @@ AML_TM_WORK_SIGNAL_RE = re.compile(
 AML_TM_CORE_GROUP_RE = {
     "transaction_monitoring": re.compile(
         r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
-        r"monitoring\s+alerts?|alert\s+investigation|transaction\s+review|suspicious\s+transaction\s+monitoring)\b",
+        r"monitoring\s+alerts?|alert\s+investigation|transaction\s+review|transaction\s+alerts?|monitoring\s+systems?|"
+        r"exception\s+reports?|suspicious\s+transactions?|suspicious\s+transfers?|flagged\s+(?:clients?|transactions?)|"
+        r"high[-\s]?risk\s+(?:accounts?|transactions?)|verafin|actimize|global\s+radar|aci\s+worldwide|"
+        r"fico(?:[-\s]?based)?\s+monitoring\s+systems?|aml\s+software|suspicious\s+transaction\s+monitoring)\b",
         re.I,
     ),
     "aml_investigations": re.compile(
         r"\b(aml\s+investigations?|case\s+investigation|financial\s+crime\s+investigation|"
-        r"money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|escalated\s+alerts?)\b",
+        r"money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|escalated\s+alerts?|"
+        r"investigated\s+(?:accounts?|transactions?)|further\s+investigation|investigation\s+unit|"
+        r"detection\s+to\s+resolution|case\s+(?:closure|escalation))\b",
         re.I,
     ),
     "case_management": re.compile(
-        r"\b(case\s+(?:management|handling|review|disposition|closure|narrative)|alert\s+closure|investigation\s+workflow)\b",
+        r"\b(case\s+(?:management|handling|review|disposition|closure|narrative|documentation)|alert\s+closure|"
+        r"investigation\s+workflow|managed\s+investigations?\s+from\s+detection\s+to\s+resolution|"
+        r"documented\s+findings?|detailed\s+reports?|case\s+notes?|thorough\s+documentation|reports?\s+and\s+presentations|"
+        r"summari[sz]ed\s+findings?|escalation\s+rationale)\b",
         re.I,
     ),
     "sar_str": re.compile(
-        r"\b(sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|"
-        r"sar\s+filing|str\s+filing|sar\s+documentation|str\s+documentation|regulatory\s+reporting)\b",
+        r"\b(sars?|strs?|suspicious\s+activity\s+reports?|suspicious\s+activity\s+reporting(?:\s+standards?)?|"
+        r"suspicious\s+transaction\s+reports?|suspicious\s+transaction\s+reporting|sar\s+(?:filing|reporting|documentation|submissions?|process)|"
+        r"str\s+(?:filing|reporting|documentation|submissions?|process)|fiu\s+reporting|financial\s+intelligence\s+unit|"
+        r"fincen\s+compliance|regulatory\s+reporting\s+for\s+suspicious\s+activity|regulatory\s+reporting)\b",
         re.I,
     ),
     "banking_exposure": re.compile(
-        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi)\b",
+        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi|"
+        r"financial\s+services|bank\s+accounts?|credit\s+card\s+transactions?|global\s+banking\s+and\s+markets|"
+        r"department\s+of\s+banking|money\s+service\s+business(?:es)?|msbs?|financial\s+transactions?|"
+        r"bank\s+secrecy\s+act|bsa)\b",
         re.I,
     ),
 }

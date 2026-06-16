@@ -8,6 +8,10 @@ INVALID_COMPANY_TOKENS = {
     "sql", "python", "excel", "power bi", "tableau", "powerpoint", "microsoft excel",
     "data cleaning", "data visualization", "dashboard", "technical skills", "skills",
     "mis", "loan", "loans", "personal loans",
+    "aml", "aml analyst", "assist aml analyst", "assistant aml analyst",
+    "aml analyst ii", "anti-money laundering analyst", "anti money laundering analyst",
+    "financial crime analyst", "financial crimes specialist", "transaction monitoring analyst",
+    "aml compliance analyst", "kyc analyst", "risk analyst",
     "surat", "gujarat", "maharashtra", "pune", "bengaluru", "bangalore",
     "hyderabad", "chennai", "kolkata", "mumbai", "delhi", "noida",
     "chicago", "chicago il", "pittsburgh", "kirkland", "cresskill", "crm", "remote",
@@ -49,10 +53,13 @@ ROLE_ONLY_RE = re.compile(
     r"^(?:senior|sr\.?|junior|jr\.?|lead|principal|staff|technical)?\s*"
     r"(?:qa|sqa|sdet|quality|test|testing|automation|software|digital\s+quality\s+assurance|"
     r"full[-\s]?stack|front[-\s]?end|back[-\s]?end|java|python|web|data|business|bi|mis|"
-    r"analytics?|reporting|product|project|technical\s+support)?\s*"
+    r"analytics?|reporting|product|project|technical\s+support|aml|anti[-\s]?money\s+laundering|"
+    r"financial\s+crime|financial\s+crimes|transaction\s+monitoring|kyc|risk|compliance)?\s*"
     r"(?:engineer|developer|analyst|consultant|specialist|manager|lead|intern|trainee|"
     r"quality\s+engineer|quality\s+assurance|test\s+lead|technical\s+test\s+lead|"
-    r"software\s+testing\s+engineer|automation\s+engineer|qa\s+automation\s+engineer)\s*"
+    r"software\s+testing\s+engineer|automation\s+engineer|qa\s+automation\s+engineer|"
+    r"financial\s+crime\s+analyst|financial\s+crimes\s+specialist|transaction\s+monitoring\s+analyst|"
+    r"aml\s+compliance\s+analyst)\s*"
     r"(?:\d+|i{1,3}|iv)?$",
     re.I,
 )
@@ -94,7 +101,7 @@ def _valid_company_name(value):
         return False
     if ROLE_ONLY_RE.fullmatch(lowered):
         return False
-    if re.search(r"\b(senior|sr\.?|lead)?\s*(qa|sqa|sdet|quality|test|testing|software|data|business|bi|mis|analytics?|reporting)\s+(engineer|analyst|lead|developer|specialist)\b", lowered) and not re.search(
+    if re.search(r"\b(senior|sr\.?|lead|assist\.?|assistant)?\s*(qa|sqa|sdet|quality|test|testing|software|data|business|bi|mis|analytics?|reporting|aml|anti[-\s]?money\s+laundering|financial\s+crime|financial\s+crimes|transaction\s+monitoring|kyc|risk|compliance)\s+(engineer|analyst|lead|developer|specialist|investigator)\b", lowered) and not re.search(
         r"\b(inc|llc|ltd|limited|private|pvt|corp|corporation|company|services|solutions|technologies|labs|health|games)\b",
         lowered,
     ):
@@ -313,7 +320,8 @@ def _normalize_company_name(value):
         right_role_or_meta = bool(
             re.search(
                 r"\b(sde|qa|sqa|sdet|quality|test|testing|automation|software|engineer|developer|"
-                r"analyst|lead|consultant|manager|intern|trainee|remote|hybrid|onsite)\b",
+                r"analyst|lead|consultant|manager|intern|trainee|remote|hybrid|onsite|aml|"
+                r"anti[-\s]?money\s+laundering|financial\s+crime|transaction\s+monitoring|kyc|risk|compliance)\b",
                 right,
                 re.I,
             )

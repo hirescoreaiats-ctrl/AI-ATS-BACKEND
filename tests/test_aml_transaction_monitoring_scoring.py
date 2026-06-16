@@ -1,4 +1,5 @@
 from backend.jd_engine import normalize_jd_skills
+from backend.experience_engine import process_experience
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.scoring_service import score_candidate
@@ -112,6 +113,129 @@ def test_kyc_only_profile_is_capped_below_true_aml_tm():
 
     assert result["final_score"] <= 65
     assert result["knockout_flags"]["kyc_only_profile"] is True
+
+
+def test_mia_qwikresume_sar_and_transaction_monitoring_language_scores_high():
+    parsed = {
+        "full_name": "Mia Taylor",
+        "designation": "Assist. AML Analyst",
+        "key_skills": ["Risk Assessment", "Transaction Monitoring", "KYC Procedures", "Suspicious Activity Reporting"],
+        "total_experience_years": 7.46,
+        "experience": [{
+            "company_name": "Quantum Solutions LLC",
+            "role": "Assist. AML Analyst",
+            "duration_years": 5.4,
+            "description": (
+                "Detail-oriented AML Analyst with 5 years of experience conducting thorough investigations, "
+                "analyzing financial transactions, and mitigating money laundering risks. Reported suspicious "
+                "activities to the Financial Intelligence Unit (FIU), ensured adherence to Suspicious Activity "
+                "Reporting standards, investigated accounts and transactions flagged as high-risk, prepared "
+                "detailed Suspicious Activity Reports (SARs), verified documentation and licensing for Foreign "
+                "Money Service Businesses (MSBs), performed AML analysis to assess alerts for potential money "
+                "laundering risks in client transactions, monitored exception reports for suspicious activities, "
+                "and enhanced AML software capabilities to improve transaction monitoring."
+            ),
+        }],
+        "projects": [],
+        "resume_quality_score": 88,
+    }
+
+    _, result = score_aml(parsed)
+
+    assert result["final_score"] >= 80
+    assert result["evidence_group_scores"]["transaction_monitoring"]["score"] >= 60
+    assert result["evidence_group_scores"]["sar_str"]["score"] >= 60
+    assert result["evidence_group_scores"]["aml_investigations"]["score"] >= 60
+
+
+def test_sophia_qwikresume_sar_case_management_language_scores_excellent():
+    parsed = {
+        "full_name": "Sophia Brown",
+        "designation": "AML Analyst II",
+        "key_skills": ["Regulatory Reporting", "Risk Assessment", "Fraud Detection"],
+        "total_experience_years": 7,
+        "experience": [{
+            "company_name": "Quantum Solutions LLC",
+            "role": "AML Analyst II",
+            "duration_years": 7,
+            "description": (
+                "AML Analyst with 7 years of financial services experience detecting and reporting suspicious "
+                "activities. Managed investigations from detection to resolution ensuring thorough documentation. "
+                "Evaluated cases for closure or escalation, filing Suspicious Activity Reports when necessary. "
+                "Created detailed reports and presentations to support complex AML investigations. Reviewed bank "
+                "accounts and credit card transactions for money laundering indicators, compiled and summarized "
+                "findings in reports for FinCEN compliance, prepared data for Suspicious Activity Report submissions, "
+                "and utilized Verafin AML software to assess alerts requiring further investigation."
+            ),
+        }],
+        "projects": [],
+        "resume_quality_score": 90,
+    }
+
+    _, result = score_aml(parsed)
+
+    assert result["final_score"] >= 85
+    assert result["evidence_group_scores"]["sar_str"]["score"] >= 60
+    assert result["evidence_group_scores"]["case_management"]["score"] >= 60
+
+
+def test_rowan_financial_crime_tools_count_as_transaction_monitoring():
+    parsed = {
+        "full_name": "Rowan Ashford",
+        "designation": "Financial Crime Analyst",
+        "key_skills": ["Actimize", "FICO", "ACI Worldwide", "Global Radar", "Anti-Money Laundering"],
+        "total_experience_years": 13.46,
+        "experience": [{
+            "company_name": "Connecticut Department of Banking",
+            "role": "Financial Crime Analyst",
+            "duration_years": 4.5,
+            "description": (
+                "Analyzed transaction data on Actimize, implemented new data classification in Oracle Financial "
+                "Services, designed and deployed automated alerts within Global Radar, and mapped complex financial "
+                "crime networks. As an Anti-Money Laundering Analyst, executed FICO-based monitoring systems, "
+                "reduced false positives for transaction alerts, expanded the AML software program, built and refined "
+                "alerts in ACI Worldwide for accurate tracking and reporting of suspicious activities in real-time, "
+                "and processed and analyzed over 251 suspicious transactions per month using SAS to prevent money laundering."
+            ),
+        }],
+        "projects": [],
+        "resume_quality_score": 88,
+    }
+
+    _, result = score_aml(parsed)
+
+    assert result["final_score"] >= 75
+    assert result["evidence_group_scores"]["transaction_monitoring"]["score"] >= 60
+    assert result["evidence_group_scores"]["banking_exposure"]["score"] >= 60
+
+
+def test_aml_role_titles_are_not_valid_company_names():
+    result = process_experience([
+        {
+            "company_name": "Aml",
+            "role": "Analyst",
+            "start_date": "Dec 2019",
+            "end_date": "Dec 2020",
+        },
+        {
+            "company_name": "Assist. AML Analyst",
+            "role": "Assist. AML Analyst",
+            "start_date": "Dec 2020",
+            "end_date": "Present",
+        },
+        {
+            "company_name": "Quantum Solutions LLC",
+            "role": "Assist. AML Analyst",
+            "start_date": "Dec 2020",
+            "end_date": "Present",
+        },
+    ])
+
+    validity = {item["company_name"]: item["company_valid"] for item in result["extracted_date_ranges_raw"]}
+    assert validity["Aml"] is False
+    assert validity["Assist. AML Analyst"] is False
+    assert validity["Quantum Solutions LLC"] is True
+    assert result["last_company_name"] == "Quantum Solutions LLC"
 
 
 def test_data_analyst_banking_dashboard_does_not_match_aml_strongly():

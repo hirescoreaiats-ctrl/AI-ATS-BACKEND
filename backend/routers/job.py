@@ -515,6 +515,8 @@ def _format_candidate_experience(meta):
 def _candidate_safe_display(candidate: Resume):
     raw_projects = _candidate_projects(candidate)
     projects = _safe_candidate_projects(raw_projects)
+    role_family = str(getattr(candidate, "role_family", "") or "").lower()
+    project_optional_family = role_family in {"aml_transaction_monitoring"}
     project_labels = []
     for project in projects:
         if not isinstance(project, dict):
@@ -538,7 +540,7 @@ def _candidate_safe_display(candidate: Resume):
         "location": 0.8,
         "last_company": 0.85,
         "education": 0.85,
-        "project_evidence": 0.85 if project_labels else 0.45,
+        "project_evidence": 0.85 if (project_labels or project_optional_family) else 0.45,
     }
 
     if not name or _candidate_value_is_polluted(name, "name"):
@@ -564,7 +566,7 @@ def _candidate_safe_display(candidate: Resume):
         education = ""
         confidence["education"] = 0.35
         flags.append("education_needs_review")
-    if not project_labels:
+    if not project_labels and not project_optional_family:
         flags.append("project_noise_detected")
     if any(value < 0.5 for value in confidence.values()):
         flags.append("profile_needs_review")

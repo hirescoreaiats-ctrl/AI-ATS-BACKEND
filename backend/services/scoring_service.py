@@ -2632,41 +2632,65 @@ AML_TM_GROUP_PATTERNS = {
     "role_fit": re.compile(
         r"\b(aml\s+transaction\s+monitoring\s+(?:investigator|analyst|specialist|officer|l2)|"
         r"transaction\s+monitoring\s+(?:investigator|analyst|specialist|officer)|"
-        r"aml\s+(?:case\s+)?investigator|financial\s+crime\s+investigator|senior\s+aml\s+analyst|"
-        r"aml\s+compliance\s+investigator)\b",
+        r"aml\s+(?:case\s+)?investigator|(?:assist\.?\s+|assistant\s+)?aml\s+analyst(?:\s+ii|\s+i{1,3})?|"
+        r"anti[-\s]?money\s+laundering\s+analyst|financial\s+crime\s+analyst|financial\s+crimes\s+specialist|"
+        r"financial\s+crime\s+investigator|senior\s+aml\s+analyst|aml\s+compliance\s+(?:analyst|investigator))\b",
         re.I,
     ),
     "transaction_monitoring": re.compile(
         r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
         r"monitoring\s+alerts?|escalated\s+alerts?|alert\s+investigation|transaction\s+review|"
+        r"transaction\s+alerts?|monitoring\s+systems?|monitoring\s+techniques?|exception\s+reports?|"
+        r"suspicious\s+transactions?|suspicious\s+transfers?|client\s+transactions?|flagged\s+(?:clients?|transactions?)|"
+        r"high[-\s]?risk\s+(?:accounts?|transactions?)|processed\s+(?:and\s+analy[sz]ed\s+)?suspicious\s+transactions?|"
+        r"verafin|actimize|global\s+radar|aci\s+worldwide|fico(?:[-\s]?based)?\s+monitoring\s+systems?|aml\s+software\s+(?:alerts?|program)|"
         r"suspicious\s+transaction\s+monitoring)\b",
         re.I,
     ),
     "aml_investigations": re.compile(
         r"\b(aml\s+investigations?|case\s+investigation|financial\s+crime\s+investigation|"
         r"money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
-        r"suspicious\s+(?:activity|transaction)\s+review|money\s+laundering)\b",
+        r"suspicious\s+(?:activity|transaction)\s+review|investigated\s+(?:accounts?|transactions?)|"
+        r"high[-\s]?risk\s+account\s+investigation|detection\s+to\s+resolution|"
+        r"evaluated\s+cases?\s+for\s+(?:closure|escalation)|case\s+(?:closure|escalation)|"
+        r"further\s+investigation|investigation\s+unit|complex\s+aml\s+investigations?|"
+        r"money\s+laundering|reported\s+suspicious\s+activities|identified\s+and\s+reported\s+\d+\+?\s+suspicious\s+activities)\b",
         re.I,
     ),
     "case_management": re.compile(
         r"\b(case\s+(?:management|handling|review|disposition|closure|narrative|documentation)|"
-        r"alert\s+closure|investigation\s+workflow|detailed\s+case\s+narratives?)\b",
+        r"managed\s+investigations?\s+from\s+detection\s+to\s+resolution|alert\s+closure|investigation\s+workflow|"
+        r"evaluated\s+cases?|documented\s+findings?|detailed\s+(?:reports?|case\s+narratives?)|"
+        r"prepared\s+detailed\s+suspicious\s+activity\s+reports?|verify\s+documentation|verified\s+documentation|"
+        r"documentation\s+and\s+licensing|reporting\s+accuracy|investigation\s+time|"
+        r"case\s+notes?|investigation\s+documentation|thorough\s+documentation|reports?\s+and\s+presentations|"
+        r"reporting\s+of\s+suspicious\s+activities|successful\s+prosecutions|"
+        r"summari[sz]ed\s+findings?|compiled\s+and\s+summari[sz]ed\s+findings?|narrative|"
+        r"escalation\s+rationale|supporting\s+documentation|prepared\s+concise\s+case\s+notes)\b",
         re.I,
     ),
     "sar_str": re.compile(
-        r"\b(sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|"
-        r"sar\s+filing|str\s+filing|sar\s+documentation|str\s+documentation|regulatory\s+reporting)\b",
+        r"\b(sars?|strs?|suspicious\s+activity\s+reports?|suspicious\s+activity\s+reporting(?:\s+standards?)?|"
+        r"suspicious\s+transaction\s+reports?|suspicious\s+transaction\s+reporting|"
+        r"sar\s+(?:filing|reporting|documentation|submissions?|process)|str\s+(?:filing|reporting|documentation|submissions?|process)|"
+        r"fiu\s+reporting|financial\s+intelligence\s+unit|fincen\s+compliance|"
+        r"prepared\s+(?:data\s+for\s+)?suspicious\s+activity\s+report\s+submissions?|"
+        r"regulatory\s+reporting\s+for\s+suspicious\s+activity|regulatory\s+reporting)\b",
         re.I,
     ),
     "banking_exposure": re.compile(
-        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi)\b",
+        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi|"
+        r"financial\s+services|bank\s+accounts?|credit\s+card\s+transactions?|global\s+banking\s+and\s+markets|"
+        r"department\s+of\s+banking|money\s+service\s+business(?:es)?|msbs?|financial\s+transactions?|"
+        r"bank\s+secrecy\s+act|bsa)\b",
         re.I,
     ),
     "nice_to_have": re.compile(
         r"\b(kyc|cdd|edd|customer\s+due\s+diligence|enhanced\s+due\s+diligence|source\s+of\s+funds|"
         r"source\s+of\s+wealth|adverse\s+media|pep\s+screening|sanctions\s+screening|smurfing|layering|"
         r"structuring|money\s+mule|shell\s+compan(?:y|ies)|round\s+tripping|placement|integration|"
-        r"terrorist\s+financing|us\s+aml|international\s+aml)\b",
+        r"terrorist\s+financing|ofac|314\(a\)|watch\s+list|high[-\s]?risk\s+clients?|msbs?|"
+        r"us\s+aml|international\s+aml|verafin|actimize|global\s+radar|aci\s+worldwide|fico)\b",
         re.I,
     ),
 }
@@ -3843,7 +3867,7 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
     if not has_banking:
         cap_at(84, "Retail, commercial, correspondent banking, or financial institution exposure is missing.", "no_banking_environment_evidence", "no_banking_environment_evidence")
 
-    if has_kyc and not has_tm and not has_investigation:
+    if has_kyc and not has_tm:
         cap_at(65, "KYC/CDD/EDD evidence without AML Transaction Monitoring or AML investigation is KYC-only for this JD.", "kyc_only_profile", "kyc_only_profile")
     if has_generic_banking and not has_tm and not has_investigation:
         cap_at(60, "Generic banking operations without AML investigation cannot rank high for this L2 investigator JD.", "generic_banking_only", "generic_banking_only")
@@ -3874,7 +3898,8 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         if experience_fit["relevant_years"] > 10:
             cap_at(85, "Candidate is above the L2 5-7 year band; review for overqualification but do not auto-reject.", "over_experienced_for_l2", "over_experienced_for_l2")
 
-    if has_fraud and has_banking and not has_tm and final_score < 55:
+    fraud_partial_only = has_fraud and has_banking and group_results["role_fit"]["score"] < 25 and not has_sar_str
+    if fraud_partial_only and final_score < 55:
         final_score = 58
         _append_unique(recruiter_flags, ["fraud_only_partial_match"])
         _append_unique(risk_flags, ["partial_fraud_match"])
