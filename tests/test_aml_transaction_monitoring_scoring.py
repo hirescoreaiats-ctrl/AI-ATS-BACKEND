@@ -205,6 +205,7 @@ def test_rowan_financial_crime_tools_count_as_transaction_monitoring():
     _, result = score_aml(parsed)
 
     assert 75 <= result["final_score"] <= 78
+    assert result["recommendation"] == "in_review"
     assert result["knockout_flags"]["missing_sar_str"] is True
     assert result["evidence_group_scores"]["transaction_monitoring"]["score"] >= 60
     assert result["evidence_group_scores"]["banking_exposure"]["score"] >= 60
@@ -238,6 +239,55 @@ def test_financial_crime_tool_profile_has_floor_without_sar():
     assert result["knockout_flags"]["missing_sar_str"] is True
     assert "kyc_only_profile" not in result["risk_flags"]
     assert "generic_banking_only" not in result["risk_flags"]
+
+
+def test_production_like_financial_crime_tools_over_l2_goes_to_review():
+    parsed = {
+        "full_name": "Production Candidate",
+        "designation": "Financial Crime Analyst",
+        "key_skills": [],
+        "matched_skills": [
+            "Financial Crime Analyst",
+            "AML Analyst",
+            "Anti-Money Laundering Analyst",
+            "Actimize",
+            "ACI Worldwide",
+            "Global Radar",
+            "FICO-based Monitoring Systems",
+            "AML Software Program",
+            "suspicious transactions",
+            "transaction alerts",
+        ],
+        "missing_skills": ["SAR STR"],
+        "skill_match_percent": 95,
+        "total_experience_years": 13,
+        "relevant_experience_years": 8.5,
+        "experience": [{
+            "company_name": "Financial Institution",
+            "role": "Financial Crime Analyst",
+            "duration_years": 8.5,
+            "description": (
+                "Financial Crime Analyst and Anti-Money Laundering Analyst work using Actimize, "
+                "ACI Worldwide, Global Radar, FICO-based monitoring systems and an AML software program. "
+                "Reviewed transaction alerts, suspicious transactions, suspicious transfers, and suspicious "
+                "account activity across monitoring systems."
+            ),
+        }],
+        "projects": [],
+        "risk_flags": [],
+        "resume_quality_score": 88,
+    }
+
+    _, result = score_aml(parsed)
+
+    assert 70 <= result["final_score"] <= 78
+    assert result["recommendation"] == "in_review"
+    assert result["recruiter_recommendation"] == "Review manually"
+    assert result["knockout_flags"]["over_experienced_for_l2"] is True
+    assert result["knockout_flags"]["missing_sar_str"] is True
+    assert result["knockout_flags"]["kyc_only_profile"] is False
+    assert result["knockout_flags"]["generic_banking_only"] is False
+    assert "aml_fcrm_tool_profile" in result["recruiter_flags"]
 
 
 def test_messy_bsa_sar_profile_is_not_kyc_or_generic_banking_only():

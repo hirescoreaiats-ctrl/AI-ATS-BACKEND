@@ -2721,7 +2721,21 @@ AML_TM_FRAUD_RE = re.compile(r"\b(fraud\s+(?:analyst|investigator|investigation)
 
 AML_TM_TOOL_RE = re.compile(
     r"\b(actimize|global\s+radar|aci\s+worldwide|fico(?:[-\s]?based)?\s+monitoring\s+systems?|"
-    r"verafin|oracle\s+financial\s+services|sas|palantir|aml\s+software|monitoring\s+software)\b",
+    r"verafin|oracle\s+financial\s+services|sas|palantir|eastnets|safewatch|aml\s+software|monitoring\s+software|monitoring\s+systems?)\b",
+    re.I,
+)
+
+AML_TM_ROLE_EVIDENCE_RE = re.compile(
+    r"\b(financial\s+crime\s+analyst|financial\s+crimes\s+specialist|aml\s+analyst|"
+    r"anti[-\s]?money\s+laundering\s+analyst|transaction\s+monitoring\s+analyst|"
+    r"aml\s+compliance\s+analyst|aml\s+transaction\s+monitoring\s+(?:investigator|analyst|specialist))\b",
+    re.I,
+)
+
+AML_TM_TRANSACTION_EVIDENCE_RE = re.compile(
+    r"\b(suspicious\s+transactions?|transaction\s+alerts?|aml\s+alerts?|monitoring\s+systems?|"
+    r"suspicious\s+transfers?|processed\s+(?:and\s+analy[sz]ed\s+)?suspicious\s+transactions?|"
+    r"transaction\s+review|suspicious\s+account\s+activity|transaction\s+monitoring)\b",
     re.I,
 )
 
@@ -3731,7 +3745,14 @@ def _aml_text_sections(parsed, resume_text):
             projects.append(" ".join(str(value or "") for value in project.values()))
         else:
             projects.append(str(project or ""))
-    skills = " ".join(str(skill or "") for skill in parsed.get("key_skills") or [])
+    skill_sources = []
+    for key in ("key_skills", "matched_skills", "direct_matched_skills", "preferred_matched_skills"):
+        value = parsed.get(key) or []
+        if isinstance(value, str):
+            skill_sources.append(value)
+        else:
+            skill_sources.extend(str(skill or "") for skill in value)
+    skills = " ".join(skill_sources)
     title = " ".join(str(parsed.get(key) or "") for key in ("designation", "current_title", "headline"))
     return {
         "work": "\n".join(work),
@@ -3859,6 +3880,32 @@ def _aml_jd_uploaded_as_resume(parsed, sections):
     return not (has_candidate_name and has_work_history and has_resume_identity)
 
 
+def _aml_distinct_tool_count(text):
+    tool_patterns = {
+        "actimize": r"\b(?:nice\s+)?actimize\b",
+        "global_radar": r"\bglobal\s+radar\b",
+        "aci_worldwide": r"\baci\s+worldwide\b",
+        "fico": r"\bfico(?:[-\s]?based)?(?:\s+monitoring\s+systems?)?\b",
+        "verafin": r"\bverafin\b",
+        "oracle_financial_services": r"\boracle\s+financial\s+services\b",
+        "palantir": r"\bpalantir\b",
+        "eastnets": r"\beastnets\b",
+        "safewatch": r"\bsafewatch\b",
+        "aml_software": r"\baml\s+software\b",
+        "monitoring_systems": r"\bmonitoring\s+systems?\b",
+    }
+    return sum(1 for pattern in tool_patterns.values() if re.search(pattern, text or "", re.I))
+
+
+def _aml_jd_is_senior_l2_exempt(jd_text, jd_data, jd_profile):
+    text = " ".join([
+        str(jd_text or ""),
+        str((jd_data or {}).get("role") or ""),
+        str((jd_profile or {}).get("primary_role") or ""),
+    ])
+    return bool(re.search(r"\b(senior|lead|manager|principal|head\s+of|team\s+lead)\b", text, re.I))
+
+
 def _aml_recruiter_recommendation(final_score, recommendation, risk_flags, experience_fit):
     if "synthetic_or_non_human_profile" in risk_flags or "invalid_document_or_jd_uploaded" in risk_flags:
         return "Reject for this role"
@@ -3916,11 +3963,22 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
     has_kyc = bool(AML_TM_KYC_RE.search(sections["all"]))
     has_generic_banking = bool(AML_TM_GENERIC_BANKING_RE.search(sections["all"]))
     has_fraud = bool(AML_TM_FRAUD_RE.search(sections["all"]))
-    has_aml_tools = bool(AML_TM_TOOL_RE.search(sections["all"]))
+    aml_tool_count = _aml_distinct_tool_count(sections["all"])
+    has_aml_tools = aml_tool_count >= 2
+    has_role_evidence = bool(AML_TM_ROLE_EVIDENCE_RE.search(sections["all"]))
+    has_transaction_evidence = bool(AML_TM_TRANSACTION_EVIDENCE_RE.search(sections["all"]))
     has_fcrm_evidence = bool(AML_TM_FCRM_EVIDENCE_RE.search(sections["all"]))
     has_aml_or_fcrm_evidence = has_tm or has_investigation or has_sar_str or has_fcrm_evidence
     synthetic_profile = bool(AML_TM_SYNTHETIC_PROFILE_RE.search(sections["all"]))
     invalid_jd_upload = _aml_jd_uploaded_as_resume(parsed, sections)
+    senior_l2_exempt = _aml_jd_is_senior_l2_exempt(jd_text, jd_data, jd_profile)
+    over_l2_experience = (
+        not senior_l2_exempt
+        and (
+            experience_fit["total_years"] > 10
+            or experience_fit["relevant_years"] > 7.5
+        )
+    )
 
     if not has_tm:
         cap_at(65, "AML Transaction Monitoring evidence is missing.", "missing_aml_transaction_monitoring", "missing_aml_transaction_monitoring")
@@ -3968,6 +4026,9 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         _append_unique(risk_flags, ["over_experienced_for_l2"])
         if experience_fit["relevant_years"] > 10:
             cap_at(85, "Candidate is above the L2 5-7 year band; review for overqualification but do not auto-reject.", "over_experienced_for_l2", "over_experienced_for_l2")
+    if over_l2_experience:
+        _append_unique(recruiter_flags, ["over_experienced_for_l2"])
+        _append_unique(risk_flags, ["over_experienced_for_l2"])
 
     fraud_partial_only = has_fraud and has_banking and group_results["role_fit"]["score"] < 25 and not has_sar_str
     if fraud_partial_only and final_score < 55:
@@ -3982,22 +4043,30 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         or "kyc_only_profile" in risk_flags
         or "generic_banking_only" in risk_flags
     )
+    parsed_skill_match = _safe_float(parsed.get("skill_match_percent") or parsed.get("mandatory_skill_coverage"))
+    current_mandatory_coverage = round((sum(group_results[group]["score"] for group in mandatory_groups) / 400) * 100, 2)
     financial_crime_tool_profile = (
         not disqualifying_profile
-        and group_results["role_fit"]["score"] >= 60
-        and group_results["transaction_monitoring"]["score"] >= 60
+        and (group_results["role_fit"]["score"] >= 60 or has_role_evidence)
+        and (group_results["transaction_monitoring"]["score"] >= 60 or has_transaction_evidence)
         and has_aml_tools
-        and has_banking
         and has_aml_or_fcrm_evidence
+        and (has_banking or parsed_skill_match >= 70 or current_mandatory_coverage >= 60)
         and experience_fit["relevant_years"] >= 4.5
     )
+    if financial_crime_tool_profile:
+        _append_unique(recruiter_flags, ["aml_fcrm_tool_profile"])
     if financial_crime_tool_profile and final_score < 70:
         final_score = 70
-        _append_unique(recruiter_flags, ["aml_fcrm_tool_profile"])
     if financial_crime_tool_profile and not has_sar_str and final_score > 78:
         final_score = 78
         caps.append({"cap": 78, "reason": "Financial crime tool profile is strong, but SAR/STR process evidence still needs verification."})
-        _append_unique(recruiter_flags, ["aml_fcrm_tool_profile"])
+    if over_l2_experience and not has_sar_str and final_score > 78:
+        final_score = 78
+        caps.append({"cap": 78, "reason": "Candidate is over the L2 5-7 year band and SAR/STR evidence needs verification."})
+    if over_l2_experience and not senior_l2_exempt and final_score >= 85:
+        final_score = 84
+        caps.append({"cap": 84, "reason": "Candidate is over the L2 5-7 year band; senior/lead/manager JD not detected."})
 
     short_aml_banking_profile = (
         not disqualifying_profile
@@ -4033,7 +4102,10 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
         recommendation = "shortlisted"
         label = "Strong Match"
         _append_unique(recruiter_flags, ["strong_match"])
-    elif final_score >= 75 and has_tm and has_investigation and not wrong_role_flags:
+    elif final_score >= 70 and (financial_crime_tool_profile or over_l2_experience or not has_sar_str):
+        recommendation = "in_review"
+        label = "Recruiter Review"
+    elif final_score >= 75 and has_tm and has_investigation and has_sar_str and not wrong_role_flags and not over_l2_experience:
         recommendation = "shortlisted"
         label = "Good Match"
         _append_unique(recruiter_flags, ["good_match"])
@@ -4172,6 +4244,10 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
             },
             "wrong_role_flags": wrong_role_flags,
             "experience_fit": experience_fit,
+            "aml_tool_count": aml_tool_count,
+            "financial_crime_tool_profile": financial_crime_tool_profile,
+            "over_l2_experience": over_l2_experience,
+            "senior_l2_exempt": senior_l2_exempt,
             "score_caps_applied": caps,
             "missing_core_skill_groups": missing_mandatory + weak_mandatory,
             "knockout_flags": knockout_flags,
