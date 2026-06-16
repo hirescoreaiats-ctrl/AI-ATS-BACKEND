@@ -150,6 +150,15 @@ DIRECT_ROLE_PATTERNS = {
         r"\bcollaboration\s+migration\s+engineer\b",
         re.I,
     ),
+    "aml_transaction_monitoring": re.compile(
+        r"\b(?:aml\s+transaction\s+monitoring|transaction\s+monitoring)\s+"
+        r"(?:investigator|analyst|specialist|officer|l2)\b|"
+        r"\baml\s+(?:case\s+)?investigator\b|"
+        r"\baml\s+investigations?\s+(?:analyst|investigator|specialist)\b|"
+        r"\bfinancial\s+crime\s+investigator\b|"
+        r"\bsenior\s+aml\s+analyst\b",
+        re.I,
+    ),
     "full_stack": re.compile(r"\b(?:full[-\s]?stack|mern|mean)\s+(?:developer|engineer)\b", re.I),
     "dotnet_full_stack": re.compile(
         r"\b(?:(?:senior|sr\.?|lead|principal)\s+)?(?:\.net|dotnet|asp\.?\s*net|c#|software|full[-\s]?stack)\s+"
@@ -339,6 +348,43 @@ M365_MIGRATION_CORE_GROUP_RE = {
     "seniority_delivery": re.compile(
         r"\b(sme|consultant|lead|senior\s+engineer|enterprise\s+migration|migration\s+planning|"
         r"cutover\s+support|hypercare|post[-\s]?migration\s+validation|us\s+shift)\b",
+        re.I,
+    ),
+}
+
+AML_TM_WORK_SIGNAL_RE = re.compile(
+    r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
+    r"escalated\s+alerts?|alert\s+investigation|monitoring\s+alerts?|transaction\s+review|"
+    r"suspicious\s+transaction\s+monitoring|aml\s+investigations?|case\s+(?:investigation|management|handling|review|disposition|closure|narrative)|"
+    r"financial\s+crime\s+investigation|money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
+    r"sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|regulatory\s+reporting|"
+    r"retail\s+banking|commercial\s+banking|correspondent\s+banking|source\s+of\s+funds|adverse\s+media|"
+    r"smurfing|layering|structuring)\b",
+    re.I,
+)
+
+AML_TM_CORE_GROUP_RE = {
+    "transaction_monitoring": re.compile(
+        r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
+        r"monitoring\s+alerts?|alert\s+investigation|transaction\s+review|suspicious\s+transaction\s+monitoring)\b",
+        re.I,
+    ),
+    "aml_investigations": re.compile(
+        r"\b(aml\s+investigations?|case\s+investigation|financial\s+crime\s+investigation|"
+        r"money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|escalated\s+alerts?)\b",
+        re.I,
+    ),
+    "case_management": re.compile(
+        r"\b(case\s+(?:management|handling|review|disposition|closure|narrative)|alert\s+closure|investigation\s+workflow)\b",
+        re.I,
+    ),
+    "sar_str": re.compile(
+        r"\b(sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|"
+        r"sar\s+filing|str\s+filing|sar\s+documentation|str\s+documentation|regulatory\s+reporting)\b",
+        re.I,
+    ),
+    "banking_exposure": re.compile(
+        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi)\b",
         re.I,
     ),
 }
@@ -677,6 +723,23 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif len(m365_migration_hits) >= 4:
                 role_title_score = max(role_title_score, 78)
 
+        aml_tm_hits = set()
+        aml_tm_group_hits = {}
+        if role_family == "aml_transaction_monitoring":
+            aml_tm_hits = {match.group(0).lower() for match in AML_TM_WORK_SIGNAL_RE.finditer(block_text)}
+            aml_tm_group_hits = {
+                group: {match.group(0).lower() for match in pattern.finditer(block_text)}
+                for group, pattern in AML_TM_CORE_GROUP_RE.items()
+            }
+            aml_direct_role = bool(DIRECT_ROLE_PATTERNS["aml_transaction_monitoring"].search(role))
+            has_core_aml = bool(aml_tm_group_hits.get("transaction_monitoring")) or bool(aml_tm_group_hits.get("aml_investigations"))
+            if aml_direct_role and has_core_aml:
+                role_title_score = 100
+            elif aml_direct_role:
+                role_title_score = max(role_title_score, 72)
+            elif len(aml_tm_hits) >= 4 and has_core_aml:
+                role_title_score = max(role_title_score, 78)
+
         ba_evidence_hits = set()
         ba_direct_role = False
         ba_adjacent_role = False
@@ -722,6 +785,10 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             group_hit_count = sum(1 for hits in m365_migration_group_hits.values() if hits)
             skill_evidence_score = max(skill_evidence_score, min(100, 38 + len(m365_migration_hits) * 6))
             responsibility_match_score = max(responsibility_match_score, min(100, 34 + group_hit_count * 14 + len(m365_migration_hits) * 2))
+        if role_family == "aml_transaction_monitoring" and aml_tm_hits:
+            group_hit_count = sum(1 for hits in aml_tm_group_hits.values() if hits)
+            skill_evidence_score = max(skill_evidence_score, min(100, 40 + len(aml_tm_hits) * 6))
+            responsibility_match_score = max(responsibility_match_score, min(100, 34 + group_hit_count * 14 + len(aml_tm_hits) * 2))
 
         domain_hits = 0
         if domain_context and domain_context.lower() in block_lower:
@@ -743,6 +810,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             domain_hits += sum(1 for hits in product_architect_group_hits.values() if hits)
         if role_family == "m365_migration_sme":
             domain_hits += sum(1 for hits in m365_migration_group_hits.values() if hits)
+        if role_family == "aml_transaction_monitoring":
+            domain_hits += sum(1 for hits in aml_tm_group_hits.values() if hits)
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_evidence_hits:

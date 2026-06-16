@@ -2618,6 +2618,87 @@ M365_WRONG_ROLE_PATTERNS = {
     ),
 }
 
+AML_TM_GROUP_WEIGHTS = {
+    "role_fit": 0.25,
+    "transaction_monitoring": 0.12,
+    "aml_investigations": 0.10,
+    "case_management": 0.06,
+    "sar_str": 0.07,
+    "banking_exposure": 0.10,
+    "nice_to_have": 0.05,
+}
+
+AML_TM_GROUP_PATTERNS = {
+    "role_fit": re.compile(
+        r"\b(aml\s+transaction\s+monitoring\s+(?:investigator|analyst|specialist|officer|l2)|"
+        r"transaction\s+monitoring\s+(?:investigator|analyst|specialist|officer)|"
+        r"aml\s+(?:case\s+)?investigator|financial\s+crime\s+investigator|senior\s+aml\s+analyst|"
+        r"aml\s+compliance\s+investigator)\b",
+        re.I,
+    ),
+    "transaction_monitoring": re.compile(
+        r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
+        r"monitoring\s+alerts?|escalated\s+alerts?|alert\s+investigation|transaction\s+review|"
+        r"suspicious\s+transaction\s+monitoring)\b",
+        re.I,
+    ),
+    "aml_investigations": re.compile(
+        r"\b(aml\s+investigations?|case\s+investigation|financial\s+crime\s+investigation|"
+        r"money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
+        r"suspicious\s+(?:activity|transaction)\s+review|money\s+laundering)\b",
+        re.I,
+    ),
+    "case_management": re.compile(
+        r"\b(case\s+(?:management|handling|review|disposition|closure|narrative|documentation)|"
+        r"alert\s+closure|investigation\s+workflow|detailed\s+case\s+narratives?)\b",
+        re.I,
+    ),
+    "sar_str": re.compile(
+        r"\b(sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|"
+        r"sar\s+filing|str\s+filing|sar\s+documentation|str\s+documentation|regulatory\s+reporting)\b",
+        re.I,
+    ),
+    "banking_exposure": re.compile(
+        r"\b(retail\s+banking|commercial\s+banking|correspondent\s+banking|banking|financial\s+institution|bfsi)\b",
+        re.I,
+    ),
+    "nice_to_have": re.compile(
+        r"\b(kyc|cdd|edd|customer\s+due\s+diligence|enhanced\s+due\s+diligence|source\s+of\s+funds|"
+        r"source\s+of\s+wealth|adverse\s+media|pep\s+screening|sanctions\s+screening|smurfing|layering|"
+        r"structuring|money\s+mule|shell\s+compan(?:y|ies)|round\s+tripping|placement|integration|"
+        r"terrorist\s+financing|us\s+aml|international\s+aml)\b",
+        re.I,
+    ),
+}
+
+AML_TM_CORE_PROOF_RE = re.compile(
+    r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|aml\s+alerts?|tm\s+alerts?|"
+    r"aml\s+investigations?|alert\s+investigation|case\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
+    r"suspicious\s+transaction\s+monitoring|sar|str)\b",
+    re.I,
+)
+
+AML_TM_KYC_RE = re.compile(
+    r"\b(kyc|cdd|edd|customer\s+due\s+diligence|enhanced\s+due\s+diligence|source\s+of\s+funds|"
+    r"source\s+of\s+wealth|adverse\s+media|pep\s+screening|sanctions\s+screening)\b",
+    re.I,
+)
+
+AML_TM_GENERIC_BANKING_RE = re.compile(
+    r"\b(banking\s+operations|branch\s+banking|loan\s+officer|customer\s+support|customer\s+service|"
+    r"account\s+opening|back\s+office|banking\s+process|retail\s+banking|commercial\s+banking)\b",
+    re.I,
+)
+
+AML_TM_FRAUD_RE = re.compile(r"\b(fraud\s+(?:analyst|investigator|investigation)|fraud\s+alerts?|fraud\s+monitoring)\b", re.I)
+
+AML_TM_WRONG_ROLE_PATTERNS = {
+    "data_analyst_only": re.compile(r"\b(data\s+analyst|sql|power\s*bi|tableau|dashboard|dashboards?|business\s+intelligence)\b", re.I),
+    "business_analyst_only": re.compile(r"\b(business\s+analyst|requirements?\s+gathering|brd|frd|uat|user\s+stories)\b", re.I),
+    "financial_analyst_only": re.compile(r"\b(financial\s+analyst|budgeting|forecasting|variance\s+analysis|financial\s+model(?:ing)?)\b", re.I),
+    "risk_or_compliance_only": re.compile(r"\b(risk\s+analyst|compliance\s+officer|policy\s+compliance|operational\s+risk)\b", re.I),
+}
+
 
 def _applied_ml_text_sections(parsed, resume_text):
     work = []
@@ -3577,6 +3658,400 @@ def _score_candidate_m365_migration(parsed, jd_text, jd_skills, jd_data, resume_
     return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
 
 
+def _aml_text_sections(parsed, resume_text):
+    work = []
+    projects = []
+    for job in parsed.get("experience") or []:
+        if isinstance(job, dict):
+            work.append(" ".join(str(job.get(key) or "") for key in ("role", "company_name", "description")))
+    for project in parsed.get("projects") or []:
+        if isinstance(project, dict):
+            projects.append(" ".join(str(value or "") for value in project.values()))
+        else:
+            projects.append(str(project or ""))
+    skills = " ".join(str(skill or "") for skill in parsed.get("key_skills") or [])
+    title = " ".join(str(parsed.get(key) or "") for key in ("designation", "current_title", "headline"))
+    return {
+        "work": "\n".join(work),
+        "projects": "\n".join(projects),
+        "skills": skills,
+        "title": title,
+        "all": "\n".join([resume_text or "", title, "\n".join(work), "\n".join(projects), skills]),
+    }
+
+
+def _aml_group_strength(group, sections):
+    pattern = AML_TM_GROUP_PATTERNS[group]
+    title_hits = sorted({match.group(0) for match in pattern.finditer(sections["title"])})
+    work_hits = sorted({match.group(0) for match in pattern.finditer(sections["work"])})
+    project_hits = sorted({match.group(0) for match in pattern.finditer(sections["projects"])})
+    skill_hits = sorted({match.group(0) for match in pattern.finditer(sections["skills"])})
+    all_hits = sorted({match.group(0) for match in pattern.finditer(sections["all"])})
+
+    if group == "role_fit" and title_hits:
+        level = "professional_strong" if (work_hits or AML_TM_CORE_PROOF_RE.search(sections["work"])) else "professional_weak"
+        score = 88 if level == "professional_strong" else 72
+        source = "title"
+    elif work_hits:
+        level = "professional_strong" if _strong_context(sections["work"]) else "professional_weak"
+        score = min(100, 52 + len(work_hits) * 10 + (10 if level == "professional_strong" else 0))
+        source = "work_experience"
+    elif project_hits:
+        level = "project_strong" if _strong_context(sections["projects"]) else "project_weak"
+        score = min(82, 36 + len(project_hits) * 9 + (10 if level == "project_strong" else 0))
+        source = "project"
+    elif skill_hits:
+        level = "keyword_only"
+        score = min(36, 14 + len(skill_hits) * 5)
+        source = "skills_section"
+    elif all_hits:
+        level = "keyword_only"
+        score = min(30, 12 + len(all_hits) * 4)
+        source = "resume_text"
+    else:
+        level = "missing"
+        score = 0
+        source = ""
+
+    return {
+        "group": group,
+        "score": round(score, 2),
+        "evidence_level": level,
+        "source": source,
+        "matched_terms": all_hits[:12],
+        "matched": all_hits[:12],
+        "strong": score >= 60 and level in {"professional_strong", "professional_weak", "project_strong"},
+        "missing": score <= 0,
+    }
+
+
+def _aml_relevant_years_from_jobs(parsed, sections):
+    relevant = _safe_float(parsed.get("relevant_experience_years") or parsed.get("jd_related_experience_years"))
+    if relevant > 0:
+        return relevant
+    total = 0.0
+    for job in parsed.get("experience") or []:
+        if not isinstance(job, dict):
+            continue
+        block_text = " ".join(str(job.get(key) or "") for key in ("role", "company_name", "description"))
+        if not AML_TM_CORE_PROOF_RE.search(block_text):
+            continue
+        years = _safe_float(job.get("duration_years") or job.get("years") or job.get("experience_years"))
+        total += years
+    if total > 0:
+        return total
+    role_relevance = _safe_float(parsed.get("role_relevance_score"))
+    total_years = _safe_float(parsed.get("total_experience_years"))
+    if role_relevance >= 70 and AML_TM_CORE_PROOF_RE.search(sections["work"]):
+        return total_years
+    return 0.0
+
+
+def _aml_experience_fit(parsed, jd_profile, sections):
+    relevant = _aml_relevant_years_from_jobs(parsed, sections)
+    total = _safe_float(parsed.get("total_experience_years"))
+    min_years = _safe_float(jd_profile.get("min_experience_years")) or 5.0
+    max_years = _safe_float(jd_profile.get("max_experience_years")) or 7.0
+    if relevant <= 0:
+        return {"score": 18, "label": "unproven_aml_tm_experience", "relevant_years": relevant, "total_years": total, "fit": "under"}
+    if relevant < 3:
+        return {"score": 36, "label": "under_experienced_for_l2", "relevant_years": relevant, "total_years": total, "fit": "under"}
+    if relevant < min_years:
+        return {"score": 68, "label": "slightly_under_5_7_years", "relevant_years": relevant, "total_years": total, "fit": "slight_under"}
+    if relevant <= max_years:
+        return {"score": 100, "label": "ideal_5_7_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
+    if relevant <= 9:
+        return {"score": 84, "label": "slightly_over_5_7_years", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 70, "label": "over_experienced_for_l2", "relevant_years": relevant, "total_years": total, "fit": "over"}
+
+
+def _aml_wrong_role_flags(sections, group_results):
+    text = sections["all"]
+    flags = []
+    has_core_aml = (
+        group_results["transaction_monitoring"]["score"] >= 25
+        or group_results["aml_investigations"]["score"] >= 25
+    )
+    for name, pattern in AML_TM_WRONG_ROLE_PATTERNS.items():
+        if pattern.search(text) and not has_core_aml:
+            flags.append(name)
+    return flags
+
+
+def _aml_recruiter_recommendation(final_score, recommendation, risk_flags, experience_fit):
+    if recommendation == "rejected" or final_score < 60:
+        return "Reject for this role"
+    if "kyc_only_profile" in risk_flags or "generic_banking_only" in risk_flags:
+        return "Hold"
+    if experience_fit["fit"] in {"under", "over"}:
+        return "Review manually"
+    if final_score >= 90:
+        return "Strong shortlist"
+    if final_score >= 80:
+        return "Shortlist"
+    if final_score >= 70:
+        return "Review manually"
+    return "Hold"
+
+
+def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
+    parsed = parsed or {}
+    sections = _aml_text_sections(parsed, resume_text)
+    group_results = {
+        group: _aml_group_strength(group, sections)
+        for group in AML_TM_GROUP_WEIGHTS
+    }
+    weighted_groups = sum(group_results[group]["score"] * weight for group, weight in AML_TM_GROUP_WEIGHTS.items())
+    experience_fit = _aml_experience_fit(parsed, jd_profile, sections)
+    final_score = weighted_groups + experience_fit["score"] * 0.25
+
+    mandatory_groups = ["transaction_monitoring", "aml_investigations", "case_management", "sar_str"]
+    strong_mandatory = [group for group in mandatory_groups if group_results[group]["strong"]]
+    missing_mandatory = [group for group in mandatory_groups if group_results[group]["score"] < 25]
+    weak_mandatory = [group for group in mandatory_groups if group not in missing_mandatory and group_results[group]["score"] < 60]
+    caps = []
+    risk_flags = []
+    recruiter_flags = []
+
+    def cap_at(limit, reason, flag=None, risk=None):
+        nonlocal final_score
+        if final_score > limit:
+            final_score = limit
+        caps.append({"cap": limit, "reason": reason})
+        if flag:
+            _append_unique(recruiter_flags, [flag])
+        if risk:
+            _append_unique(risk_flags, [risk])
+
+    has_tm = group_results["transaction_monitoring"]["score"] >= 25
+    has_investigation = group_results["aml_investigations"]["score"] >= 25
+    has_sar_str = group_results["sar_str"]["score"] >= 25
+    has_case = group_results["case_management"]["score"] >= 25
+    has_banking = group_results["banking_exposure"]["score"] >= 25
+    has_kyc = bool(AML_TM_KYC_RE.search(sections["all"]))
+    has_generic_banking = bool(AML_TM_GENERIC_BANKING_RE.search(sections["all"]))
+    has_fraud = bool(AML_TM_FRAUD_RE.search(sections["all"]))
+
+    if not has_tm:
+        cap_at(72, "AML Transaction Monitoring evidence is missing.", "missing_aml_transaction_monitoring", "missing_aml_transaction_monitoring")
+    if not has_investigation:
+        cap_at(72, "AML investigation or suspicious activity investigation evidence is missing.", "missing_aml_investigation", "missing_aml_investigation")
+    if not has_sar_str:
+        cap_at(82, "SAR/STR process evidence is missing or weak.", "missing_sar_str", "missing_sar_str")
+    if not has_case:
+        cap_at(78, "Case management, case closure, or case narrative evidence is missing.", "no_case_management_evidence", "no_case_management_evidence")
+    if not has_banking:
+        cap_at(84, "Retail, commercial, correspondent banking, or financial institution exposure is missing.", "no_banking_environment_evidence", "no_banking_environment_evidence")
+
+    if has_kyc and not has_tm and not has_investigation:
+        cap_at(65, "KYC/CDD/EDD evidence without AML Transaction Monitoring or AML investigation is KYC-only for this JD.", "kyc_only_profile", "kyc_only_profile")
+    if has_generic_banking and not has_tm and not has_investigation:
+        cap_at(60, "Generic banking operations without AML investigation cannot rank high for this L2 investigator JD.", "generic_banking_only", "generic_banking_only")
+    if has_fraud and not has_tm:
+        cap_at(70, "Fraud investigation is only a partial match without AML Transaction Monitoring evidence.", "fraud_only_partial_match", "partial_fraud_match")
+
+    wrong_role_flags = _aml_wrong_role_flags(sections, group_results)
+    for flag in wrong_role_flags:
+        cap_at(45, "Generic analyst evidence without AML Transaction Monitoring is a wrong-role match.", flag, "wrong_role")
+
+    proven_groups = [
+        group for group, result in group_results.items()
+        if result["evidence_level"] in {"professional_strong", "professional_weak", "project_strong", "project_weak"}
+    ]
+    keyword_groups = [group for group, result in group_results.items() if result["evidence_level"] == "keyword_only"]
+    if keyword_groups and len(keyword_groups) >= max(1, len(proven_groups)):
+        cap_at(66, "AML match is mostly keyword-only with weak work/project proof.", "skill_match_mostly_listed_only", "keyword_only_match")
+    if len(strong_mandatory) <= 1 and not (has_fraud and has_banking):
+        cap_at(70, "Fewer than two mandatory AML/TM groups have strong evidence.", "aml_tm_mandatory_group_gap", "mandatory_group_gap")
+    elif weak_mandatory:
+        cap_at(85, "AML/TM fit is promising but one or more mandatory groups need validation.", "aml_tm_partial_group_gap", "mandatory_group_gap")
+
+    if experience_fit["fit"] == "under":
+        cap_at(69, "JD-related AML Transaction Monitoring experience is below the L2 5-7 year target.", "under_experienced_for_l2", "under_experienced_for_l2")
+    elif experience_fit["fit"] == "over":
+        _append_unique(recruiter_flags, ["over_experienced_for_l2"])
+        _append_unique(risk_flags, ["over_experienced_for_l2"])
+        if experience_fit["relevant_years"] > 10:
+            cap_at(85, "Candidate is above the L2 5-7 year band; review for overqualification but do not auto-reject.", "over_experienced_for_l2", "over_experienced_for_l2")
+
+    if has_fraud and has_banking and not has_tm and final_score < 55:
+        final_score = 58
+        _append_unique(recruiter_flags, ["fraud_only_partial_match"])
+        _append_unique(risk_flags, ["partial_fraud_match"])
+
+    final_score = round(max(0, min(100, final_score)), 2)
+    mandatory_coverage = round((sum(group_results[group]["score"] for group in mandatory_groups) / 400) * 100, 2)
+    core_percent = round((sum(group["score"] for group in group_results.values()) / 700) * 100, 2)
+    confidence = round(min(
+        100,
+        36
+        + mandatory_coverage * 0.34
+        + core_percent * 0.24
+        + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.12,
+    ), 2)
+    rank_score = round(min(100, final_score + (3 if not risk_flags and confidence >= 70 else 0)), 2)
+
+    if final_score >= 85 and has_tm and has_investigation and has_sar_str and has_case and experience_fit["fit"] == "within":
+        recommendation = "shortlisted"
+        label = "Strong Match"
+        _append_unique(recruiter_flags, ["strong_match"])
+    elif final_score >= 75 and has_tm and has_investigation and not wrong_role_flags:
+        recommendation = "shortlisted"
+        label = "Good Match"
+        _append_unique(recruiter_flags, ["good_match"])
+    elif final_score < 55 or wrong_role_flags:
+        recommendation = "rejected"
+        label = "Low Fit"
+    elif experience_fit["fit"] == "under":
+        recommendation = "in_review"
+        label = "Experience Gap"
+    elif experience_fit["fit"] == "over":
+        recommendation = "in_review"
+        label = "Overqualified Review"
+    else:
+        recommendation = "in_review"
+        label = "Partial Fit - Validate AML Evidence" if missing_mandatory or weak_mandatory else "Review Required"
+
+    matched_groups = {group: result for group, result in group_results.items() if result["score"] >= 25}
+    matched_skills = normalize_skill_list([
+        term
+        for result in group_results.values()
+        for term in result.get("matched_terms") or []
+    ])
+    missing_skills = [group.replace("_", " ").title() for group in missing_mandatory + weak_mandatory]
+    recruiter_recommendation = _aml_recruiter_recommendation(final_score, recommendation, risk_flags, experience_fit)
+    ranking_reason = (
+        f"Rank score {rank_score}/100: AML Transaction Monitoring L2 groups "
+        f"Role Fit {group_results['role_fit']['score']}/100, "
+        f"Transaction Monitoring {group_results['transaction_monitoring']['score']}/100, "
+        f"AML Investigations {group_results['aml_investigations']['score']}/100, "
+        f"Case Management {group_results['case_management']['score']}/100, "
+        f"SAR/STR {group_results['sar_str']['score']}/100, "
+        f"Banking Exposure {group_results['banking_exposure']['score']}/100, "
+        f"{experience_fit['relevant_years']:g}/{experience_fit['total_years']:g} AML-TM relevant/total years."
+    )
+    if missing_mandatory:
+        ranking_reason += f" Missing mandatory groups: {', '.join(missing_mandatory)}."
+    if wrong_role_flags:
+        ranking_reason += f" Wrong-role flags: {', '.join(wrong_role_flags)}."
+    if caps:
+        ranking_reason += " Caps applied: " + " ".join(item["reason"] for item in caps[:2])
+
+    knockout_flags = {
+        "missing_aml_transaction_monitoring": "missing_aml_transaction_monitoring" in risk_flags,
+        "missing_aml_investigation": "missing_aml_investigation" in risk_flags,
+        "missing_sar_str": "missing_sar_str" in risk_flags,
+        "kyc_only_profile": "kyc_only_profile" in risk_flags,
+        "generic_banking_only": "generic_banking_only" in risk_flags,
+        "under_experienced_for_l2": "under_experienced_for_l2" in risk_flags,
+        "over_experienced_for_l2": "over_experienced_for_l2" in risk_flags,
+        "no_case_management_evidence": "no_case_management_evidence" in risk_flags,
+        "no_banking_environment_evidence": "no_banking_environment_evidence" in risk_flags,
+    }
+
+    result = {
+        "final_score": final_score,
+        "rank_score": rank_score,
+        "fit_band": "excellent_match" if final_score >= 90 else "strong_match" if final_score >= 80 else "good_review" if final_score >= 70 else "partial_match" if final_score >= 60 else "low_match",
+        "skill_score": round(
+            group_results["transaction_monitoring"]["score"] * 0.34
+            + group_results["aml_investigations"]["score"] * 0.29
+            + group_results["case_management"]["score"] * 0.17
+            + group_results["sar_str"]["score"] * 0.20,
+            2,
+        ),
+        "experience_score": round(experience_fit["score"] * 0.25, 2),
+        "semantic_score": parsed.get("semantic_score", 0),
+        "semantic_weight": round(group_results["role_fit"]["score"] * 0.18 + group_results["banking_exposure"]["score"] * 0.07, 2),
+        "role_similarity": parsed.get("role_similarity", 0),
+        "role_weight": round(group_results["role_fit"]["score"] * 0.25, 2),
+        "education_score": 0,
+        "matched_skills": matched_skills,
+        "direct_matched_skills": matched_skills,
+        "transferable_skills": ["Fraud Investigation"] if has_fraud and not has_tm else [],
+        "preferred_matched_skills": group_results["nice_to_have"]["matched_terms"],
+        "missing_skills": missing_skills,
+        "skill_evidence_depth": {group: data["evidence_level"] for group, data in group_results.items()},
+        "skill_evidence": group_results,
+        "matched_skill_evidence": [
+            {
+                "skill": group.replace("_", " ").title(),
+                "status": "matched" if data["score"] >= 25 else "missing",
+                "evidence_level": data["evidence_level"],
+                "source": data["source"],
+                "weight": round(data["score"] / 100, 2),
+                "matched_terms": data["matched_terms"],
+            }
+            for group, data in group_results.items()
+        ],
+        "missing_or_weak_skills": [
+            {
+                "skill": group.replace("_", " ").title(),
+                "status": "missing" if group in missing_mandatory else "weak",
+                "evidence_level": group_results[group]["evidence_level"],
+            }
+            for group in missing_mandatory + weak_mandatory
+        ],
+        "employer_name_only_skills": [],
+        "skill_match_percent": mandatory_coverage,
+        "mandatory_skill_coverage": mandatory_coverage,
+        "preferred_skill_coverage": group_results["nice_to_have"]["score"],
+        "core_skill_match_percent": core_percent,
+        "matched_core_skill_groups": matched_groups,
+        "missing_core_skill_groups": missing_mandatory + weak_mandatory,
+        "confidence_score": confidence,
+        "seniority_level": parsed.get("seniority_level") or infer_seniority(parsed.get("designation"), experience_fit["relevant_years"]),
+        "target_seniority_level": jd_profile.get("seniority_level"),
+        "recommendation": recommendation,
+        "recruiter_recommendation": recruiter_recommendation,
+        "label": label,
+        "score_caps_applied": caps,
+        "recruiter_flags": recruiter_flags,
+        "risk_flags": risk_flags,
+        "knockout_flags": knockout_flags,
+        "kyc_only_profile": knockout_flags["kyc_only_profile"],
+        "generic_banking_only": knockout_flags["generic_banking_only"],
+        "ranking_reason": ranking_reason,
+        "experience_fit": experience_fit["label"],
+        "all_critical_requirements_met": not missing_mandatory and not weak_mandatory and not wrong_role_flags and experience_fit["fit"] == "within",
+        "jd_role_family": "aml_transaction_monitoring",
+        "jd_skill_groups": jd_profile.get("core_skill_groups") or {},
+        "evidence_group_scores": group_results,
+        "role_relevance_label": parsed.get("experience_relevance_label") or "",
+        "experience_fit_label": experience_fit["label"],
+        "scoring_breakdown": {
+            "aml_transaction_monitoring_group_scores": group_results,
+            "mandatory_group_status": {
+                "strong": strong_mandatory,
+                "weak": weak_mandatory,
+                "missing": missing_mandatory,
+            },
+            "wrong_role_flags": wrong_role_flags,
+            "experience_fit": experience_fit,
+            "score_caps_applied": caps,
+            "missing_core_skill_groups": missing_mandatory + weak_mandatory,
+            "knockout_flags": knockout_flags,
+        },
+        "candidate_screening_summary": {
+            "candidate_name": parsed.get("full_name") or "",
+            "current_title": parsed.get("designation") or parsed.get("current_title") or "",
+            "total_experience_years": experience_fit["total_years"],
+            "jd_relevant_experience_years": experience_fit["relevant_years"],
+            "final_score": final_score,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "recruiter_recommendation": recruiter_recommendation,
+            "label": label,
+            "matched_mandatory_groups": strong_mandatory,
+            "missing_mandatory_groups": missing_mandatory,
+            "wrong_role_flags": wrong_role_flags,
+            "risk_flags": risk_flags,
+        },
+    }
+    role_identity = _generic_role_identity(parsed, jd_profile, mandatory_coverage, _safe_float(parsed.get("role_relevance_score")), core_percent)
+    return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
+
+
 def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
     if (jd_profile.get("role_family") or "").lower() == "applied_ml_engineer":
         return _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
@@ -3584,6 +4059,8 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         return _score_candidate_product_architect(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
     if (jd_profile.get("role_family") or "").lower() == "m365_migration_sme":
         return _score_candidate_m365_migration(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+    if (jd_profile.get("role_family") or "").lower() == "aml_transaction_monitoring":
+        return _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
     if (jd_profile.get("role_family") or "").lower() == "software_frontend":
         result = _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
         role_identity = _generic_role_identity(

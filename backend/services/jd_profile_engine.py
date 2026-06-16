@@ -199,6 +199,68 @@ M365_MIGRATION_CORE_GROUPS = {
     ],
 }
 
+AML_TM_RE = re.compile(
+    r"\b(?:aml\s+transaction\s+monitoring|transaction\s+monitoring)\s+"
+    r"(?:investigator|analyst|specialist|officer|l2)\b|"
+    r"\baml\s+(?:case\s+)?investigator\b|"
+    r"\bfinancial\s+crime\s+investigator\b|"
+    r"\baml\s+investigations?\b|"
+    r"\baml\s+alerts?\b|"
+    r"\bescalated\s+alerts?\b|"
+    r"\bsuspicious\s+(?:activity|transaction)\s+(?:review|reporting|investigation)\b|"
+    r"\bSAR\s*/\s*STR\b",
+    re.I,
+)
+
+AML_TM_POSITIVE_RE = re.compile(
+    r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|tm\s+alerts?|aml\s+alerts?|"
+    r"escalated\s+alerts?|alert\s+investigation|transaction\s+review|suspicious\s+transaction\s+monitoring|"
+    r"aml\s+investigations?|case\s+(?:investigation|management|handling|review|disposition|closure|narrative)|"
+    r"financial\s+crime\s+investigation|money\s+laundering\s+investigation|suspicious\s+(?:activity|transaction)\s+investigation|"
+    r"sar|str|suspicious\s+activity\s+report|suspicious\s+transaction\s+report|regulatory\s+reporting|"
+    r"retail\s+banking|commercial\s+banking|correspondent\s+banking|source\s+of\s+funds|adverse\s+media|"
+    r"smurfing|layering|structuring)\b",
+    re.I,
+)
+
+AML_TM_CORE_GROUPS = {
+    "role_fit": [
+        "AML Transaction Monitoring Investigator", "AML Investigator",
+        "Transaction Monitoring Investigator", "AML Case Investigator",
+        "Financial Crime Investigator", "Senior AML Analyst",
+    ],
+    "transaction_monitoring": [
+        "AML Transaction Monitoring", "Transaction Monitoring", "TM Alerts",
+        "AML Alerts", "Monitoring Alerts", "Alert Investigation",
+        "Transaction Review", "Suspicious Transaction Monitoring",
+    ],
+    "aml_investigations": [
+        "AML Investigation", "AML Investigations", "Case Investigation",
+        "Financial Crime Investigation", "Money Laundering Investigation",
+        "Suspicious Activity Investigation", "Suspicious Transaction Investigation",
+    ],
+    "case_management": [
+        "Case Management", "Case Handling", "Case Review", "Case Disposition",
+        "Case Closure", "Alert Closure", "Investigation Workflow", "Case Narrative",
+    ],
+    "sar_str": [
+        "SAR", "STR", "Suspicious Activity Report", "Suspicious Transaction Report",
+        "SAR Filing", "STR Filing", "SAR Documentation", "STR Documentation",
+        "Regulatory Reporting",
+    ],
+    "banking_exposure": [
+        "Retail Banking", "Commercial Banking", "Correspondent Banking",
+        "Banking", "Financial Institution", "BFSI",
+    ],
+    "nice_to_have": [
+        "KYC", "CDD", "EDD", "Customer Due Diligence", "Enhanced Due Diligence",
+        "Source of Funds", "Source of Wealth", "Adverse Media", "PEP Screening",
+        "Sanctions Screening", "Smurfing", "Layering", "Structuring",
+        "Money Mule", "Shell Company", "Round Tripping", "Terrorist Financing",
+        "US AML", "International AML",
+    ],
+}
+
 
 def _is_applied_ml_hybrid(role_title="", jd_text="", skills=None):
     text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
@@ -228,6 +290,23 @@ def _is_m365_migration_sme(role_title="", jd_text="", skills=None):
         re.I,
     )) and not re.search(r"\bmigration|migrate|tenant[-\s]?to[-\s]?tenant|cutover|coexistence|quest\s+odm\b", text, re.I)
     return not generic_admin_only and (explicit_title or (title_hit and len(positive_hits) >= 3))
+
+
+def _is_aml_transaction_monitoring(role_title="", jd_text="", skills=None):
+    text = " ".join([role_title or "", jd_text or "", " ".join(str(item) for item in skills or [])])
+    title_hit = bool(AML_TM_RE.search(text))
+    positive_hits = {match.group(0).lower() for match in AML_TM_POSITIVE_RE.finditer(text)}
+    kyc_only = bool(re.search(r"\b(kyc|cdd|edd|customer\s+due\s+diligence|enhanced\s+due\s+diligence)\b", text, re.I)) and not re.search(
+        r"\b(aml\s+transaction\s+monitoring|transaction\s+monitoring|aml\s+investigations?|aml\s+alerts?|sar|str|suspicious\s+(?:activity|transaction))\b",
+        text,
+        re.I,
+    )
+    generic_analyst_only = bool(re.search(
+        r"\b(data\s+analyst|business\s+analyst|financial\s+analyst|risk\s+analyst|operations\s+analyst)\b",
+        text,
+        re.I,
+    )) and len(positive_hits) < 3
+    return not kyc_only and not generic_analyst_only and (title_hit or len(positive_hits) >= 4)
 
 
 def _apply_applied_ml_profile(must_have, nice_to_have, jd_text=""):
@@ -280,6 +359,24 @@ def _apply_m365_migration_profile(must_have, nice_to_have, jd_text=""):
     ])
     nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
     return must, nice, dict(M365_MIGRATION_CORE_GROUPS)
+
+
+def _apply_aml_transaction_monitoring_profile(must_have, nice_to_have, jd_text=""):
+    explicit = normalize_skill_list(must_have or known_skills_in_text(jd_text or ""))
+    grouped = [
+        skill
+        for options in AML_TM_CORE_GROUPS.values()
+        for skill in options
+    ]
+    must = normalize_skill_list(explicit + grouped)
+    nice = normalize_skill_list([
+        *(nice_to_have or []),
+        "AML KYC", "US AML Transaction Monitoring", "International AML Transaction Monitoring",
+        "Adverse Media", "Source of Funds", "Source of Wealth",
+        "Smurfing", "Layering", "Structuring", "Money Mule",
+    ])
+    nice = [skill for skill in nice if skill.lower() not in {item.lower() for item in must}]
+    return must, nice, dict(AML_TM_CORE_GROUPS)
 
 
 def _as_list(value):
@@ -651,9 +748,11 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     applied_ml_hybrid = _is_applied_ml_hybrid(role_title, jd_text, must_have + nice_to_have)
     product_architect_profile = _is_product_software_architect(role_title, jd_text, must_have + nice_to_have)
     m365_migration_profile = _is_m365_migration_sme(role_title, jd_text, must_have + nice_to_have)
+    aml_transaction_monitoring_profile = _is_aml_transaction_monitoring(role_title, jd_text, must_have + nice_to_have)
     applied_ml_core_groups = {}
     product_architect_core_groups = {}
     m365_migration_core_groups = {}
+    aml_transaction_monitoring_core_groups = {}
     if applied_ml_hybrid:
         role_family = "applied_ml_engineer"
         role_family_confidence = max(role_family_confidence, 92)
@@ -662,6 +761,9 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         role_family_confidence = max(role_family_confidence, 94)
     if m365_migration_profile:
         role_family = "m365_migration_sme"
+        role_family_confidence = max(role_family_confidence, 94)
+    if aml_transaction_monitoring_profile:
+        role_family = "aml_transaction_monitoring"
         role_family_confidence = max(role_family_confidence, 94)
     if role_family == "business_analysis":
         role_family = "business_analyst"
@@ -694,6 +796,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         must_have, nice_to_have, product_architect_core_groups = _apply_product_architect_profile(must_have, nice_to_have, jd_text)
     if role_family == "m365_migration_sme":
         must_have, nice_to_have, m365_migration_core_groups = _apply_m365_migration_profile(must_have, nice_to_have, jd_text)
+    if role_family == "aml_transaction_monitoring":
+        must_have, nice_to_have, aml_transaction_monitoring_core_groups = _apply_aml_transaction_monitoring_profile(must_have, nice_to_have, jd_text)
     min_years, max_years = _experience_range(jd_text, jd_data)
     seniority = _seniority(role_title, jd_text, min_years)
     if role_family == "data_analytics" and seniority in {"senior", "lead"} and not _explicit_seniority(role_title, jd_text):
@@ -706,6 +810,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         core_groups = product_architect_core_groups
     if m365_migration_core_groups:
         core_groups = m365_migration_core_groups
+    if aml_transaction_monitoring_core_groups:
+        core_groups = aml_transaction_monitoring_core_groups
     core_groups = _apply_conditional_auth_groups(core_groups, role_title, jd_text, must_have, nice_to_have)
     dynamic_role_label = ""
     if scoring_mode == "dynamic":
@@ -734,6 +840,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         profile_warnings.append("JD-first Product Software Architect profile detected from product engineering, architecture, backend, Docker, and leadership requirements.")
     if m365_migration_profile:
         profile_warnings.append("JD-first Microsoft 365 Migration SME profile detected; generic M365 admin/support/cloud keywords are not enough for high ranking.")
+    if aml_transaction_monitoring_profile:
+        profile_warnings.append("JD-first AML Transaction Monitoring profile detected; KYC-only, generic banking, fraud-only, or analyst-only evidence is not enough for high ranking.")
     profile_confidence = _profile_confidence(scoring_mode, role_family_confidence, must_have, core_groups)
     profile_hash = _stable_hash({
         "role_title": role_title,
@@ -756,6 +864,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             "Applied ML Engineer" if role_family == "applied_ml_engineer"
             else "Product Software Architect" if role_family == "product_software_architect"
             else "Microsoft 365 Migration SME" if role_family == "m365_migration_sme"
+            else "AML Transaction Monitoring Investigator" if role_family == "aml_transaction_monitoring"
             else role_title
         ),
         "secondary_roles": (
@@ -768,26 +877,36 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
                 "Tenant-to-Tenant Migration Specialist",
                 "Collaboration Migration Engineer",
             ] if role_family == "m365_migration_sme"
+            else [
+                "AML Investigator",
+                "Transaction Monitoring Investigator",
+                "AML Case Investigator",
+                "Financial Crime Investigator",
+                "AML Transaction Monitoring Analyst L2",
+                "Senior AML Analyst",
+            ] if role_family == "aml_transaction_monitoring"
             else []
         ),
         "role_group": (
             "AI / ML" if role_family == "applied_ml_engineer"
             else "Product Engineering / Software Architecture" if role_family == "product_software_architect"
             else "Microsoft 365 / Collaboration Migration" if role_family == "m365_migration_sme"
+            else "AML / Financial Crime Compliance" if role_family == "aml_transaction_monitoring"
             else ""
         ),
         "specialization": (
             ["Computer Vision", "OCR", "Document AI", "LLM/VLM", "Multimodal AI", "Production ML"] if role_family == "applied_ml_engineer"
             else ["System Design", "Backend Architecture", "Product Engineering", "Hands-on Coding", "Technical Leadership"] if role_family == "product_software_architect"
             else ["Tenant-to-Tenant Migration", "Exchange Migration", "Teams/SharePoint/OneDrive Migration", "Quest ODM", "PowerShell"] if role_family == "m365_migration_sme"
+            else ["AML Transaction Monitoring", "AML Investigations", "Case Management", "SAR/STR", "Banking Exposure"] if role_family == "aml_transaction_monitoring"
             else []
         ),
         "role_family_confidence": role_family_confidence,
         "scoring_mode": scoring_mode,
         "dynamic_profile_used": scoring_mode == "dynamic",
         "known_template_used": scoring_mode == "known_template",
-        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid or product_architect_profile or m365_migration_profile,
-        "hybrid_role_detected": bool(applied_ml_hybrid or product_architect_profile or m365_migration_profile or scoring_mode == "hybrid"),
+        "hybrid_profile_used": scoring_mode == "hybrid" or applied_ml_hybrid or product_architect_profile or m365_migration_profile or aml_transaction_monitoring_profile,
+        "hybrid_role_detected": bool(applied_ml_hybrid or product_architect_profile or m365_migration_profile or aml_transaction_monitoring_profile or scoring_mode == "hybrid"),
         "profile_confidence": profile_confidence,
         "seniority_level": seniority,
         "min_experience_years": min_years,
@@ -811,6 +930,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "domain_context": (
             "product software architecture" if role_family == "product_software_architect"
             else "microsoft 365 migration" if role_family == "m365_migration_sme"
+            else "aml transaction monitoring investigations" if role_family == "aml_transaction_monitoring"
             else (role_family if role_family != "other" else "")
         ),
         "hard_requirements": hard,
@@ -825,7 +945,13 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             "Teams, SharePoint, and OneDrive migration",
             "Quest ODM or equivalent migration tooling",
             "PowerShell scripting and cutover validation",
-        ] if role_family == "m365_migration_sme" else [],
+        ] if role_family == "m365_migration_sme" else [
+            "AML Transaction Monitoring evidence",
+            "AML alert and suspicious transaction investigation",
+            "Case management and case narrative documentation",
+            "SAR/STR support or suspicious reporting process knowledge",
+            "Retail, commercial, or correspondent banking exposure",
+        ] if role_family == "aml_transaction_monitoring" else [],
         "negative_signals": [
             "Civil/construction architect", "Cloud-only architect without coding",
             "Enterprise architect without hands-on product engineering",
@@ -836,7 +962,13 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             "Azure infrastructure/cloud-only engineer",
             "SharePoint developer without migration",
             "Project/delivery manager without hands-on migration",
-        ] if role_family == "m365_migration_sme" else [],
+        ] if role_family == "m365_migration_sme" else [
+            "Data Analyst or Business Analyst without AML TM evidence",
+            "KYC-only profile without AML investigation",
+            "Generic banking operations without AML investigation",
+            "Fraud-only profile without AML Transaction Monitoring",
+            "Compliance officer without case investigation or SAR/STR evidence",
+        ] if role_family == "aml_transaction_monitoring" else [],
         "do_not_mix_with": [
             "Civil Architect", "Construction Architect", "Cloud-only Architect",
             "Enterprise Architect without coding", "Project Manager",
@@ -847,7 +979,12 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             "SharePoint Developer without migration", "Teams Administrator only",
             "Exchange Administrator without migration", "IAM-only Engineer",
             "Project Manager without hands-on migration",
-        ] if role_family == "m365_migration_sme" else [],
+        ] if role_family == "m365_migration_sme" else [
+            "Data Analyst", "Business Analyst", "Financial Analyst", "Risk Analyst",
+            "Operations Analyst", "KYC Analyst only", "Customer Support Banking",
+            "Loan Officer", "Branch Banking", "Fraud Analyst only",
+            "Compliance Officer only",
+        ] if role_family == "aml_transaction_monitoring" else [],
         "scoring_weights": (
             {
                 "ml_dl_fundamentals": 20,
@@ -870,7 +1007,13 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
                 "tools_scripting": 15,
                 "seniority_delivery": 10,
                 "data_quality": 5,
-            } if role_family == "m365_migration_sme" else {}
+            } if role_family == "m365_migration_sme" else {
+                "role_fit": 25,
+                "mandatory_aml_tm_skills": 35,
+                "experience_fit": 25,
+                "banking_domain_exposure": 10,
+                "nice_to_have": 5,
+            } if role_family == "aml_transaction_monitoring" else {}
         ),
         "score_caps": {},
         "score_boosts": {},
