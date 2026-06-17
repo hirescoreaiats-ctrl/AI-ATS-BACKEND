@@ -5906,6 +5906,35 @@ def sender_domain_verification_status(data: dict = Body(...)):
     }
 
 
+@router.post("/outreach-sender/default", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def save_default_outreach_sender(request: Request, data: dict = Body(...)):
+    reply_to = (data.get("reply_to") or "").strip()
+    sender_name = (data.get("sender_name") or "").strip()
+    make_active = bool(data.get("active", True))
+    if not reply_to or "@" not in reply_to:
+        raise HTTPException(status_code=400, detail="Valid reply_to email is required")
+
+    db = SessionLocal()
+    try:
+        user = _user_from_request_token(request, db)
+        if user:
+            user.outreach_sender_email = reply_to
+            if make_active:
+                user.outreach_sender_verified_at = datetime.utcnow()
+            db.commit()
+        return {
+            "message": "HireScore AI sender saved",
+            "mode": "hirescore",
+            "active": make_active,
+            "from_email": os.getenv("DEFAULT_FROM_EMAIL") or os.getenv("HIRESCORE_DEFAULT_FROM_EMAIL") or "Info@hirescoreai.com",
+            "from_name": os.getenv("DEFAULT_FROM_NAME") or os.getenv("HIRESCORE_DEFAULT_FROM_NAME") or "HireScore AI",
+            "reply_to": reply_to,
+            "sender_name": sender_name,
+        }
+    finally:
+        db.close()
+
+
 @router.post("/send-mail", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def send_mail(data: dict = Body(...)):
     to_email = (data.get("email") or "").strip()
