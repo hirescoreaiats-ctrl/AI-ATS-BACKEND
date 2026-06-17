@@ -60,6 +60,7 @@ from backend.utils.upload_security import malware_scan
 router = APIRouter()
 LEGACY_RECRUITER_DEPENDENCIES = [Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))]
 logger = logging.getLogger(__name__)
+EMAIL_DAILY_COUNTERS: dict[str, dict] = {}
 
 REQUIRED_GOOGLE_ASSESSMENT_SCOPES = {
     "https://www.googleapis.com/auth/gmail.send",
@@ -5759,6 +5760,263 @@ def complete_interview_slot(
         db.close()
 
 
+def _normalize_sender_domain(value: str | None) -> str:
+    domain = (value or "").strip().lower()
+    domain = re.sub(r"^https?://", "", domain)
+    domain = re.sub(r"^www\.", "", domain)
+    domain = domain.split("/")[0].split(":")[0]
+    if "@" in domain:
+        domain = domain.rsplit("@", 1)[-1]
+    return domain
+
+
+def _sender_domain_from_email(email: str | None) -> str:
+    email = (email or "").strip().lower()
+    if email.count("@") != 1:
+        return ""
+    return _normalize_sender_domain(email.rsplit("@", 1)[-1])
+
+
+def _validate_sender_domain_payload(domain: str, from_email: str):
+    clean_domain = _normalize_sender_domain(domain)
+    clean_email = (from_email or "").strip().lower()
+    if not clean_domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+    if not clean_email or "@" not in clean_email:
+        raise HTTPException(status_code=400, detail="Valid from_email is required")
+    if _sender_domain_from_email(clean_email) != clean_domain:
+        raise HTTPException(status_code=400, detail="from_email domain must match domain")
+    return clean_domain, clean_email
+
+
+def _verified_sender_domains() -> set[str]:
+    raw = os.getenv("VERIFIED_SENDER_DOMAINS") or os.getenv("BREVO_VERIFIED_SENDER_DOMAINS") or ""
+    return {_normalize_sender_domain(item) for item in raw.split(",") if _normalize_sender_domain(item)}
+
+
+def _is_verified_sending_domain(domain: str) -> bool:
+    clean_domain = _normalize_sender_domain(domain)
+    return clean_domain in _verified_sender_domains() or _brevo_domain_is_verified(clean_domain)
+
+
+def _brevo_dns_records_for_domain(domain: str) -> list[dict]:
+    clean_domain = _normalize_sender_domain(domain)
+    token = hashlib.sha256(f"hirescore-brevo:{clean_domain}".encode("utf-8")).hexdigest()[:16]
+    status = "verified" if _is_verified_sending_domain(clean_domain) else "pending"
+    return [
+        {"type": "TXT", "host": "@", "value": f"brevo-code:{token}", "ttl": "3600", "status": status, "label": "Brevo code TXT"},
+        {"type": "CNAME", "host": "brevo1._domainkey", "value": "brevo1.domainkey.brevo.com", "ttl": "3600", "status": status, "label": "DKIM CNAME"},
+        {"type": "CNAME", "host": "brevo2._domainkey", "value": "brevo2.domainkey.brevo.com", "ttl": "3600", "status": status, "label": "DKIM CNAME"},
+        {"type": "TXT", "host": "_dmarc", "value": "v=DMARC1; p=none", "ttl": "3600", "status": status, "label": "DMARC TXT"},
+    ]
+
+
+def _brevo_api_key() -> str:
+    return (os.getenv("BREVO_API_KEY") or os.getenv("SENDINBLUE_API_KEY") or "").strip()
+
+
+def _brevo_headers() -> dict:
+    return {
+        "accept": "application/json",
+        "api-key": _brevo_api_key(),
+        "content-type": "application/json",
+    }
+
+
+def _brevo_request(method: str, path: str, payload: dict | None = None):
+    key = _brevo_api_key()
+    if not key:
+        return None, None
+    res = requests.request(
+        method,
+        "https://api.brevo.com/v3" + path,
+        headers=_brevo_headers(),
+        json=payload,
+        timeout=25,
+    )
+    data = {}
+    try:
+        data = res.json()
+    except Exception:
+        data = {"message": res.text}
+    return res, data
+
+
+def _dns_records_from_brevo_config(data: dict, fallback_domain: str) -> list[dict]:
+    records_source = data.get("dns_records") or data.get("records") or data
+    records = []
+
+    def append_record(label: str, record: dict):
+        if not isinstance(record, dict):
+            return
+        host = record.get("host_name") or record.get("host") or record.get("name") or record.get("hostname") or ""
+        value = record.get("value") or record.get("content") or record.get("record_value") or ""
+        record_type = record.get("type") or record.get("record_type") or "TXT"
+        status_value = record.get("status")
+        status = "verified" if status_value is True else "failed" if status_value == "failed" else "pending"
+        if not host and not value:
+            return
+        records.append({
+            "type": record_type,
+            "host": host,
+            "value": value,
+            "ttl": str(record.get("ttl") or "3600"),
+            "status": status,
+            "label": label.replace("_", " ").title(),
+        })
+
+    if isinstance(records_source, list):
+        for index, record in enumerate(records_source, start=1):
+            append_record(f"Record {index}", record)
+    elif isinstance(records_source, dict):
+        for label, record in records_source.items():
+            if isinstance(record, dict) and any(isinstance(value, dict) for value in record.values()):
+                for nested_label, nested_record in record.items():
+                    append_record(f"{label} {nested_label}", nested_record)
+            else:
+                append_record(label, record)
+
+    return records or _brevo_dns_records_for_domain(fallback_domain)
+
+
+def _brevo_get_or_create_domain(domain: str):
+    clean_domain = _normalize_sender_domain(domain)
+    res, data = _brevo_request("GET", f"/senders/domains/{clean_domain}")
+    if res and res.status_code == 404:
+        res, data = _brevo_request("POST", "/senders/domains", {"name": clean_domain})
+    if res and res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Brevo domain request failed: {data.get('message') or data}")
+    return data or {}
+
+
+def _brevo_authenticate_domain(domain: str):
+    clean_domain = _normalize_sender_domain(domain)
+    res, data = _brevo_request("PUT", f"/senders/domains/{clean_domain}/authenticate")
+    if res and res.status_code == 404:
+        _brevo_get_or_create_domain(clean_domain)
+        res, data = _brevo_request("PUT", f"/senders/domains/{clean_domain}/authenticate")
+    if res and res.status_code >= 400:
+        return False, data or {}
+    return bool(res and res.status_code < 300), data or {}
+
+
+def _brevo_domain_is_verified(domain: str) -> bool:
+    try:
+        res, data = _brevo_request("GET", f"/senders/domains/{_normalize_sender_domain(domain)}")
+        if not res or res.status_code >= 400:
+            return False
+        return bool(data.get("verified") and data.get("authenticated"))
+    except Exception:
+        return False
+
+
+def _format_sender_header(name: str | None, email: str | None) -> str:
+    clean_email = (email or "").strip()
+    clean_name = (name or "").strip()
+    if clean_name and clean_email:
+        return f"{clean_name} <{clean_email}>"
+    return clean_email
+
+
+def _sender_email_from_header(value: str | None) -> str:
+    raw = (value or "").strip()
+    match = re.search(r"<([^>]+)>", raw)
+    return (match.group(1) if match else raw).strip()
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _email_day_key() -> str:
+    return datetime.utcnow().date().isoformat()
+
+
+def _email_counter_bucket() -> dict:
+    today = _email_day_key()
+    for key in list(EMAIL_DAILY_COUNTERS.keys()):
+        if key != today:
+            EMAIL_DAILY_COUNTERS.pop(key, None)
+    return EMAIL_DAILY_COUNTERS.setdefault(today, {"global": 0, "recruiters": {}})
+
+
+def _check_email_daily_limits(recruiter_email: str | None):
+    bucket = _email_counter_bucket()
+    per_recruiter_limit = _int_env("EMAIL_DAILY_LIMIT_PER_RECRUITER", 50)
+    global_limit = _int_env("EMAIL_GLOBAL_DAILY_LIMIT", 100)
+    recruiter_key = (recruiter_email or "unknown").strip().lower()
+    if global_limit and bucket["global"] >= global_limit:
+        raise HTTPException(status_code=429, detail="Global daily email limit reached")
+    if per_recruiter_limit and bucket["recruiters"].get(recruiter_key, 0) >= per_recruiter_limit:
+        raise HTTPException(status_code=429, detail="Recruiter daily email limit reached")
+
+
+def _record_email_daily_send(recruiter_email: str | None):
+    bucket = _email_counter_bucket()
+    recruiter_key = (recruiter_email or "unknown").strip().lower()
+    bucket["global"] += 1
+    bucket["recruiters"][recruiter_key] = bucket["recruiters"].get(recruiter_key, 0) + 1
+
+
+def _send_with_brevo(
+    *,
+    sender_name: str,
+    sender_email: str,
+    to_email: str,
+    to_name: str,
+    subject: str,
+    html_body: str,
+    reply_to: str | None,
+):
+    if not _brevo_api_key():
+        return None
+    payload = {
+        "sender": {"name": sender_name or sender_email, "email": sender_email},
+        "to": [{"email": to_email, "name": to_name or to_email}],
+        "subject": subject,
+        "htmlContent": html_body,
+    }
+    if reply_to:
+        payload["replyTo"] = {"email": reply_to}
+    res, data = _brevo_request("POST", "/smtp/email", payload)
+    if not res:
+        return None
+    if res.status_code >= 300:
+        raise HTTPException(status_code=502, detail=f"Brevo email failed: {data.get('message') or data}")
+    return data or {"messageId": None}
+
+
+@router.post("/sender-domains/dns-records", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def sender_domain_dns_records(data: dict = Body(...)):
+    domain, from_email = _validate_sender_domain_payload(data.get("domain"), data.get("from_email"))
+    domain_config = _brevo_get_or_create_domain(domain) if _brevo_api_key() else {}
+    records = _dns_records_from_brevo_config(domain_config, domain) if domain_config else _brevo_dns_records_for_domain(domain)
+    status = "verified" if _is_verified_sending_domain(domain) else "pending"
+    return {
+        "domain": domain,
+        "from_email": from_email,
+        "verification_status": status,
+        "records": records,
+    }
+
+
+@router.post("/sender-domains/verification-status", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def sender_domain_verification_status(data: dict = Body(...)):
+    domain, from_email = _validate_sender_domain_payload(data.get("domain"), data.get("from_email"))
+    authenticated, auth_data = _brevo_authenticate_domain(domain) if _brevo_api_key() else (False, {})
+    domain_config = _brevo_get_or_create_domain(domain) if _brevo_api_key() else {}
+    status = "verified" if authenticated or _is_verified_sending_domain(domain) else "pending"
+    return {
+        "domain": domain,
+        "from_email": from_email,
+        "verification_status": status,
+        "records": _dns_records_from_brevo_config(domain_config or auth_data, domain),
+    }
+
+
 @router.post("/send-mail", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def send_mail(data: dict = Body(...)):
     to_email = (data.get("email") or "").strip()
@@ -5779,15 +6037,48 @@ def send_mail(data: dict = Body(...)):
     email_body = custom_body[:10000] if custom_body else _fallback_candidate_email_body(name, job_title, company_name, hiring_manager)
     subject = (custom_subject or f"{job_title} - Next Step")[:180]
 
+    brevo_key = _brevo_api_key()
     resend_key = os.getenv("RESEND_API_KEY")
     smtp_host = os.getenv("SMTP_HOST")
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
+    platform_from_email = (
+        os.getenv("DEFAULT_FROM_EMAIL")
+        or os.getenv("HIRESCORE_DEFAULT_FROM_EMAIL")
+        or os.getenv("RESEND_FROM")
+        or os.getenv("SMTP_FROM")
+        or smtp_user
+        or "Info@hirescoreai.com"
+    )
+    platform_from_email = _sender_email_from_header(platform_from_email)
+    platform_from_name = os.getenv("DEFAULT_FROM_NAME") or os.getenv("HIRESCORE_DEFAULT_FROM_NAME") or "HireScore AI"
     sender = os.getenv("RESEND_FROM") or os.getenv("SMTP_FROM") or smtp_user
-    reply_to = recruiter_email if "@" in recruiter_email else None
+    reply_to = requested_reply_to if "@" in requested_reply_to else None
+    use_recruiter_sender = sender_mode == "legacy"
+    brevo_sender_name = platform_from_name
+    brevo_sender_email = platform_from_email
 
-    if not resend_key and not (smtp_host and smtp_user and smtp_password and sender):
-        if recruiter_email:
+    if sender_mode in {"hirescore", "default", "platform"}:
+        sender = _format_sender_header(platform_from_name, platform_from_email)
+        brevo_sender_name = platform_from_name
+        brevo_sender_email = platform_from_email
+        use_recruiter_sender = False
+    elif sender_mode in {"own_domain", "domain"}:
+        domain = _sender_domain_from_email(requested_from_email)
+        if not domain or not _is_verified_sending_domain(domain):
+            raise HTTPException(status_code=400, detail="Sending domain is not verified")
+        sender = _format_sender_header(requested_from_name or recruiter_name, requested_from_email)
+        brevo_sender_name = requested_from_name or recruiter_name or requested_from_email
+        brevo_sender_email = requested_from_email
+        reply_to = requested_from_email
+        use_recruiter_sender = False
+    else:
+        sender = sender or platform_from_email
+        brevo_sender_email = _sender_email_from_header(sender)
+        brevo_sender_name = recruiter_name or platform_from_name
+
+    if not brevo_key and not resend_key and not (smtp_host and smtp_user and smtp_password and sender):
+        if use_recruiter_sender and recruiter_email:
             db = SessionLocal()
             try:
                 google_user = _find_outreach_google_user(db, recruiter_email)
@@ -5809,15 +6100,17 @@ def send_mail(data: dict = Body(...)):
         else:
             raise HTTPException(
                 status_code=500,
-                detail="Email provider is not configured. Connect Google Workspace/Gmail or configure business SMTP from the dashboard.",
+                detail="Email provider is not configured. Set BREVO_API_KEY or connect a verified sender.",
             )
 
     try:
+        _check_email_daily_limits(recruiter_email or reply_to)
         db = SessionLocal()
         try:
             gmail_result = _send_with_recruiter_gmail(recruiter_email, to_email, subject, email_body, db)
             if gmail_result:
                 _mark_mail_sent(job_id, to_email, db, candidate_id)
+                _record_email_daily_send(recruiter_email or reply_to)
                 return {
                     "message": "Mail sent",
                     "provider": "gmail",
@@ -5831,6 +6124,7 @@ def send_mail(data: dict = Body(...)):
             smtp_user_result = _send_with_user_smtp(_find_outreach_google_user(db, recruiter_email), to_email, subject, email_body)
             if smtp_user_result:
                 _mark_mail_sent(job_id, to_email, db, candidate_id)
+                _record_email_daily_send(recruiter_email or reply_to)
                 return {
                     "message": "Mail sent",
                     "provider": "business_smtp",
@@ -5848,7 +6142,18 @@ def send_mail(data: dict = Body(...)):
         finally:
             db.close()
 
-        if resend_key:
+        if brevo_key:
+            brevo_result = _send_with_brevo(
+                sender_name=brevo_sender_name,
+                sender_email=brevo_sender_email,
+                to_email=to_email,
+                to_name=name,
+                subject=subject,
+                html_body=f"<pre style='font-family:Arial,sans-serif;white-space:pre-wrap'>{html.escape(email_body)}</pre>",
+                reply_to=reply_to,
+            )
+            provider = "brevo"
+        elif resend_key:
             res = requests.post(
                 "https://api.resend.com/emails",
                 headers={
@@ -5888,6 +6193,7 @@ def send_mail(data: dict = Body(...)):
             _mark_mail_sent(job_id, to_email, db, candidate_id)
         finally:
             db.close()
+        _record_email_daily_send(recruiter_email or reply_to)
 
         return {
             "message": "Mail sent",
@@ -5895,6 +6201,7 @@ def send_mail(data: dict = Body(...)):
             "email": to_email,
             "from": sender,
             "reply_to": reply_to,
+            **({"brevo_message": brevo_result} if provider == "brevo" else {}),
             "recruiter_name": recruiter_name,
             "ai_preview": email_body,
         }
