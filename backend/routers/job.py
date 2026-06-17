@@ -5648,6 +5648,94 @@ def complete_interview_slot(data: dict = Body(...)):
         db.close()
 
 
+def _normalize_sender_domain(value: str | None) -> str:
+    domain = (value or "").strip().lower()
+    domain = re.sub(r"^https?://", "", domain)
+    domain = re.sub(r"^www\.", "", domain)
+    domain = domain.split("/")[0].split(":")[0]
+    if "@" in domain:
+        domain = domain.rsplit("@", 1)[-1]
+    return domain
+
+
+def _sender_domain_from_email(email: str | None) -> str:
+    email = (email or "").strip().lower()
+    if email.count("@") != 1:
+        return ""
+    return _normalize_sender_domain(email.rsplit("@", 1)[-1])
+
+
+def _validate_sender_domain_payload(domain: str, from_email: str):
+    clean_domain = _normalize_sender_domain(domain)
+    clean_email = (from_email or "").strip().lower()
+    if not clean_domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+    if not clean_email or "@" not in clean_email:
+        raise HTTPException(status_code=400, detail="Valid from_email is required")
+    if _sender_domain_from_email(clean_email) != clean_domain:
+        raise HTTPException(status_code=400, detail="from_email domain must match domain")
+    return clean_domain, clean_email
+
+
+def _verified_sender_domains() -> set[str]:
+    raw = os.getenv("VERIFIED_SENDER_DOMAINS") or os.getenv("BREVO_VERIFIED_SENDER_DOMAINS") or ""
+    return {_normalize_sender_domain(item) for item in raw.split(",") if _normalize_sender_domain(item)}
+
+
+def _is_verified_sending_domain(domain: str) -> bool:
+    return _normalize_sender_domain(domain) in _verified_sender_domains()
+
+
+def _brevo_dns_records_for_domain(domain: str) -> list[dict]:
+    clean_domain = _normalize_sender_domain(domain)
+    token = hashlib.sha256(f"hirescore-brevo:{clean_domain}".encode("utf-8")).hexdigest()[:16]
+    status = "verified" if _is_verified_sending_domain(clean_domain) else "pending"
+    return [
+        {"type": "TXT", "host": "@", "value": f"brevo-code:{token}", "ttl": "3600", "status": status, "label": "Brevo code TXT"},
+        {"type": "CNAME", "host": "brevo1._domainkey", "value": "brevo1.domainkey.brevo.com", "ttl": "3600", "status": status, "label": "DKIM CNAME"},
+        {"type": "CNAME", "host": "brevo2._domainkey", "value": "brevo2.domainkey.brevo.com", "ttl": "3600", "status": status, "label": "DKIM CNAME"},
+        {"type": "TXT", "host": "_dmarc", "value": "v=DMARC1; p=none", "ttl": "3600", "status": status, "label": "DMARC TXT"},
+    ]
+
+
+def _format_sender_header(name: str | None, email: str | None) -> str:
+    clean_email = (email or "").strip()
+    clean_name = (name or "").strip()
+    if clean_name and clean_email:
+        return f"{clean_name} <{clean_email}>"
+    return clean_email
+
+
+def _sender_email_from_header(value: str | None) -> str:
+    raw = (value or "").strip()
+    match = re.search(r"<([^>]+)>", raw)
+    return (match.group(1) if match else raw).strip()
+
+
+@router.post("/sender-domains/dns-records", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def sender_domain_dns_records(data: dict = Body(...)):
+    domain, from_email = _validate_sender_domain_payload(data.get("domain"), data.get("from_email"))
+    status = "verified" if _is_verified_sending_domain(domain) else "pending"
+    return {
+        "domain": domain,
+        "from_email": from_email,
+        "verification_status": status,
+        "records": _brevo_dns_records_for_domain(domain),
+    }
+
+
+@router.post("/sender-domains/verification-status", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def sender_domain_verification_status(data: dict = Body(...)):
+    domain, from_email = _validate_sender_domain_payload(data.get("domain"), data.get("from_email"))
+    status = "verified" if _is_verified_sending_domain(domain) else "pending"
+    return {
+        "domain": domain,
+        "from_email": from_email,
+        "verification_status": status,
+        "records": _brevo_dns_records_for_domain(domain),
+    }
+
+
 @router.post("/send-mail", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def send_mail(data: dict = Body(...)):
     to_email = (data.get("email") or "").strip()
@@ -5661,6 +5749,10 @@ def send_mail(data: dict = Body(...)):
     recruiter_name = data.get("recruiter_name") or hiring_manager
     custom_subject = (data.get("subject") or "").strip()
     custom_body = (data.get("body") or "").strip()
+    sender_mode = (data.get("sender_mode") or "legacy").strip().lower()
+    requested_from_email = (data.get("from_email") or "").strip()
+    requested_from_name = (data.get("from_name") or "").strip()
+    requested_reply_to = (data.get("reply_to") or recruiter_email).strip()
 
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="Valid candidate email is required")
@@ -5672,11 +5764,34 @@ def send_mail(data: dict = Body(...)):
     smtp_host = os.getenv("SMTP_HOST")
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
+    platform_from_email = (
+        os.getenv("HIRESCORE_DEFAULT_FROM_EMAIL")
+        or os.getenv("RESEND_FROM")
+        or os.getenv("SMTP_FROM")
+        or smtp_user
+        or "support@hirescoreai.com"
+    )
+    platform_from_email = _sender_email_from_header(platform_from_email)
+    platform_from_name = os.getenv("HIRESCORE_DEFAULT_FROM_NAME") or "HireScore AI"
     sender = os.getenv("RESEND_FROM") or os.getenv("SMTP_FROM") or smtp_user
-    reply_to = recruiter_email if "@" in recruiter_email else None
+    reply_to = requested_reply_to if "@" in requested_reply_to else None
+    use_recruiter_sender = sender_mode == "legacy"
+
+    if sender_mode in {"hirescore", "default", "platform"}:
+        sender = _format_sender_header(platform_from_name, platform_from_email)
+        use_recruiter_sender = False
+    elif sender_mode in {"own_domain", "domain"}:
+        domain = _sender_domain_from_email(requested_from_email)
+        if not domain or not _is_verified_sending_domain(domain):
+            raise HTTPException(status_code=400, detail="Sending domain is not verified")
+        sender = _format_sender_header(requested_from_name or recruiter_name, requested_from_email)
+        reply_to = requested_from_email
+        use_recruiter_sender = False
+    else:
+        sender = sender or platform_from_email
 
     if not resend_key and not (smtp_host and smtp_user and smtp_password and sender):
-        if recruiter_email:
+        if use_recruiter_sender and recruiter_email:
             db = SessionLocal()
             try:
                 google_user = _find_outreach_google_user(db, recruiter_email)
@@ -5704,7 +5819,7 @@ def send_mail(data: dict = Body(...)):
     try:
         db = SessionLocal()
         try:
-            gmail_result = _send_with_recruiter_gmail(recruiter_email, to_email, subject, email_body, db)
+            gmail_result = _send_with_recruiter_gmail(recruiter_email, to_email, subject, email_body, db) if use_recruiter_sender else None
             if gmail_result:
                 _mark_mail_sent(job_id, to_email, db, candidate_id)
                 return {
@@ -5717,7 +5832,7 @@ def send_mail(data: dict = Body(...)):
                     "gmail_message": gmail_result,
                     "ai_preview": email_body,
                 }
-            smtp_user_result = _send_with_user_smtp(_find_outreach_google_user(db, recruiter_email), to_email, subject, email_body)
+            smtp_user_result = _send_with_user_smtp(_find_outreach_google_user(db, recruiter_email), to_email, subject, email_body) if use_recruiter_sender else None
             if smtp_user_result:
                 _mark_mail_sent(job_id, to_email, db, candidate_id)
                 return {
@@ -5729,7 +5844,7 @@ def send_mail(data: dict = Body(...)):
                     "recruiter_name": recruiter_name,
                     "ai_preview": email_body,
                 }
-            if recruiter_email and not _is_verified_business_sender(db, recruiter_email):
+            if use_recruiter_sender and recruiter_email and not _is_verified_business_sender(db, recruiter_email):
                 raise HTTPException(
                     status_code=401,
                     detail="Business sender email is not verified. Send and approve the verification email before sending candidate mail.",
@@ -5759,7 +5874,9 @@ def send_mail(data: dict = Body(...)):
         else:
             msg = MIMEText(email_body)
             msg["Subject"] = subject
-            smtp_from = recruiter_email if recruiter_email and smtp_user and recruiter_email.lower() == smtp_user.lower() else sender
+            smtp_from = sender
+            if sender_mode == "legacy" and recruiter_email and smtp_user and recruiter_email.lower() == smtp_user.lower():
+                smtp_from = recruiter_email
             msg["From"] = smtp_from
             msg["To"] = to_email
             if reply_to and reply_to.lower() != (smtp_from or "").lower():
