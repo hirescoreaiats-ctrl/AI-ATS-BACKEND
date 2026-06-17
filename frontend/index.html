@@ -2369,7 +2369,7 @@ Back Back to Recruitment Dashboard
             <h2>Outreach Command Center</h2>
             <p>Open role-specific communication queues, send recruiter emails, sync replies, and move responsive candidates into the next stage.</p>
         </div>
-        <button onclick="syncGmailReplies()" class="ats-outreach-sync-btn">Sync Replies</button>
+        <button onclick="openReplySyncModal()" class="ats-outreach-sync-btn">Sync Replies</button>
     </section>
 
     <section class="ats-outreach-metrics">
@@ -2451,17 +2451,17 @@ Back Back to Recruitment Dashboard
 <span class="ats-comm-panel-icon">MAIL</span>
 <div>
 <h3>Outreach Sender</h3>
-<p id="gmailConnectStatus">Connect your outreach sender when you are ready to send candidate emails from your company email.</p>
-<div class="ats-sender-email-row">
-<input id="outreachSenderEmail" type="email" placeholder="sender@company.com" oninput="saveOutreachSenderEmail()" onchange="saveOutreachSenderEmail()">
-<small>Use a Google Workspace/Gmail account for OAuth, or your configured SMTP/Resend sender.</small>
+<p id="gmailConnectStatus">Use the recommended HireScore AI sender, or verify your own domain with DNS records before sending from it.</p>
+<div id="activeSenderPreview" class="ats-active-sender-preview"></div>
 </div>
 </div>
-</div>
-<button onclick="connectGmailForOutreach()" class="ats-gmail-connect-btn">
-Connect Google Mail
+<button onclick="openHireScoreSenderModal()" class="ats-gmail-connect-btn">
+Use HireScore AI Sender
 </button>
-<button onclick="syncGmailReplies()" class="ats-gmail-connect-btn is-secondary">
+<button onclick="openOwnDomainSenderModal()" class="ats-gmail-connect-btn is-secondary">
+Connect Own Domain
+</button>
+<button onclick="openReplySyncModal()" class="ats-gmail-connect-btn is-secondary">
 Sync Replies
 </button>
 </section>

@@ -4306,6 +4306,34 @@ font-weight:800;
 color:var(--ats-subtle);
 }
 
+.ats-active-sender-preview{
+display:flex;
+align-items:center;
+gap:10px;
+flex-wrap:wrap;
+margin-top:10px;
+font-size:12px;
+font-weight:850;
+color:var(--ats-muted);
+}
+
+.ats-active-sender-preview span{
+color:var(--ats-subtle);
+text-transform:uppercase;
+font-size:11px;
+letter-spacing:.06em;
+}
+
+.ats-active-sender-preview strong{
+color:var(--ats-text);
+}
+
+.ats-active-sender-preview small{
+font-size:12px;
+font-weight:850;
+color:var(--ats-primary-strong);
+}
+
 #communicationResultsPage .ats-comm-sender-panel .ats-gmail-connect-btn{
 background:var(--ats-primary);
 border-color:var(--ats-primary);
@@ -4318,6 +4346,292 @@ background:#fff;
 border-color:var(--ats-primary-border);
 color:var(--ats-primary-strong);
 box-shadow:none;
+}
+
+#communicationResultsPage .ats-comm-sender-panel .ats-gmail-connect-btn:disabled,
+.ats-sender-modal .ats-gmail-connect-btn:disabled{
+opacity:.48;
+cursor:not-allowed;
+box-shadow:none;
+}
+
+.ats-sender-modal{
+position:fixed;
+inset:0;
+z-index:9999;
+display:flex;
+align-items:center;
+justify-content:center;
+padding:22px;
+background:rgba(15,23,42,.42);
+backdrop-filter:blur(8px);
+}
+
+.ats-sender-modal-card{
+width:min(980px, 100%);
+max-height:92vh;
+overflow:auto;
+border:1px solid var(--ats-line);
+border-radius:14px;
+background:#fff;
+box-shadow:0 24px 70px rgba(15,23,42,.28);
+padding:20px;
+}
+
+.ats-sender-modal-head{
+display:flex;
+align-items:flex-start;
+justify-content:space-between;
+gap:18px;
+padding-bottom:16px;
+border-bottom:1px solid var(--ats-line);
+margin-bottom:16px;
+}
+
+.ats-sender-modal-head h3{
+font-size:22px;
+font-weight:950;
+color:var(--ats-text);
+}
+
+.ats-sender-modal-head p{
+margin-top:6px;
+font-size:13.5px;
+font-weight:750;
+line-height:1.5;
+color:var(--ats-muted);
+max-width:720px;
+}
+
+.ats-sender-modal-close{
+height:36px;
+padding:0 13px;
+border:1px solid var(--ats-line);
+border-radius:9px;
+background:#fff;
+font-size:12px;
+font-weight:900;
+color:var(--ats-muted);
+cursor:pointer;
+}
+
+.ats-sender-recommended{
+display:inline-flex;
+align-items:center;
+height:28px;
+padding:0 10px;
+border:1px solid #bbf7d0;
+border-radius:999px;
+background:#f0fdf4;
+font-size:12px;
+font-weight:950;
+color:#166534;
+margin-bottom:14px;
+}
+
+.ats-sender-preview-box{
+display:grid;
+grid-template-columns:repeat(2,minmax(0,1fr));
+gap:12px;
+padding:14px;
+border:1px solid var(--ats-indigo-border);
+border-radius:12px;
+background:var(--ats-indigo-soft);
+margin-bottom:14px;
+}
+
+.ats-sender-preview-box div{
+display:flex;
+flex-direction:column;
+gap:4px;
+min-width:0;
+}
+
+.ats-sender-preview-box span{
+font-size:11px;
+font-weight:950;
+letter-spacing:.06em;
+text-transform:uppercase;
+color:var(--ats-subtle);
+}
+
+.ats-sender-preview-box strong{
+font-size:13px;
+font-weight:950;
+color:var(--ats-text);
+overflow-wrap:anywhere;
+}
+
+.ats-sender-form-grid{
+display:grid;
+grid-template-columns:repeat(3,minmax(0,1fr));
+gap:12px;
+margin-bottom:14px;
+}
+
+.ats-sender-field{
+display:flex;
+flex-direction:column;
+gap:7px;
+margin-bottom:14px;
+}
+
+.ats-sender-field span{
+font-size:12px;
+font-weight:950;
+color:var(--ats-text);
+}
+
+.ats-sender-field input{
+height:42px;
+border:1px solid var(--ats-line);
+border-radius:10px;
+padding:0 12px;
+font-size:13px;
+font-weight:800;
+color:var(--ats-text);
+outline:none;
+}
+
+.ats-sender-field input:focus{
+border-color:var(--ats-primary);
+box-shadow:0 0 0 3px rgba(37,99,235,.12);
+}
+
+.ats-sender-actions{
+display:flex;
+align-items:center;
+gap:10px;
+flex-wrap:wrap;
+margin-top:14px;
+}
+
+.ats-sender-warning,
+.ats-sender-success{
+padding:11px 12px;
+border-radius:10px;
+font-size:12.5px;
+font-weight:900;
+line-height:1.45;
+margin-top:12px;
+}
+
+.ats-sender-warning{
+border:1px solid #fed7aa;
+background:#fff7ed;
+color:#9a3412;
+}
+
+.ats-sender-warning.is-danger{
+border-color:#fecaca;
+background:#fef2f2;
+color:#991b1b;
+}
+
+.ats-sender-success{
+border:1px solid #bbf7d0;
+background:#f0fdf4;
+color:#166534;
+}
+
+.ats-sender-helper{
+font-size:12.5px;
+font-weight:800;
+line-height:1.5;
+color:var(--ats-muted);
+margin-top:10px;
+}
+
+.ats-dns-table-wrap{
+width:100%;
+overflow:auto;
+margin-top:12px;
+border:1px solid var(--ats-line);
+border-radius:12px;
+}
+
+.ats-dns-table{
+width:100%;
+border-collapse:collapse;
+min-width:760px;
+}
+
+.ats-dns-table th,
+.ats-dns-table td{
+padding:11px 12px;
+border-bottom:1px solid var(--ats-line);
+text-align:left;
+vertical-align:top;
+font-size:12px;
+font-weight:850;
+color:var(--ats-text);
+}
+
+.ats-dns-table th{
+background:#f8fafc;
+font-size:11px;
+letter-spacing:.06em;
+text-transform:uppercase;
+color:var(--ats-subtle);
+}
+
+.ats-dns-table td:nth-child(3){
+max-width:360px;
+overflow-wrap:anywhere;
+color:var(--ats-muted);
+}
+
+.ats-dns-table td small{
+display:block;
+margin-top:3px;
+font-size:11px;
+font-weight:800;
+color:var(--ats-subtle);
+}
+
+.ats-dns-table td button{
+height:30px;
+padding:0 9px;
+margin:0 5px 5px 0;
+border:1px solid var(--ats-line);
+border-radius:8px;
+background:#fff;
+font-size:11px;
+font-weight:900;
+color:var(--ats-primary-strong);
+cursor:pointer;
+}
+
+.ats-dns-status{
+display:inline-flex;
+align-items:center;
+height:24px;
+padding:0 9px;
+border-radius:999px;
+font-size:11px;
+font-weight:950;
+border:1px solid #fde68a;
+background:#fffbeb;
+color:#92400e;
+}
+
+.ats-dns-status.is-verified{
+border-color:#bbf7d0;
+background:#f0fdf4;
+color:#166534;
+}
+
+.ats-dns-status.is-failed{
+border-color:#fecaca;
+background:#fef2f2;
+color:#991b1b;
+}
+
+.ats-reply-sync-options{
+display:flex;
+gap:10px;
+flex-wrap:wrap;
+margin-bottom:12px;
 }
 
 .ats-comm-section{
@@ -4464,6 +4778,22 @@ grid-template-columns:1fr;
 .ats-comm-section-head{
 flex-direction:column;
 align-items:flex-start;
+}
+
+.ats-sender-modal{
+padding:12px;
+}
+
+.ats-sender-modal-head,
+.ats-sender-actions,
+.ats-reply-sync-options{
+flex-direction:column;
+align-items:stretch;
+}
+
+.ats-sender-form-grid,
+.ats-sender-preview-box{
+grid-template-columns:1fr;
 }
 }
 
