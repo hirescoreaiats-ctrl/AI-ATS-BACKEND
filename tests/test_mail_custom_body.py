@@ -38,6 +38,7 @@ def test_send_mail_uses_custom_body_without_generating_ai(monkeypatch):
             "job_id": "job-1",
             "job_title": "Data Analyst",
             "recruiter_email": "sachin.yadav@infometry.net",
+            "sender_mode": "legacy",
             "subject": "Custom subject",
             "body": "Custom pasted body",
         }
