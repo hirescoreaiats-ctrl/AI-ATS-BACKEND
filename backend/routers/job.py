@@ -4520,6 +4520,33 @@ def _is_verified_business_sender(db, sender_email: str) -> bool:
     return bool(user and user.outreach_sender_verified_at)
 
 
+@router.post("/outreach-sender/default", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def configure_default_outreach_sender(request: Request, data: dict = Body(...)):
+    reply_to = (data.get("reply_to") or "").strip().lower()
+    sender_name = (data.get("sender_name") or "").strip()
+
+    if not reply_to or "@" not in reply_to:
+        raise HTTPException(status_code=400, detail="Valid reply-to email is required")
+
+    db = SessionLocal()
+    try:
+        user = _user_from_request_token(request, db)
+        if not user:
+            raise HTTPException(status_code=401, detail="Login required to configure the sender")
+    finally:
+        db.close()
+
+    return {
+        "message": "HireScore AI sender configured",
+        "sender_mode": "hirescore",
+        "from_email": os.getenv("DEFAULT_FROM_EMAIL") or os.getenv("HIRESCORE_DEFAULT_FROM_EMAIL") or "Info@hirescoreai.com",
+        "from_name": os.getenv("DEFAULT_FROM_NAME") or os.getenv("HIRESCORE_DEFAULT_FROM_NAME") or "HireScore AI",
+        "reply_to": reply_to,
+        "sender_name": sender_name,
+        "active": bool(data.get("active")),
+    }
+
+
 @router.post("/outreach-sender/configure-smtp", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def configure_outreach_sender_smtp(request: Request, data: dict = Body(...)):
     sender_email = (data.get("email") or "").strip().lower()
