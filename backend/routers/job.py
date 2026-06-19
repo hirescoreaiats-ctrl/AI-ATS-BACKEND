@@ -6073,6 +6073,10 @@ def send_mail(data: dict = Body(...)):
     recruiter_name = data.get("recruiter_name") or hiring_manager
     custom_subject = (data.get("subject") or "").strip()
     custom_body = (data.get("body") or "").strip()
+    sender_mode = (data.get("sender_mode") or "legacy").strip().lower()
+    requested_from_email = (data.get("from_email") or "").strip()
+    requested_from_name = (data.get("from_name") or "").strip()
+    requested_reply_to = (data.get("reply_to") or recruiter_email).strip()
 
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="Valid candidate email is required")
@@ -6150,38 +6154,39 @@ def send_mail(data: dict = Body(...)):
         _check_email_daily_limits(recruiter_email or reply_to)
         db = SessionLocal()
         try:
-            gmail_result = _send_with_recruiter_gmail(recruiter_email, to_email, subject, email_body, db)
-            if gmail_result:
-                _mark_mail_sent(job_id, to_email, db, candidate_id)
-                _record_email_daily_send(recruiter_email or reply_to)
-                return {
-                    "message": "Mail sent",
-                    "provider": "gmail",
-                    "email": to_email,
-                    "from": gmail_result.get("sender_email") or recruiter_email,
-                    "reply_to": gmail_result.get("sender_email") or recruiter_email,
-                    "recruiter_name": recruiter_name,
-                    "gmail_message": gmail_result,
-                    "ai_preview": email_body,
-                }
-            smtp_user_result = _send_with_user_smtp(_find_outreach_google_user(db, recruiter_email), to_email, subject, email_body)
-            if smtp_user_result:
-                _mark_mail_sent(job_id, to_email, db, candidate_id)
-                _record_email_daily_send(recruiter_email or reply_to)
-                return {
-                    "message": "Mail sent",
-                    "provider": "business_smtp",
-                    "email": to_email,
-                    "from": smtp_user_result.get("sender_email") or recruiter_email,
-                    "reply_to": smtp_user_result.get("sender_email") or recruiter_email,
-                    "recruiter_name": recruiter_name,
-                    "ai_preview": email_body,
-                }
-            if recruiter_email and not _is_verified_business_sender(db, recruiter_email):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Business sender email is not verified. Send and approve the verification email before sending candidate mail.",
-                )
+            if use_recruiter_sender:
+                gmail_result = _send_with_recruiter_gmail(recruiter_email, to_email, subject, email_body, db)
+                if gmail_result:
+                    _mark_mail_sent(job_id, to_email, db, candidate_id)
+                    _record_email_daily_send(recruiter_email or reply_to)
+                    return {
+                        "message": "Mail sent",
+                        "provider": "gmail",
+                        "email": to_email,
+                        "from": gmail_result.get("sender_email") or recruiter_email,
+                        "reply_to": gmail_result.get("sender_email") or recruiter_email,
+                        "recruiter_name": recruiter_name,
+                        "gmail_message": gmail_result,
+                        "ai_preview": email_body,
+                    }
+                smtp_user_result = _send_with_user_smtp(_find_outreach_google_user(db, recruiter_email), to_email, subject, email_body)
+                if smtp_user_result:
+                    _mark_mail_sent(job_id, to_email, db, candidate_id)
+                    _record_email_daily_send(recruiter_email or reply_to)
+                    return {
+                        "message": "Mail sent",
+                        "provider": "business_smtp",
+                        "email": to_email,
+                        "from": smtp_user_result.get("sender_email") or recruiter_email,
+                        "reply_to": smtp_user_result.get("sender_email") or recruiter_email,
+                        "recruiter_name": recruiter_name,
+                        "ai_preview": email_body,
+                    }
+                if recruiter_email and not _is_verified_business_sender(db, recruiter_email):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Business sender email is not verified. Send and approve the verification email before sending candidate mail.",
+                    )
         finally:
             db.close()
 
