@@ -5539,18 +5539,9 @@ def move_to_interview_scheduling(
         if not candidate:
             raise HTTPException(status_code=404, detail="Candidate not found")
 
-        candidate_test = db.query(CandidateAssessment).filter(
-            CandidateAssessment.candidate_id == candidate.id,
-            CandidateAssessment.job_id == job_id,
-            CandidateAssessment.status == "Test Done",
-        ).order_by(CandidateAssessment.completed_at.desc()).first()
-        if not candidate_test or candidate_test.percentage is None:
-            raise HTTPException(status_code=400, detail="Candidate test result is not available yet")
-
         previous_stage = candidate.stage
         candidate.status = "Interview Scheduling"
         candidate.stage = "interview_scheduling"
-        candidate_test.interview_status = "Interview Scheduling"
         _record_candidate_workflow_event(
             db,
             candidate,
@@ -5558,7 +5549,7 @@ def move_to_interview_scheduling(
             title="Candidate moved to interview scheduling",
             from_stage=previous_stage,
             to_stage="interview_scheduling",
-            reason="Assessment passed",
+            reason="Moved directly by recruiter",
         )
         db.commit()
 
