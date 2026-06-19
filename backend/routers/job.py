@@ -5284,7 +5284,6 @@ def update_communication_response(data: dict = Body(...)):
 def send_assessment_test(request: Request, data: dict = Body(...)):
     candidate_id = data.get("candidate_id")
     job_id = data.get("job_id")
-    force_without_test = bool(data.get("force_without_test"))
     recruiter_email = (data.get("recruiter_email") or _email_from_request_token(request)).strip().lower()
 
     if not candidate_id:
@@ -5523,6 +5522,7 @@ def move_to_interview_scheduling(
 ):
     candidate_id = data.get("candidate_id")
     job_id = data.get("job_id")
+    force_without_test = bool(data.get("force_without_test"))
 
     if not candidate_id:
         raise HTTPException(status_code=400, detail="candidate_id is required")
