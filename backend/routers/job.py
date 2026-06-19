@@ -5284,6 +5284,7 @@ def update_communication_response(data: dict = Body(...)):
 def send_assessment_test(request: Request, data: dict = Body(...)):
     candidate_id = data.get("candidate_id")
     job_id = data.get("job_id")
+    force_without_test = bool(data.get("force_without_test"))
     recruiter_email = (data.get("recruiter_email") or _email_from_request_token(request)).strip().lower()
 
     if not candidate_id:
@@ -5539,9 +5540,23 @@ def move_to_interview_scheduling(
         if not candidate:
             raise HTTPException(status_code=404, detail="Candidate not found")
 
+        candidate_test = db.query(CandidateAssessment).filter(
+            CandidateAssessment.candidate_id == candidate.id,
+            CandidateAssessment.job_id == job_id,
+            CandidateAssessment.status == "Test Done",
+        ).order_by(CandidateAssessment.completed_at.desc()).first()
+        has_test_result = bool(candidate_test and candidate_test.percentage is not None)
+        if not has_test_result and not force_without_test:
+            raise HTTPException(
+                status_code=409,
+                detail="Candidate test result is not available yet. Confirm to move without a test result.",
+            )
+
         previous_stage = candidate.stage
         candidate.status = "Interview Scheduling"
         candidate.stage = "interview_scheduling"
+        if candidate_test:
+            candidate_test.interview_status = "Interview Scheduling"
         _record_candidate_workflow_event(
             db,
             candidate,
@@ -5549,7 +5564,7 @@ def move_to_interview_scheduling(
             title="Candidate moved to interview scheduling",
             from_stage=previous_stage,
             to_stage="interview_scheduling",
-            reason="Moved directly by recruiter",
+            reason="Assessment result available" if has_test_result else "Moved without assessment result after recruiter confirmation",
         )
         db.commit()
 
