@@ -5,6 +5,7 @@ from backend.core.security import create_access_token, get_current_user, hash_pa
 from backend.database import SessionLocal
 from backend.models import Organization, RecruiterInvitation, User
 from backend.repositories.audit_repository import write_audit_log
+from backend.services.transactional_email import send_transactional_email
 import jwt
 import datetime
 from fastapi.responses import RedirectResponse
@@ -14,6 +15,7 @@ import urllib.parse
 import secrets
 import string
 import smtplib
+import html
 from email.mime.text import MIMEText
 
 router = APIRouter()
@@ -142,6 +144,40 @@ def _pilot_signup_url(invitation: RecruiterInvitation) -> str:
     return _frontend_page_url(SIGNUP_PAGE, query)
 
 
+def _send_pilot_invitation_email(invitation: RecruiterInvitation, invited_by: User) -> dict:
+    signup_url = _pilot_signup_url(invitation)
+    inviter_name = (invited_by.name or "HireScore AI Admin").strip()
+    safe_inviter_name = html.escape(inviter_name)
+    safe_email = html.escape(invitation.email)
+    safe_signup_url = html.escape(signup_url, quote=True)
+    text_body = (
+        "You're invited to join the HireScore AI pilot.\n\n"
+        f"{inviter_name} created pilot access for {invitation.email}.\n"
+        "Create your account using this private link:\n"
+        f"{signup_url}\n\n"
+        "This invitation expires in 7 days and can only be used with this email address.\n\n"
+        "HireScore AI"
+    )
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172033;line-height:1.55">
+      <div style="padding:28px;border:1px solid #dfe5ee;border-radius:16px;background:#ffffff">
+        <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:#4f46e5">HIRESCORE AI PILOT</div>
+        <h1 style="font-size:24px;margin:10px 0 8px">You're invited to HireScore AI</h1>
+        <p style="color:#5f6b7d;margin:0 0 22px">{safe_inviter_name} created secure pilot access for <strong>{safe_email}</strong>.</p>
+        <a href="{safe_signup_url}" style="display:inline-block;padding:12px 20px;border-radius:9px;background:#315bea;color:#ffffff;text-decoration:none;font-weight:700">Create Pilot Account</a>
+        <p style="font-size:12px;color:#7b8798;margin:20px 0 0">This private invitation expires in 7 days and only works for the invited email address.</p>
+      </div>
+    </div>
+    """
+    return send_transactional_email(
+        to_email=invitation.email,
+        to_name=invitation.email.split("@", 1)[0],
+        subject="You're invited to the HireScore AI Pilot",
+        html_body=html_body,
+        text_body=text_body,
+    )
+
+
 def _ensure_admin_organization(db, admin: User) -> str:
     local_admin = db.query(User).filter(User.id == admin.id).first()
     if not local_admin:
@@ -260,13 +296,41 @@ def create_pilot_user_invite(
         )
         db.commit()
         db.refresh(invitation)
+        email_sent = False
+        email_provider = None
+        try:
+            delivery = _send_pilot_invitation_email(invitation, admin)
+            email_sent = True
+            email_provider = delivery.get("provider")
+            write_audit_log(
+                db,
+                action="pilot_user.invitation_email_sent",
+                entity_type="invitation",
+                entity_id=invitation.id,
+                actor_user_id=admin.id,
+                organization_id=organization_id,
+                metadata={"email": email, "provider": email_provider},
+            )
+        except Exception as exc:
+            write_audit_log(
+                db,
+                action="pilot_user.invitation_email_failed",
+                entity_type="invitation",
+                entity_id=invitation.id,
+                actor_user_id=admin.id,
+                organization_id=organization_id,
+                metadata={"email": email, "error": str(exc)[:500]},
+            )
+        db.commit()
         return {
             "status": "pending",
             "email": email,
             "access_code": invitation.token,
             "signup_url": _pilot_signup_url(invitation),
             "expires_at": invitation.expires_at.isoformat(),
-            "message": "Pilot invitation created",
+            "email_sent": email_sent,
+            "email_provider": email_provider,
+            "message": "Pilot invitation emailed" if email_sent else "Pilot invitation created, but email delivery failed",
         }
     finally:
         db.close()
