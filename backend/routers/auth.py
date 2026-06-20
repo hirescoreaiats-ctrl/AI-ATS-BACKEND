@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from backend.core.config import get_settings
-from backend.core.security import create_access_token, get_current_user, hash_password, verify_password
+from backend.core.security import create_access_token, get_current_user, hash_password, require_roles, verify_password
 from backend.database import SessionLocal
-from backend.models import RecruiterInvitation, User
+from backend.models import Organization, RecruiterInvitation, User
+from backend.repositories.audit_repository import write_audit_log
 import jwt
 import datetime
 from fastapi.responses import RedirectResponse
@@ -118,6 +119,8 @@ def _apply_invitation_to_user(invitation: RecruiterInvitation | None, user: User
         return
     user.role = invitation.role or user.role or "recruiter"
     user.organization_id = invitation.organization_id
+    if (invitation.token or "").startswith("pilot_"):
+        user.subscription_plan = "pilot"
     invitation.status = "accepted"
 
 
@@ -132,6 +135,167 @@ def me(user: User = Depends(get_current_user)):
         "subscription_status": user.subscription_status or "unpaid",
         "subscription_plan": user.subscription_plan,
     }
+
+
+def _pilot_signup_url(invitation: RecruiterInvitation) -> str:
+    query = urllib.parse.urlencode({"access_code": invitation.token, "email": invitation.email})
+    return _frontend_page_url(SIGNUP_PAGE, query)
+
+
+def _ensure_admin_organization(db, admin: User) -> str:
+    local_admin = db.query(User).filter(User.id == admin.id).first()
+    if not local_admin:
+        raise HTTPException(status_code=401, detail="Admin account not found")
+    if local_admin.organization_id:
+        return local_admin.organization_id
+    slug = f"pilot-{local_admin.id[:8]}-{secrets.token_hex(3)}"
+    organization = Organization(name=f"{local_admin.name or 'HireScore'} Pilot Workspace", slug=slug)
+    db.add(organization)
+    db.flush()
+    local_admin.organization_id = organization.id
+    return organization.id
+
+
+@router.get("/admin/pilot-users")
+def list_pilot_users(admin: User = Depends(require_roles("admin", "super_admin"))):
+    db = SessionLocal()
+    try:
+        user_query = db.query(User).filter(User.subscription_plan == "pilot")
+        invite_query = db.query(RecruiterInvitation).filter(RecruiterInvitation.token.like("pilot_%"))
+        if admin.role != "super_admin":
+            user_query = user_query.filter(User.organization_id == admin.organization_id)
+            invite_query = invite_query.filter(RecruiterInvitation.organization_id == admin.organization_id)
+
+        users = user_query.order_by(User.created_at.desc()).limit(200).all()
+        invitations = invite_query.order_by(RecruiterInvitation.created_at.desc()).limit(200).all()
+        return {
+            "users": [
+                {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email,
+                    "status": "active" if user.is_active and user.subscription_status == "active" else "inactive",
+                    "created_at": user.created_at.isoformat() if user.created_at else None,
+                }
+                for user in users
+            ],
+            "invitations": [
+                {
+                    "id": invitation.id,
+                    "email": invitation.email,
+                    "status": invitation.status,
+                    "access_code": invitation.token if invitation.status == "pending" else None,
+                    "signup_url": _pilot_signup_url(invitation) if invitation.status == "pending" else None,
+                    "expires_at": invitation.expires_at.isoformat() if invitation.expires_at else None,
+                }
+                for invitation in invitations
+            ],
+        }
+    finally:
+        db.close()
+
+
+@router.post("/admin/pilot-users")
+def create_pilot_user_invite(
+    data: dict,
+    admin: User = Depends(require_roles("admin", "super_admin")),
+):
+    email = _normalize_email(data.get("email"))
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid pilot user email is required")
+
+    db = SessionLocal()
+    try:
+        organization_id = _ensure_admin_organization(db, admin)
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            if admin.role != "super_admin" and existing_user.organization_id not in {None, organization_id}:
+                raise HTTPException(status_code=403, detail="User belongs to another organization")
+            existing_user.organization_id = organization_id
+            existing_user.subscription_status = "active"
+            existing_user.subscription_plan = "pilot"
+            existing_user.subscription_started_at = datetime.datetime.utcnow()
+            existing_user.is_active = True
+            write_audit_log(
+                db,
+                action="pilot_user.activated",
+                entity_type="user",
+                entity_id=existing_user.id,
+                actor_user_id=admin.id,
+                organization_id=organization_id,
+                metadata={"email": email},
+            )
+            db.commit()
+            return {"status": "active", "email": email, "message": "Existing user activated as a pilot user"}
+
+        invitation = (
+            db.query(RecruiterInvitation)
+            .filter(
+                RecruiterInvitation.email == email,
+                RecruiterInvitation.organization_id == organization_id,
+                RecruiterInvitation.status == "pending",
+            )
+            .first()
+        )
+        if not invitation:
+            invitation = RecruiterInvitation(
+                organization_id=organization_id,
+                invited_by_user_id=admin.id,
+                email=email,
+                role="recruiter",
+                status="pending",
+            )
+            db.add(invitation)
+        invitation.token = "pilot_" + secrets.token_urlsafe(28)
+        invitation.expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+        db.flush()
+        write_audit_log(
+            db,
+            action="pilot_user.invited",
+            entity_type="invitation",
+            entity_id=invitation.id,
+            actor_user_id=admin.id,
+            organization_id=organization_id,
+            metadata={"email": email},
+        )
+        db.commit()
+        db.refresh(invitation)
+        return {
+            "status": "pending",
+            "email": email,
+            "access_code": invitation.token,
+            "signup_url": _pilot_signup_url(invitation),
+            "expires_at": invitation.expires_at.isoformat(),
+            "message": "Pilot invitation created",
+        }
+    finally:
+        db.close()
+
+
+@router.post("/admin/pilot-users/{user_id}/deactivate")
+def deactivate_pilot_user(user_id: str, admin: User = Depends(require_roles("admin", "super_admin"))):
+    db = SessionLocal()
+    try:
+        pilot = db.query(User).filter(User.id == user_id, User.subscription_plan == "pilot").first()
+        if not pilot:
+            raise HTTPException(status_code=404, detail="Pilot user not found")
+        if admin.role != "super_admin" and pilot.organization_id != admin.organization_id:
+            raise HTTPException(status_code=403, detail="Pilot user belongs to another organization")
+        pilot.is_active = False
+        pilot.subscription_status = "inactive"
+        write_audit_log(
+            db,
+            action="pilot_user.deactivated",
+            entity_type="user",
+            entity_id=pilot.id,
+            actor_user_id=admin.id,
+            organization_id=pilot.organization_id,
+            metadata={"email": pilot.email},
+        )
+        db.commit()
+        return {"message": "Pilot access deactivated", "id": pilot.id}
+    finally:
+        db.close()
 
 
 # ---------------- SIGNUP ----------------
@@ -569,7 +733,7 @@ def google_callback(code: str, state: str = None):
 
         user = User(name=name, email=email, password=hashed_password, role="recruiter")
         _apply_invitation_to_user(invitation, user)
-        _activate_subscription(user, "manual")
+        _activate_subscription(user, "pilot" if invitation and (invitation.token or "").startswith("pilot_") else "manual")
         db.add(user)
         db.commit()
 
