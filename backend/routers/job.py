@@ -1717,8 +1717,6 @@ def get_results(job_id: str):
         unique = {}
 
         for r in resumes:
-            _repair_stored_candidate_profile(r, job)
-
             key = (
                 r.email.strip().lower() if r.email else None,
                 r.phone.strip() if r.phone else None
@@ -1775,9 +1773,25 @@ def get_results(job_id: str):
 
         db.commit()
 
+        processing = {
+            "total": len(resumes),
+            "pending": sum(1 for row in resumes if (row.processing_status or "").lower() == "pending"),
+            "processing": sum(1 for row in resumes if (row.processing_status or "").lower() == "processing"),
+            "completed": sum(1 for row in resumes if (row.processing_status or "").lower() == "completed"),
+            "failed": sum(1 for row in resumes if (row.processing_status or "").lower() == "failed"),
+        }
+        processing["done"] = processing["completed"] + processing["failed"]
+        processing["percent"] = int(round((processing["done"] / processing["total"]) * 100)) if processing["total"] else 0
+
         return {
             "job_id": job_id,
-            "results": sorted_resumes
+            "job": {
+                "job_title": job.job_title,
+                "required_skills": job.required_skills,
+                "jd_text": job.jd_text,
+            },
+            "processing": processing,
+            "results": sorted_resumes,
         }
 
     finally:
@@ -2195,8 +2209,6 @@ def get_jobs(user: User = Depends(require_roles("admin", "super_admin", "recruit
             if resumes:
                 top_score = max([r.final_score or 0 for r in resumes])
             ensure_apply_slug(job, db)
-            if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
-                ensure_generated_sourcing_content(job, db)
             source_counts = {source: 0 for source in [*TRACKED_APPLICATION_SOURCES, "unknown"]}
             for resume in resumes:
                 source = normalize_application_source(resume.application_source)
@@ -3052,8 +3064,6 @@ def get_job_detail(
         _require_job_visible(job, user)
 
         ensure_apply_slug(job, db)
-        if not job.generated_linkedin_post or not job.generated_whatsapp_message or not job.generated_naukri_text:
-            ensure_generated_sourcing_content(job, db)
         db.commit()
         db.refresh(job)
 

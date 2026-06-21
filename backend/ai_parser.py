@@ -21,7 +21,9 @@ def _get_openai_client():
     if not api_key:
         return None
 
-    _client = OpenAI(api_key=api_key)
+    timeout_seconds = max(10, min(90, int(os.getenv("OPENAI_RESUME_TIMEOUT_SECONDS", "40"))))
+    max_retries = max(0, min(2, int(os.getenv("OPENAI_RESUME_MAX_RETRIES", "1"))))
+    _client = OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=max_retries)
     return _client
 
 
@@ -362,7 +364,7 @@ def merge_parse_patch(previous_parse, patch, allowed_fields=None):
 
 # ---------------- PARSE RESUME ----------------
 
-def parse_resume(text, retries=2):
+def parse_resume(text, retries=1):
 
     client = _get_openai_client()
     if not client:
