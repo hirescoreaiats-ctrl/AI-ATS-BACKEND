@@ -703,6 +703,69 @@ def _requirement_lines(jd_text=""):
     return hard[:10], soft[:10]
 
 
+def _critical_must_have_from_jd(jd_text="", must_have=None, hard_requirements=None):
+    must_have = normalize_skill_list(must_have or [])
+    hard_requirements = hard_requirements or []
+    critical = []
+    for line in hard_requirements:
+        if not re.search(r"\b(must(?:\s+have)?|mandatory|critical|non[-\s]?negotiable)\b", str(line), re.I):
+            continue
+        for skill in must_have:
+            pattern = re.escape(skill).replace(r"\ ", r"\s+")
+            if re.search(r"\b" + pattern + r"\b", str(line), re.I):
+                critical.append(skill)
+    if critical:
+        return normalize_skill_list(critical)[:6]
+
+    text = jd_text or ""
+    for skill in must_have:
+        pattern = re.escape(skill).replace(r"\ ", r"\s+")
+        if re.search(
+            r"\b(?:must(?:\s+have)?|mandatory|critical|non[-\s]?negotiable)\b.{0,80}\b" + pattern + r"\b|"
+            r"\b" + pattern + r"\b.{0,80}\b(?:must(?:\s+have)?|mandatory|critical|non[-\s]?negotiable)\b",
+            text,
+            re.I,
+        ):
+            critical.append(skill)
+    return normalize_skill_list(critical)[:6]
+
+
+def _tools_platforms_from_skills(skills):
+    tool_categories = {"Cloud", "DevOps", "CRM", "Database", "Testing", "Backend", "Frontend", "Data"}
+    found = []
+    for skill in normalize_skill_list(skills or []):
+        category = SKILL_CATEGORIES.get(skill)
+        if category in tool_categories or re.search(r"\b(api|cloud|aws|azure|gcp|docker|kubernetes|jira|git|sql|salesforce|power\s*bi|tableau|excel)\b", skill, re.I):
+            found.append(skill)
+    return normalize_skill_list(found)[:20]
+
+
+def _location_work_mode(jd_text="", jd_data=None):
+    jd_data = jd_data or {}
+    text = " ".join([
+        str(jd_data.get("location") or ""),
+        str(jd_data.get("work_mode") or ""),
+        jd_text or "",
+    ])
+    work_mode = ""
+    if re.search(r"\b(remote|work\s+from\s+home|wfh)\b", text, re.I):
+        work_mode = "remote"
+    if re.search(r"\bhybrid\b", text, re.I):
+        work_mode = "hybrid"
+    if re.search(r"\b(onsite|on[-\s]?site|office)\b", text, re.I):
+        work_mode = "onsite" if not work_mode else work_mode
+
+    location = jd_data.get("location") or ""
+    if not location:
+        match = re.search(
+            r"\b(?:location|based\s+in|work\s+from)\s*[:\-]?\s*([A-Z][A-Za-z .,-]{2,60})",
+            jd_text or "",
+        )
+        if match:
+            location = re.split(r"\n|\.|;", match.group(1))[0].strip(" ,-")
+    return str(location or "").strip(), work_mode
+
+
 def _responsibility_signals(jd_text=""):
     patterns = [
         "develop", "design", "implement", "maintain", "analyze", "report", "dashboard",
@@ -843,10 +906,24 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     if aml_transaction_monitoring_profile:
         profile_warnings.append("JD-first AML Transaction Monitoring profile detected; KYC-only, generic banking, fraud-only, or analyst-only evidence is not enough for high ranking.")
     profile_confidence = _profile_confidence(scoring_mode, role_family_confidence, must_have, core_groups)
+    critical_must_have = _critical_must_have_from_jd(jd_text or "", must_have, hard)
+    tools_platforms = _tools_platforms_from_skills(must_have + nice_to_have)
+    location, work_mode = _location_work_mode(jd_text or "", jd_data)
+    domain_keywords = normalize_skill_list([
+        item
+        for item in [
+            role_family if role_family != "other" else "",
+            normalized_role_label.replace("_", " "),
+            *_as_list(jd_data.get("domain")),
+            *_as_list(jd_data.get("industry")),
+        ]
+        if str(item or "").strip()
+    ])
     profile_hash = _stable_hash({
         "role_title": role_title,
         "jd_text": jd_text or "",
         "must_have_skills": must_have,
+        "critical_must_have": critical_must_have,
         "nice_to_have_skills": nice_to_have,
         "min_experience_years": min_years,
         "max_experience_years": max_years,
@@ -911,11 +988,22 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "seniority_level": seniority,
         "min_experience_years": min_years,
         "max_experience_years": max_years,
+        "critical_must_have": critical_must_have,
+        "must_have": must_have,
         "must_have_skills": must_have,
+        "nice_to_have": nice_to_have,
         "nice_to_have_skills": nice_to_have,
         "mandatory_skill_groups": core_groups,
         "preferred_skill_groups": {"preferred": nice_to_have} if nice_to_have else {},
         "core_skill_groups": core_groups,
+        "tools_platforms": tools_platforms,
+        "domain_keywords": domain_keywords,
+        "responsibilities": responsibility_signals,
+        "education_requirements": jd_data.get("education") or "",
+        "location": location,
+        "work_mode": work_mode,
+        "red_flags": [],
+        "scoring_config_key": role_family if role_family != "other" else "default",
         "backend_groups": {key: value for key, value in core_groups.items() if key in {"backend", "backend_path", "api_logic"}},
         "frontend_groups": {key: value for key, value in core_groups.items() if key in {"frontend", "frontend_foundation", "frontend_core", "react_core", "responsive_ui", "state_management", "frontend_tooling", "performance_debugging"}},
         "database_groups": {key: value for key, value in core_groups.items() if "database" in key},

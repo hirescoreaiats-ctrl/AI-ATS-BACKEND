@@ -223,12 +223,28 @@ def parse_resume_document(text: str, job_context: dict | None = None, mode: str 
         parsed["parser_quality_action"] = "manual_review_required"
 
     safe = _safe_parsed(parsed, parsed.get("parser_quality_action"))
+    field_confidence = parsed.get("field_confidence") or {}
+    low_confidence_fields = [
+        key for key, value in field_confidence.items()
+        if isinstance(value, (int, float)) and value < SAFE_FIELD_THRESHOLDS.get(key, 0.55)
+    ]
+    parser_warnings = [
+        item.get("message") or item.get("code")
+        for item in parsed.get("parser_quality_flags") or []
+        if isinstance(item, dict) and (item.get("message") or item.get("code"))
+    ]
+    if parsed.get("ai_parse_status") and parsed.get("ai_parse_status") != "success":
+        parser_warnings.append(f"AI parsing status: {parsed.get('ai_parse_status')}; regex fallback was used.")
     parsed.update({
         "raw_parsed_json": _as_jsonable(raw_parsed),
         "safe_parsed_json": _as_jsonable(safe),
         "field_confidence_json": _as_jsonable(parsed.get("field_confidence") or {}),
         "field_sources_json": _as_jsonable(_field_sources(parsed)),
         "text_extraction_quality": _as_jsonable(text_quality),
+        "parser_confidence": parsed.get("parser_quality_score"),
+        "parser_warnings": parser_warnings[:8],
+        "extraction_quality_score": text_quality.get("score"),
+        "low_confidence_fields": low_confidence_fields,
         "profile_extraction_quality": "Needs review"
         if parsed.get("parser_quality_action") in {"manual_review_required", "review_before_shortlist"}
         else "Clean",

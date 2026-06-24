@@ -327,6 +327,17 @@ def extract_text_from_docx(file_path: str) -> str:
         return ""
 
 
+def extract_text_from_txt(file_path: str) -> str:
+    encodings = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+    for encoding in encodings:
+        try:
+            with open(file_path, "r", encoding=encoding, errors="replace") as handle:
+                return _dedupe_lines(normalize_extracted_text(handle.read()))
+        except Exception:
+            continue
+    return ""
+
+
 def extract_name(text: str) -> Optional[str]:
     if not text:
         return None

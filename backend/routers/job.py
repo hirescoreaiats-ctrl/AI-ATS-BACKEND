@@ -23,7 +23,7 @@ from sqlalchemy import false, func
 from cryptography.fernet import Fernet, InvalidToken
 
 from backend.jd_engine import normalize_jd_skills
-from backend.extractor import extract_text_from_docx, extract_text_from_pdf, normalize_extracted_text
+from backend.extractor import extract_text_from_docx, extract_text_from_pdf, extract_text_from_txt, normalize_extracted_text
 from backend.database import SessionLocal
 from backend.models import Assessment, CandidateAssessment, CandidateActivity, CandidateNote, CandidateStageHistory, CandidateTag, Interview, Job, Resume, User
 from backend.domain_engine import detect_domain
@@ -80,7 +80,13 @@ def _user_organization_id(user: User) -> str | None:
     return str(organization_id).strip() if organization_id else None
 
 
+def _is_unresolved_dependency(user) -> bool:
+    return user is None or user.__class__.__name__ == "Depends"
+
+
 def _scope_jobs_query(query, user: User):
+    if _is_unresolved_dependency(user):
+        return query
     if _is_global_recruiter(user):
         return query
     organization_id = _user_organization_id(user)
@@ -90,6 +96,8 @@ def _scope_jobs_query(query, user: User):
 
 
 def _scope_resume_job_query(query, user: User):
+    if _is_unresolved_dependency(user):
+        return query
     if _is_global_recruiter(user):
         return query
     organization_id = _user_organization_id(user)
@@ -858,6 +866,14 @@ def _rescore_candidate_from_stored_fields(candidate: Resume, job: Job):
         "projects": projects,
         "education": [{"degree": candidate.education or "", "field": "", "institution": ""}] if candidate.education else [],
         "total_experience_years": candidate.total_experience_years or 0,
+        "parser_quality_score": candidate.parser_quality_score,
+        "parser_confidence": candidate.parser_confidence or candidate.parser_quality_score,
+        "parser_quality_action": candidate.parser_quality_action,
+        "parser_quality_flags": resume_intelligence_payload(candidate).get("parser_quality_flags") or [],
+        "parser_warnings": resume_intelligence_payload(candidate).get("parser_warnings") or [],
+        "ai_parse_status": candidate.ai_parse_status,
+        "extraction_quality_score": candidate.extraction_quality_score,
+        "low_confidence_fields": resume_intelligence_payload(candidate).get("low_confidence_fields") or [],
         "experience": [{
             "company_name": candidate.last_company_name or "",
             "role": candidate.designation or "",
@@ -1756,9 +1772,17 @@ def get_results(job_id: str):
         sorted_resumes = sorted(
             result_list,
             key=lambda x: (
-                x.get("final_score") or x.get("rank_score") or 0,
+                x.get("rank_score") or x.get("final_score") or 0,
+                len(x.get("matched_critical_skills") or []),
+                -(len(x.get("missing_critical_skills") or [])),
+                x.get("mandatory_skill_coverage") or x.get("skill_match_percent") or 0,
+                x.get("relevant_experience_years") or 0,
+                -(len(x.get("missing_core_skill_groups") or [])),
+                (x.get("scoring_breakdown") or {}).get("evidence_strength")
+                or (x.get("scoring_breakdown") or {}).get("project_work_strength")
+                or 0,
+                x.get("role_relevance_score") or 0,
                 x.get("confidence_score") or 0,
-                x.get("skill_match_percent") or 0,
             ),
             reverse=True
         )
@@ -1794,6 +1818,53 @@ def get_results(job_id: str):
             "results": sorted_resumes,
         }
 
+    finally:
+        db.close()
+
+
+@router.post("/jobs/{job_id}/rescore", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
+def rescore_job_candidates(job_id: str):
+    db = SessionLocal()
+    errors = []
+    rescored = 0
+    try:
+        job = resolve_job_identifier(job_id, db)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        apply_job_jd_snapshot(job)
+        candidates = (
+            db.query(Resume)
+            .filter(Resume.job_id == job.id, Resume.is_active == True)
+            .order_by(Resume.created_at.asc() if hasattr(Resume, "created_at") else Resume.id.asc())
+            .all()
+        )
+        total_candidates = len(candidates)
+
+        for candidate in candidates:
+            try:
+                _rescore_candidate_from_stored_fields(candidate, job)
+                candidate.processing_status = candidate.processing_status or "completed"
+                candidate.processing_error = None
+                db.commit()
+                rescored += 1
+            except Exception as exc:
+                db.rollback()
+                logger.exception("Job rescore failed for candidate %s", candidate.id)
+                errors.append({
+                    "resume_id": candidate.id,
+                    "candidate": candidate.full_name or candidate.email or candidate.id,
+                    "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+                })
+
+        return {
+            "job_id": job.id,
+            "current_jd_hash": job_jd_hash(job),
+            "total_candidates": total_candidates,
+            "rescored": rescored,
+            "failed": len(errors),
+            "errors": errors[:25],
+        }
     finally:
         db.close()
 
@@ -2254,11 +2325,13 @@ def _extract_folder_resume_text(file_path: Path) -> str:
         return extract_text_from_pdf(str(file_path))
     if suffix == ".docx":
         return extract_text_from_docx(str(file_path))
+    if suffix == ".txt":
+        return extract_text_from_txt(str(file_path))
     return ""
 
 
 def _folder_document_classification(file_path: Path):
-    if file_path.suffix.lower() not in {".pdf", ".docx"}:
+    if file_path.suffix.lower() not in {".pdf", ".docx", ".txt"}:
         return None
     try:
         text = _extract_folder_resume_text(file_path)
@@ -2452,7 +2525,7 @@ def sync_resume_folder(job_id: str):
             raise HTTPException(status_code=400, detail="Configure a valid resume folder first.")
 
         settings = get_settings()
-        allowed = {".pdf", ".docx", ".doc"}
+        allowed = {".pdf", ".docx", ".doc", ".txt"}
         files = sorted(path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in allowed)
         if len(files) > settings.max_resume_upload_count:
             raise HTTPException(status_code=413, detail=f"Maximum {settings.max_resume_upload_count} resumes can be synced at once.")
@@ -2586,7 +2659,7 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
 
     from backend.routers.resume import _queue_resume_processing_batch
 
-    allowed = {".pdf", ".docx", ".doc"}
+    allowed = {".pdf", ".docx", ".doc", ".txt"}
     max_file_size = settings.upload_bytes_limit
     db = SessionLocal()
     temp_dir = Path(tempfile.mkdtemp(prefix=f"resume_folder_{job_id}_"))

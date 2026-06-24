@@ -2859,13 +2859,22 @@ def _resume_quality(text, parsed):
 
 
 def parse_resume_enterprise(text, ai_parse_override=None):
-    parsed = ai_parse_override if ai_parse_override is not None else (parse_resume(text) or {})
+    if ai_parse_override is not None:
+        parsed = ai_parse_override or {}
+        ai_parse_status = "success"
+    else:
+        parsed = parse_resume(text) or {}
+        ai_parse_status = parsed.pop("__ai_parse_status", "regex_fallback_only") if isinstance(parsed, dict) else "regex_fallback_only"
+        if not isinstance(parsed, dict):
+            parsed = {}
     parsed = parsed or {}
     text = _normalize_parser_text(text)
     raw_ai_experience = list(parsed.get("experience") or [])
     links = _extract_links(text)
     sections = _extract_sections(text)
     parser_flags = []
+    if ai_parse_status != "success":
+        parsed["ai_parse_failure_reason"] = ai_parse_status
     if raw_ai_experience and any(
         isinstance(item, dict) and _looks_like_bad_company(item.get("company_name"))
         for item in raw_ai_experience
@@ -2995,6 +3004,7 @@ def parse_resume_enterprise(text, ai_parse_override=None):
     parsed["certifications"] = parsed.get("certifications") or _infer_certifications(certification_source)
     parsed["sections"] = sections
     parsed["section_names"] = sorted(sections.keys())
+    parsed["ai_parse_status"] = ai_parse_status
     if not sections.get("experience") and not sections.get("projects") and not sections.get("education"):
         parser_flags.append("section_boundary_low_confidence")
     parsed["parser_flags"] = _apply_parser_reliability_layer(parsed, sections, parser_flags)

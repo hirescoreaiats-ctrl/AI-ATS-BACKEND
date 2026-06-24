@@ -3,6 +3,7 @@ import re
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.role_taxonomy import match_core_skill_groups
 from backend.services.taxonomy import equivalent_skill, expand_skill_requirements, normalize_skill_list
+from backend.services.recruiter_decision import enrich_recruiter_decision
 
 
 def infer_seniority(title, years=0, experience_text=""):
@@ -708,7 +709,7 @@ def _attach_jd_profile_metadata(score_data, jd_profile, parsed=None, role_identi
             "role_alignment": score_data.get("role_alignment"),
             "role_alignment_reason": score_data.get("role_alignment_reason"),
         })
-    return score_data
+    return enrich_recruiter_decision(score_data, jd_profile, parsed)
 
 
 def _is_data_analyst_jd(jd_text, jd_data, required_skills):
