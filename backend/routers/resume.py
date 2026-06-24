@@ -15,7 +15,7 @@ from difflib import SequenceMatcher
 from backend.database import SessionLocal
 from backend.models import Job, Resume
 
-from backend.extractor import extract_text_from_pdf, extract_text_from_docx
+from backend.extractor import extract_text_from_pdf, extract_text_from_docx, extract_text_from_txt
 from backend.services.pipeline import analyze_resume_for_job
 from backend.services.canonical_parser import parse_resume_document
 from backend.ai.vector_search import enrich_candidate_embedding
@@ -132,6 +132,8 @@ def _extract_resume_text_from_upload(filename: str, contents: bytes) -> str:
             return extract_text_from_pdf(temp_path)
         if suffix == ".docx":
             return extract_text_from_docx(temp_path)
+        if suffix == ".txt":
+            return extract_text_from_txt(temp_path)
         return ""
     finally:
         try:
@@ -142,7 +144,7 @@ def _extract_resume_text_from_upload(filename: str, contents: bytes) -> str:
 
 def _preclassify_upload_resume(filename: str, contents: bytes):
     suffix = os.path.splitext(filename or "")[1].lower()
-    if suffix not in {".pdf", ".docx"}:
+    if suffix not in {".pdf", ".docx", ".txt"}:
         return None
     try:
         text = _extract_resume_text_from_upload(filename, contents)
@@ -307,6 +309,8 @@ def _extract_resume_text_from_file_path(file_path: str, resume_id: str = "", ori
             text = extract_text_from_pdf(local_path)
         elif lower.endswith(".docx"):
             text = extract_text_from_docx(local_path)
+        elif lower.endswith(".txt"):
+            text = extract_text_from_txt(local_path)
         else:
             text = ""
         logger.info("Resume text extracted: resume_id=%s length=%s", resume_id, len(text or ""))
@@ -325,6 +329,14 @@ def _mark_resume_needs_review(db, resume: Resume, reason: str, resume_text: str 
     resume.rank_score = resume.rank_score or 0
     resume.fit_band = resume.fit_band or "Needs Review"
     resume.ai_recommendation = "review"
+    resume.shortlist_decision = "Needs Review"
+    resume.decision_reason = reason
+    resume.recruiter_explanation = reason
+    resume.concerns = json.dumps([reason], ensure_ascii=False)
+    resume.parser_confidence = min(float(resume.parser_confidence or 0), 0)
+    resume.parser_warnings = json.dumps([reason], ensure_ascii=False)
+    resume.ai_parse_status = resume.ai_parse_status or "regex_fallback_only"
+    resume.extraction_quality_score = min(float(resume.extraction_quality_score or 0), 0)
     resume.ranking_reason = reason
     resume.ai_confidence_reason = reason
     resume.explanation = reason
@@ -881,6 +893,20 @@ async def upload_resumes(
                     skip_reason,
                 )
                 continue
+            if safe_application_source == "folder" and os.path.splitext(filename or "")[1].lower() == ".txt":
+                skipped_count += 1
+                upload_messages.append(_upload_result(
+                    filename,
+                    "skipped",
+                    "TXT resumes are supported for direct upload; folder sync accepts PDF, DOC, and DOCX.",
+                ))
+                logger.info(
+                    "Resume upload skipped folder txt: request_id=%s job_id=%s filename=%s",
+                    request_id,
+                    job_id,
+                    filename,
+                )
+                continue
 
             contents = b""
             file_path = ""
@@ -1237,6 +1263,8 @@ async def upload_resumes(
                 text = extract_text_from_pdf(file_path)
             elif file.filename.lower().endswith(".docx"):
                 text = extract_text_from_docx(file_path)
+            elif file.filename.lower().endswith(".txt"):
+                text = extract_text_from_txt(file_path)
             else:
                 text = ""
         except Exception:
@@ -1438,6 +1466,9 @@ async def bulk_analyze(
 ):
 
     results = []
+    max_resume_upload_count = get_settings().max_resume_upload_count
+    if len(files) > max_resume_upload_count:
+        raise HTTPException(status_code=413, detail=f"Maximum {max_resume_upload_count} resumes can be analyzed at once.")
 
     enrichment = enrich_jd_for_scoring(jd_text)
     jd_skills = enrichment.get("required_skills") or normalize_jd_skills([], jd_text)
@@ -1465,10 +1496,41 @@ async def bulk_analyze(
         elif file.filename.lower().endswith(".docx"):
             text = extract_text_from_docx(file_path)
 
+        elif file.filename.lower().endswith(".txt"):
+            text = extract_text_from_txt(file_path)
+
         else:
-            continue
+            text = ""
 
         if not text.strip():
+            parsed, exp_data, score_data = analyze_resume_for_job(
+                "",
+                jd_text,
+                jd_skills,
+                jd_data
+            )
+            results.append({
+                "file_name": file.filename,
+                "full_name": "",
+                "email": "",
+                "phone": "",
+                "location": "",
+                "designation": "",
+                "total_experience_years": 0,
+                "last_company_name": "",
+                "last_working_date": "",
+                "matched_skills": [],
+                "missing_skills": [],
+                "skill_match_percent": 0,
+                "final_score": parsed.get("final_score"),
+                "rank_score": parsed.get("rank_score"),
+                "fit_band": parsed.get("fit_band"),
+                "recommendation": parsed.get("recommendation"),
+                "shortlist_decision": parsed.get("shortlist_decision"),
+                "ranking_reason": parsed.get("ranking_reason"),
+                "parser_quality_action": parsed.get("parser_quality_action"),
+                "parser_warnings": parsed.get("parser_warnings"),
+            })
             continue
 
         parsed, exp_data, score_data = analyze_resume_for_job(
@@ -1514,6 +1576,11 @@ async def bulk_analyze(
             "confidence_score": parsed.get("confidence_score"),
             "seniority_level": parsed.get("seniority_level"),
             "recommendation": parsed.get("recommendation"),
+            "shortlist_decision": parsed.get("shortlist_decision"),
+            "decision_reason": parsed.get("decision_reason"),
+            "recruiter_explanation": parsed.get("recruiter_explanation"),
+            "strengths": parsed.get("strengths"),
+            "concerns": parsed.get("concerns"),
             "ranking_reason": parsed.get("ranking_reason"),
             "resume_quality_score": parsed.get("resume_quality_score"),
             "relevant_experience_years": parsed.get("relevant_experience_years"),
@@ -1526,6 +1593,13 @@ async def bulk_analyze(
             "core_skill_match_percent": parsed.get("core_skill_match_percent"),
             "missing_core_skill_groups": parsed.get("missing_core_skill_groups"),
             "parser_quality_score": parsed.get("parser_quality_score"),
+            "parser_confidence": parsed.get("parser_confidence"),
+            "parser_quality_action": parsed.get("parser_quality_action"),
+            "parser_warnings": parsed.get("parser_warnings"),
+            "ai_parse_status": parsed.get("ai_parse_status"),
+            "score_caps_applied": parsed.get("score_caps_applied"),
+            "missing_critical_skills": parsed.get("missing_critical_skills"),
+            "matched_critical_skills": parsed.get("matched_critical_skills"),
             "parser_quality_action": parsed.get("parser_quality_action"),
             "parser_quality_flags": parsed.get("parser_quality_flags"),
             "profile_extraction_quality": parsed.get("profile_extraction_quality"),

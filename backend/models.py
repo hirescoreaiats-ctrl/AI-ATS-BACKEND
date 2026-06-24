@@ -64,7 +64,7 @@ class Resume(Base):
     __tablename__ = "resumes"
 
     id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
-    job_id = Column(String, ForeignKey("jobs.id"))
+    job_id = Column(String, ForeignKey("jobs.id"), index=True)
     organization_id = Column(String, ForeignKey("organizations.id"), nullable=True, index=True)
 
     # 🔹 Resume extracted data
@@ -120,6 +120,20 @@ class Resume(Base):
     ai_recommendation = Column(String, nullable=True)
     ranking_reason = Column(Text, nullable=True)
     ai_confidence_reason = Column(Text, nullable=True)
+    shortlist_decision = Column(String, nullable=True, index=True)
+    decision_reason = Column(Text, nullable=True)
+    recruiter_explanation = Column(Text, nullable=True)
+    strengths = Column(Text, nullable=True)
+    concerns = Column(Text, nullable=True)
+    score_breakdown = Column(Text, nullable=True)
+    parser_confidence = Column(Float, nullable=True)
+    parser_warnings = Column(Text, nullable=True)
+    ai_parse_status = Column(String, nullable=True)
+    extraction_quality_score = Column(Float, nullable=True)
+    low_confidence_fields = Column(Text, nullable=True)
+    missing_critical_skills = Column(Text, nullable=True)
+    matched_critical_skills = Column(Text, nullable=True)
+    cap_reason = Column(Text, nullable=True)
     embedding_provider = Column(String, nullable=True)
     embedding_model = Column(String, nullable=True)
     embedding_vector_json = Column(Text, nullable=True)

@@ -9,6 +9,7 @@ from backend.services.canonical_parser import apply_safe_primary_fields, parse_r
 from backend.services.document_classifier import classify_resume_document
 from backend.services.resume_quality_gate import apply_parser_quality_gate, build_parser_quality_report
 from backend.services.scoring_service import score_candidate
+from backend.services.recruiter_decision import enrich_recruiter_decision
 from backend.services.semantic_service import candidate_embedding_payload, cosine_similarity_cached
 
 
@@ -80,6 +81,80 @@ def _jd_experience_range(text):
 
 def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     jd_profile = build_jd_profile(jd_text, jd_data, jd_skills)
+    normalized_text = (text or "").strip()
+    if len(normalized_text.split()) < 25:
+        reason = "Resume text could not be extracted reliably."
+        exp_data = {
+            "total_experience_years": 0,
+            "last_company_name": "",
+            "last_company_confidence": 0,
+            "last_company_source_text": "",
+            "last_company_needs_review": True,
+        }
+        parsed = {
+            "full_name": "",
+            "email": "",
+            "phone": "",
+            "designation": "",
+            "key_skills": [],
+            "education": [],
+            "experience": [],
+            "projects": [],
+            "total_experience_years": 0,
+            "relevant_experience_years": 0,
+            "direct_relevant_experience_years": 0,
+            "role_relevance_score": 0,
+            "experience_relevance_label": "unreadable_resume",
+            "parser_quality_score": 0,
+            "parser_confidence": 0,
+            "parser_quality_action": "manual_review_required",
+            "parser_quality_flags": [{
+                "code": "unreadable_resume_text",
+                "severity": "critical",
+                "message": reason,
+                "penalty": 100,
+            }],
+            "parser_warnings": [reason],
+            "extraction_quality_score": 0,
+            "low_confidence_fields": ["resume_text"],
+            "ai_parse_status": "regex_fallback_only",
+            "profile_extraction_quality": "Needs review",
+            "jd_profile_json": jd_profile,
+            "role_family": jd_profile.get("role_family"),
+            "role_family_confidence": jd_profile.get("role_family_confidence"),
+            "jd_profile_version": jd_profile.get("jd_profile_version"),
+        }
+        score_data = {
+            "final_score": 0,
+            "rank_score": 0,
+            "fit_band": "needs_review",
+            "recommendation": "in_review",
+            "shortlist_decision": "Needs Review",
+            "decision_reason": reason,
+            "recruiter_explanation": reason,
+            "confidence_score": 0,
+            "confidence": 0,
+            "ranking_reason": reason,
+            "strengths": [],
+            "concerns": [reason],
+            "recruiter_flags": ["parser_manual_review", "unreadable_resume"],
+            "risk_flags": ["parser_quality", "unreadable_resume"],
+            "score_caps_applied": [{"cap": 0, "reason": reason}],
+            "cap_reason": reason,
+            "parser_quality_score": 0,
+            "parser_confidence": 0,
+            "parser_quality_flags": parsed["parser_quality_flags"],
+            "parser_warnings": parsed["parser_warnings"],
+            "parser_quality_action": "manual_review_required",
+            "ai_parse_status": "regex_fallback_only",
+            "extraction_quality_score": 0,
+            "low_confidence_fields": ["resume_text"],
+            "jd_profile_json": jd_profile,
+            "score_breakdown": {},
+            "scoring_breakdown": {},
+        }
+        parsed.update(score_data)
+        return parsed, exp_data, score_data
     classification = classify_resume_document(text)
     if not classification.is_resume:
         exp_data = {
@@ -347,8 +422,17 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
         "recommendation": parsed.get("recommendation"),
         "ranking_reason": parsed.get("ranking_reason"),
         "parser_quality_score": quality_report.get("parser_quality_score"),
+        "parser_confidence": quality_report.get("parser_quality_score"),
         "parser_quality_flags": quality_report.get("parser_quality_flags"),
         "parser_quality_action": quality_report.get("parser_quality_action"),
+        "parser_warnings": [
+            item.get("message") or item.get("code")
+            for item in quality_report.get("parser_quality_flags", [])
+            if item.get("message") or item.get("code")
+        ],
+        "ai_parse_status": parsed.get("ai_parse_status"),
+        "extraction_quality_score": parsed.get("extraction_quality_score"),
+        "low_confidence_fields": parsed.get("low_confidence_fields") or [],
         "parser_recall_attempted": parsed.get("parser_recall_attempted", False),
         "parser_recall_applied": parsed.get("parser_recall_applied", False),
         "jd_profile_json": jd_profile,
@@ -364,6 +448,8 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
         "last_company_source_text": parsed.get("last_company_source_text"),
         "last_company_needs_review": parsed.get("last_company_needs_review"),
     })
+    score_data = enrich_recruiter_decision(score_data, jd_profile, parsed)
+    parsed.update(score_data)
 
     parsed["ai_recruiter_explanation"] = generate_recruiter_explanation(parsed, jd_data, score_data)
     parsed["embedding_metadata"] = candidate_embedding_payload(text, jd_text)

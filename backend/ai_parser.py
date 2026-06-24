@@ -368,9 +368,10 @@ def parse_resume(text, retries=1):
 
     client = _get_openai_client()
     if not client:
-        return None
+        return {"__ai_parse_status": "no_api_key"}
 
     prompt = build_prompt(text)
+    last_status = "failed_api_error"
 
     for _ in range(retries):
 
@@ -387,9 +388,25 @@ def parse_resume(text, retries=1):
 
             content = clean_response(response.choices[0].message.content)
 
-            return json.loads(content)
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                parsed["__ai_parse_status"] = "success"
+                return parsed
+            return {"__ai_parse_status": "failed_invalid_json"}
+
+        except json.JSONDecodeError:
+            last_status = "failed_invalid_json"
+            logger.exception("Resume parsing returned invalid JSON")
+
+            prompt = f"""
+Return ONLY valid JSON.
+
+Resume Text:
+{text}
+"""
 
         except Exception:
+            last_status = "failed_api_error"
 
             logger.exception("Resume parsing failed")
 
@@ -400,7 +417,7 @@ Resume Text:
 {text}
 """
 
-    return None
+    return {"__ai_parse_status": last_status}
 
 
 def repair_parse_resume(text, previous_parse=None, issues=None, retries=1):
