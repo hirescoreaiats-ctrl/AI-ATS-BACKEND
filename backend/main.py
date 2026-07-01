@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 
-from backend.api import ai, copilot, enterprise, health, interviews, organizations, realtime, talent, uploads
+from backend.api import ai, copilot, enterprise, health, help, interviews, organizations, realtime, talent, uploads
 from backend.core.config import get_settings
 from backend.core.logging import configure_logging
 from backend.database import engine
@@ -213,6 +213,7 @@ app.include_router(job.router)
 app.include_router(resume.router)
 app.include_router(auth.router)
 app.include_router(health.router, prefix=settings.api_prefix)
+app.include_router(help.router, prefix=settings.api_prefix)
 app.include_router(ai.router, prefix=settings.api_prefix)
 app.include_router(copilot.router, prefix=settings.api_prefix)
 app.include_router(enterprise.router, prefix=settings.api_prefix)
