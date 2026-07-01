@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError
 
-from backend.api import ai, copilot, debug, enterprise, health, interviews, organizations, realtime, support, talent, uploads
+from backend.api import ai, copilot, debug, enterprise, health, help, interviews, organizations, realtime, support, talent, uploads
 from backend.core.config import get_settings
 from backend.core.logging import configure_logging
 from backend.database import engine
@@ -287,6 +287,7 @@ app.include_router(resume.router)
 app.include_router(auth.router)
 app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(debug.router, prefix=settings.api_prefix)
+app.include_router(help.router, prefix=settings.api_prefix)
 app.include_router(ai.router, prefix=settings.api_prefix)
 app.include_router(copilot.router, prefix=settings.api_prefix)
 app.include_router(enterprise.router, prefix=settings.api_prefix)
