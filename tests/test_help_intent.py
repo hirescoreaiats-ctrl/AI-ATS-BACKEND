@@ -87,3 +87,14 @@ def test_top_candidates_to_interview_requests_missing_schedule_details():
     assert "scheduled_at" in result["missing_fields"]
     assert "meeting_url" in result["missing_fields"]
     assert result["ready_for_action_agent"] is False
+
+
+def test_top_candidate_of_backend_developer_extracts_role_and_limit():
+    result = fallback_parse_intent("i want you to give 5 top candidate of backend developer")
+
+    assert result["intent"] == "select_top_candidates"
+    assert result["entities"]["job_title"] == "Backend Developer"
+    assert result["entities"]["limit"] == 5
+    assert result["entities"]["candidate_name"] is None
+    assert result["visual_tour"]["steps"][0]["target"] == "jobs-menu"
+    assert result["action_agent_plan"]["missing_fields"] == []

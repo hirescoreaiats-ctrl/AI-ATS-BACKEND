@@ -104,8 +104,8 @@ def _norm(value: str | None) -> str:
 
 def _title_case_job(value: str | None) -> str | None:
     value = re.sub(
-        r"\b(the|this|that|of|for|in|mujhe|muje|please|top|candidate|candidates|candiate|"
-        r"nikal|nikalo|find|show|list|do|de|bhej|send|unha|unhe|unka|aur|and|or|interview|"
+        r"\b(the|this|that|of|for|in|job|jobs|mujhe|muje|please|top|candidate|candidates|candiate|"
+        r"want|you|to|give|get|nikal|nikalo|find|show|list|do|de|bhej|send|unha|unhe|unka|aur|and|or|interview|"
         r"schedule|communication|mai|me|mein|ke|kai|kay|liye|lia|liya)\b",
         " ",
         str(value or ""),
@@ -119,6 +119,8 @@ def _title_case_job(value: str | None) -> str | None:
 
 def _extract_job_title(message: str) -> str | None:
     patterns = [
+        r"(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)s?\s+(?:of|for)\s+([a-z0-9 .+#-]+)",
+        r"(?:give|get|show|find|list)\s+(?:me\s+)?(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)s?\s+(?:of|for)\s+([a-z0-9 .+#-]+)",
         r"(?:candidate|candidates)\s+(?:nikal|nikalo|find|show|list|de do|do)\s+([a-z0-9 .+#-]+?)\s+(?:ke|kai|kay|for)\s*(?:liye|lia|liya)?\b",
         r"([a-z0-9 .+#-]+?)\s+(?:ke|kai|kay)\s+(?:liye|lia|liya)\s+(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)",
         r"(?:of|for|in)\s+([a-z0-9 .+#-]+?)\s+job\b",
@@ -136,6 +138,7 @@ def _extract_job_title(message: str) -> str | None:
 def _extract_limit(text: str) -> int | None:
     patterns = [
         r"\btop\s+(\d{1,3})\b",
+        r"\b(\d{1,3})\s+top\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
         r"\b(\d{1,3})\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
         r"\b(?:top\s+)?(" + "|".join(NUMBER_WORDS) + r")\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
     ]
@@ -463,6 +466,8 @@ def _visual_tour(intent: str, tasks: list[dict[str, Any]], entities: dict[str, A
 
 
 def _extract_candidate_name(message: str) -> str | None:
+    if re.search(r"\b(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates)\s+(?:of|for)\b", message, flags=re.I):
+        return None
     match = re.search(
         r"\b([A-Z][a-z]{2,})\s+(?:ka|ke|ki)?\s*(?:interview|mail|email|test|profile|score|shortlist|reject)",
         message,
