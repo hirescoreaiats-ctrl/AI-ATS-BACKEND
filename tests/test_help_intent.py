@@ -41,3 +41,49 @@ def test_hinglish_cv_upload_extracts_job_title():
 
     assert result["intent"] == "upload_resumes"
     assert result["entities"]["job_title"] == "Data Analyst"
+
+
+def test_top_candidates_to_communication_builds_action_agent_plan():
+    result = fallback_parse_intent(
+        "mujhe 10 candiate nikal do data analyst kai lia aur unha commincation mai bhej do"
+    )
+
+    assert result["intent"] == "candidate_workflow"
+    assert result["entities"]["job_title"] == "Data Analyst"
+    assert result["entities"]["limit"] == 10
+    assert result["entities"]["candidate_group"] == "top_candidates"
+    assert result["entities"]["target_stage"] == "communication"
+    assert [task["intent"] for task in result["tasks"]] == [
+        "select_top_candidates",
+        "shortlist_candidate",
+        "move_candidates_to_communication",
+    ]
+    assert [action["action_id"] for action in result["actions"]] == [
+        "find_top_candidates",
+        "shortlist_candidates",
+        "move_to_communication",
+    ]
+    assert result["actions"][2]["endpoint"] == "/move-to-communication"
+    assert result["visual_tour"]["mode"] == "visual_tour"
+    assert [step["target"] for step in result["visual_tour"]["steps"]]
+    assert result["action_agent_plan"]["enabled"] is True
+    assert result["requires_confirmation"] is True
+    assert result["missing_fields"] == []
+
+
+def test_top_candidates_to_interview_requests_missing_schedule_details():
+    result = fallback_parse_intent("data analyst ke liye top 10 candidates ka interview schedule kar do")
+
+    assert result["intent"] == "candidate_workflow"
+    assert result["entities"]["job_title"] == "Data Analyst"
+    assert result["entities"]["target_stage"] == "interview_scheduling"
+    assert [action["action_id"] for action in result["actions"]] == [
+        "find_top_candidates",
+        "shortlist_candidates",
+        "move_to_communication",
+        "move_to_interview_scheduling",
+        "schedule_interview_slot",
+    ]
+    assert "scheduled_at" in result["missing_fields"]
+    assert "meeting_url" in result["missing_fields"]
+    assert result["ready_for_action_agent"] is False

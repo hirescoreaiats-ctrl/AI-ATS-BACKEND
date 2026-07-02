@@ -23,3 +23,12 @@ def parse_help_intent(payload: HelpIntentRequest, user=Depends(get_current_user)
         current_route=payload.current_route,
         current_context=payload.current_context or {},
     )
+
+
+@router.post("/action-plan")
+def plan_help_action(payload: HelpIntentRequest, user=Depends(get_current_user)):
+    return parse_intent(
+        message=payload.message,
+        current_route=payload.current_route,
+        current_context=payload.current_context or {},
+    )
