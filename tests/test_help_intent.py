@@ -151,3 +151,27 @@ def test_greeting_guard_overrides_hallucinated_ai_workflow():
 
     assert merged["response_type"] == "conversation"
     assert merged["actions"] == []
+
+
+def test_all_candidates_uses_job_title_without_requesting_internal_id():
+    result = fallback_parse_intent("i want all candidate of data analyst")
+
+    assert result["response_type"] == "workflow"
+    assert result["intent"] == "view_candidates_by_stage"
+    assert result["entities"]["job_title"] == "Data Analyst"
+    assert result["entities"]["candidate_group"] == "all"
+    assert result["actions"] == []
+    assert result["clarification_needed"] is False
+
+
+def test_ai_job_id_question_is_rewritten_for_normal_users():
+    result = normalize_intent_response({
+        "response_type": "clarification",
+        "intent": "unknown",
+        "assistant_reply": "Please specify the job ID or confirm the job.",
+        "clarification_question": "Enter job_id.",
+        "confidence": 0.7,
+    })
+
+    assert "job id" not in result["assistant_reply"].lower()
+    assert "job_id" not in result["clarification_question"].lower()

@@ -272,7 +272,12 @@ def prepare_action_agent(
     result["ready_for_action_agent"] = bool(action_ids) and not missing_fields
     result["clarification_needed"] = bool(result.get("intent") == "unknown" or missing_fields)
     if "job" in missing_fields:
-        result["clarification_question"] = "Which exact job should I use?"
+        if job_options:
+            result["clarification_question"] = "I found more than one matching job. Which one should I use?"
+        elif entities.get("job_title"):
+            result["clarification_question"] = f"I could not find an active job named {entities['job_title']}. Which job should I use?"
+        else:
+            result["clarification_question"] = "What is the job title?"
     elif "candidate_ids" in missing_fields:
         result["clarification_question"] = "Which candidate or candidate group should I use?"
     result["action_agent_plan"] = {

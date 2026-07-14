@@ -146,3 +146,25 @@ def test_conversation_never_resolves_jobs_or_dispatches_actions(monkeypatch, db)
     assert result["candidate_preview"] == []
     assert result["actions"] == []
     assert result["ready_for_action_agent"] is False
+
+
+def test_all_candidates_resolves_exact_job_title_without_asking_for_id(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="i want all candidate of data analyst",
+        current_route="/dashboard",
+        current_context={},
+        db=db,
+        user=user,
+    )
+
+    assert result["entities"]["job_id"] == job.id
+    assert result["entities"]["job_title"] == "Data Analyst"
+    assert result["job_options"] == []
+    assert result["missing_fields"] == []
+    assert result["clarification_needed"] is False

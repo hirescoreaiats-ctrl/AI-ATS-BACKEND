@@ -123,6 +123,20 @@ def _norm(value: str | None) -> str:
     return text
 
 
+def _friendly_user_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = re.sub(
+        r"(?:please\s+)?(?:provide|specify|share|enter|confirm)\s+(?:the\s+)?job[\s_-]*id(?:\s+or)?",
+        "please tell me the job title or choose the matching job below",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(r"\bjob[\s_-]*id\b", "job title", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _title_case_job(value: str | None) -> str | None:
     value = re.sub(
         r"\b(the|this|that|of|for|in|job|jobs|mujhe|muje|please|top|candidate|candidates|candiate|"
@@ -610,9 +624,17 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     resume_terms = any(term in text for term in ("resume", "cv", "profile"))
     upload_terms = any(term in text for term in ("upload", "add", "dalna", "dalo", "add karna"))
     selection_requested = _candidate_selection_requested(text)
+    all_candidates_requested = bool(re.search(
+        r"\b(?:all|every|saare|sare|sabhi|sabi)\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
+        text,
+    ))
     shortlist_action = _shortlist_action_requested(text)
     view_shortlisted = _view_shortlisted_requested(text)
-    if selection_requested and entities["target_stage"] in {"communication", "interview_scheduling"}:
+    if all_candidates_requested:
+        intent, confidence = "view_candidates_by_stage", 0.94
+        entities["candidate_group"] = "all"
+        entities["stage"] = None
+    elif selection_requested and entities["target_stage"] in {"communication", "interview_scheduling"}:
         intent, confidence = "candidate_workflow", 0.92
         entities["candidate_group"] = "top_candidates"
     elif shortlist_action:
@@ -671,7 +693,7 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
         intent = "unknown"
     if response_type not in {"conversation", "workflow", "clarification"}:
         response_type = "workflow" if intent != "unknown" else "clarification"
-    assistant_reply = str(data.get("assistant_reply") or data.get("reply") or "").strip() or None
+    assistant_reply = _friendly_user_text(data.get("assistant_reply") or data.get("reply"))
     if response_type == "conversation":
         intent = "unknown"
     entities = dict(DEFAULT_ENTITIES)
@@ -709,7 +731,7 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     )
     clarification_question = data.get("clarification_question")
     if clarification_question is not None:
-        clarification_question = str(clarification_question).strip() or None
+        clarification_question = _friendly_user_text(clarification_question)
 
     incoming_tasks = data.get("tasks") if isinstance(data.get("tasks"), list) else []
     tasks = [
@@ -776,6 +798,23 @@ def _merge_with_fallback(primary: dict[str, Any], fallback: dict[str, Any]) -> d
     if fallback.get("response_type") == "conversation":
         return fallback
     merged = dict(primary)
+    if (
+        primary.get("response_type") == "clarification"
+        and fallback.get("response_type") == "workflow"
+        and float(fallback.get("confidence") or 0) >= 0.8
+    ):
+        merged.update({
+            "response_type": "workflow",
+            "intent": fallback.get("intent"),
+            "tasks": fallback.get("tasks") or [],
+            "actions": fallback.get("actions") or [],
+            "missing_fields": fallback.get("missing_fields") or [],
+            "clarification_needed": False,
+            "clarification_question": None,
+            "assistant_reply": None,
+            "guidance": fallback.get("guidance"),
+            "confidence": fallback.get("confidence"),
+        })
     primary_entities = dict(primary.get("entities") or {})
     fallback_entities = fallback.get("entities") or {}
     for key, value in fallback_entities.items():
@@ -822,6 +861,10 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "set intent unknown, and return no tasks or actions. Never select a job for a greeting. "
         "For an actionable ATS request, use response_type workflow and parse the user's intent, entities, ordered tasks, and actions. "
         "For an ambiguous ATS request, use response_type clarification with assistant_reply containing one focused question and no executable actions. "
+        "Never ask the user for internal job_id or candidate_id values. Users know job titles, company names, locations, and candidate names; "
+        "the server resolves internal IDs. If titles are ambiguous, ask the user to choose a friendly job option. "
+        "If the user asks for all candidates of a named job, use response_type workflow, intent view_candidates_by_stage, candidate_group all, "
+        "extract the job_title, and do not ask for job_id because the server resolves exact titles. "
         "Do not invent job IDs or candidate IDs when they are not present in current_context. "
         "Understand English, Hinglish, broken English, typos, and ATS/recruitment terms. "
         "Supported intents: " + ", ".join(sorted(SUPPORTED_INTENTS)) + ". "
