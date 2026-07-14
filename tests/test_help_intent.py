@@ -231,10 +231,14 @@ def test_generic_candidate_request_does_not_loop_on_scope_question():
 
 
 def test_role_candidate_request_uses_cross_job_talent_search():
-    result = fallback_parse_intent("i want data science candidates")
+    result = fallback_parse_intent(
+        "i want data science candidates",
+        current_context={"job_id": "stale-job", "job_title": "Old Role"},
+    )
 
     assert result["response_type"] == "workflow"
     assert result["intent"] == "search_talent"
     assert result["entities"]["search_query"] == "Data Science"
     assert result["entities"]["job_title"] is None
+    assert result["entities"]["job_id"] is None
     assert [action["action_id"] for action in result["actions"]] == ["search_talent"]

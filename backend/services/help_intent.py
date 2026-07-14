@@ -667,6 +667,7 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
         intent, confidence = "search_talent", 0.9
         entities["search_query"] = discovery_query
         entities["candidate_group"] = "all"
+        entities["job_id"] = None
         entities["job_title"] = None
     elif all_candidates_requested:
         intent, confidence = "view_candidates_by_stage", 0.94
