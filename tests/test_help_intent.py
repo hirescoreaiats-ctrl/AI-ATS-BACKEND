@@ -209,3 +209,22 @@ def test_model_cannot_invent_executable_backend_endpoint():
     assert result["tasks"][0]["intent"] == "create_job"
     assert result["actions"] == []
     assert result["agent_contract_version"] == "2026-07-general-v1"
+
+
+def test_generic_candidate_request_does_not_loop_on_scope_question():
+    primary = normalize_intent_response({
+        "response_type": "clarification",
+        "intent": "unknown",
+        "entities": {"job_title": "Data Scientist"},
+        "assistant_reply": "Do you want all candidates, top candidates, or shortlisted profiles?",
+        "confidence": 0.72,
+    })
+    fallback = fallback_parse_intent("show candidates")
+
+    merged = _merge_with_fallback(primary, fallback)
+
+    assert merged["response_type"] == "workflow"
+    assert merged["intent"] == "view_candidates_by_stage"
+    assert merged["entities"]["job_title"] == "Data Scientist"
+    assert merged["entities"]["candidate_group"] == "all"
+    assert merged["clarification_needed"] is False

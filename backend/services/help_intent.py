@@ -838,6 +838,27 @@ def _merge_with_fallback(primary: dict[str, Any], fallback: dict[str, Any]) -> d
 
     merged["entities"] = primary_entities
     normalized = normalize_intent_response(merged)
+    clarification_text = " ".join(filter(None, [
+        normalized.get("assistant_reply"),
+        normalized.get("clarification_question"),
+    ])).lower()
+    if (
+        normalized.get("response_type") == "clarification"
+        and normalized["entities"].get("job_title")
+        and not normalized["entities"].get("candidate_name")
+        and "candidate" in clarification_text
+        and any(term in clarification_text for term in ("all", "top", "shortlist", "specific"))
+    ):
+        normalized = normalize_intent_response({
+            **normalized,
+            "response_type": "workflow",
+            "intent": "view_candidates_by_stage",
+            "entities": {**normalized["entities"], "candidate_group": "all", "stage": None},
+            "assistant_reply": f"I’ll show all candidates for the {normalized['entities']['job_title']} job.",
+            "clarification_needed": False,
+            "clarification_question": None,
+            "confidence": max(float(normalized.get("confidence") or 0), 0.8),
+        })
     fallback_group = (fallback.get("entities") or {}).get("candidate_group")
     if (
         fallback_group in {"top_candidates", "all", "shortlisted"}
@@ -894,6 +915,8 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "extract the job_title, and do not ask for job_id because the server resolves exact titles. "
         "Candidate cardinality is strict: top N, all, shortlisted, or plural candidate requests are groups, not one candidate. "
         "For score explanations of a group, use review_ai_ranked_candidates with candidate_group and limit; never ask the user to choose one candidate. "
+        "If a user simply asks to see candidates for a named job without a requested action or filter, default to intent view_candidates_by_stage "
+        "with candidate_group all. Do not ask whether they mean all/top/shortlisted unless their wording genuinely conflicts. "
         "Do not invent job IDs or candidate IDs when they are not present in current_context. "
         "Understand English, Hinglish, broken English, typos, and ATS/recruitment terms. "
         "Supported intents: " + ", ".join(sorted(SUPPORTED_INTENTS)) + ". "
