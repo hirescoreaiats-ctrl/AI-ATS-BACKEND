@@ -192,6 +192,23 @@ def prepare_action_agent(
     user: User,
 ) -> dict[str, Any]:
     result = parse_intent(message, current_route, current_context or {})
+    if result.get("response_type") != "workflow":
+        result["tasks"] = []
+        result["actions"] = []
+        result["candidate_preview"] = []
+        result["job_options"] = []
+        result["confirmation"] = None
+        result["missing_fields"] = []
+        result["requires_confirmation"] = False
+        result["ready_for_action_agent"] = False
+        result["clarification_needed"] = result.get("response_type") == "clarification"
+        result["action_agent_plan"] = {
+            "enabled": False,
+            "actions": [],
+            "missing_fields": [],
+            "requires_confirmation": False,
+        }
+        return result
     entities = dict(result.get("entities") or {})
     raw_actions = result.get("actions") if isinstance(result.get("actions"), list) else []
     action_ids = [

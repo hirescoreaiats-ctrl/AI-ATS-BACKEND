@@ -129,3 +129,20 @@ def test_outside_tenant_cannot_resolve_job_or_candidates(monkeypatch, db):
     assert "job" in result["missing_fields"]
     assert result["candidate_preview"] == []
     assert result["confirmation"] is None
+
+
+def test_conversation_never_resolves_jobs_or_dispatches_actions(monkeypatch, db):
+    user, _, _, _, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(message="hello", current_route="/dashboard", current_context={}, db=db, user=user)
+
+    assert result["response_type"] == "conversation"
+    assert result["assistant_reply"]
+    assert result["job_options"] == []
+    assert result["candidate_preview"] == []
+    assert result["actions"] == []
+    assert result["ready_for_action_agent"] is False

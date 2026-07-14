@@ -125,3 +125,29 @@ def test_top_candidate_of_backend_developer_extracts_role_and_limit():
     assert result["entities"]["candidate_name"] is None
     assert result["visual_tour"]["steps"][0]["target"] == "jobs-menu"
     assert result["action_agent_plan"]["missing_fields"] == []
+
+
+def test_greeting_is_conversation_with_no_backend_tasks():
+    result = fallback_parse_intent("hello")
+
+    assert result["response_type"] == "conversation"
+    assert result["assistant_reply"]
+    assert result["intent"] == "unknown"
+    assert result["tasks"] == []
+    assert result["actions"] == []
+    assert result["clarification_needed"] is False
+
+
+def test_greeting_guard_overrides_hallucinated_ai_workflow():
+    fallback = fallback_parse_intent("hello bhai")
+    hallucinated = normalize_intent_response({
+        "response_type": "workflow",
+        "intent": "select_top_candidates",
+        "confidence": 0.95,
+        "actions": [{"action_id": "find_top_candidates"}],
+    })
+
+    merged = _merge_with_fallback(hallucinated, fallback)
+
+    assert merged["response_type"] == "conversation"
+    assert merged["actions"] == []

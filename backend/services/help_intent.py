@@ -89,6 +89,27 @@ NUMBER_WORDS = {
     "twenty": 20,
 }
 
+GREETING_PATTERN = re.compile(
+    r"^\s*(?:hi|hello|hey|hii+|heyy+|namaste|namaskar|good\s+(?:morning|afternoon|evening))"
+    r"(?:\s+(?:there|bhai|bro|sir|team))?[!.?\s]*$",
+    flags=re.I,
+)
+
+
+def _conversation_fallback(message: str) -> dict[str, Any] | None:
+    if not GREETING_PATTERN.match(str(message or "")):
+        return None
+    return normalize_intent_response({
+        "response_type": "conversation",
+        "intent": "unknown",
+        "confidence": 1.0,
+        "clarification_needed": False,
+        "assistant_reply": (
+            "Hello! How can I help with your hiring workflow today? You can ask me to find candidates, "
+            "upload resumes, shortlist profiles, send outreach, or schedule interviews."
+        ),
+    })
+
 
 def _norm(value: str | None) -> str:
     text = str(value or "").lower()
@@ -556,6 +577,9 @@ def _has_any_word(text: str, words: tuple[str, ...]) -> bool:
 
 
 def fallback_parse_intent(message: str, current_route: str | None = None, current_context: dict | None = None) -> dict:
+    conversation = _conversation_fallback(message)
+    if conversation:
+        return conversation
     raw = str(message or "")
     text = _norm(raw)
     context = current_context if isinstance(current_context, dict) else {}
@@ -641,8 +665,14 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
 
 def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     data = data or {}
+    response_type = str(data.get("response_type") or "").strip().lower()
     intent = str(data.get("intent") or "unknown").strip()
     if intent not in SUPPORTED_INTENTS:
+        intent = "unknown"
+    if response_type not in {"conversation", "workflow", "clarification"}:
+        response_type = "workflow" if intent != "unknown" else "clarification"
+    assistant_reply = str(data.get("assistant_reply") or data.get("reply") or "").strip() or None
+    if response_type == "conversation":
         intent = "unknown"
     entities = dict(DEFAULT_ENTITIES)
     incoming_entities = data.get("entities") if isinstance(data.get("entities"), dict) else {}
@@ -674,7 +704,9 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     except (TypeError, ValueError):
         confidence = 0.2
     confidence = max(0.0, min(1.0, confidence))
-    clarification_needed = bool(data.get("clarification_needed")) or intent == "unknown" or confidence < 0.55
+    clarification_needed = response_type == "clarification" or (
+        response_type == "workflow" and (bool(data.get("clarification_needed")) or intent == "unknown" or confidence < 0.55)
+    )
     clarification_question = data.get("clarification_question")
     if clarification_question is not None:
         clarification_question = str(clarification_question).strip() or None
@@ -689,13 +721,16 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
         for task in incoming_tasks
         if isinstance(task, dict) and str(task.get("intent") or "").strip() in SUPPORTED_INTENTS
     ]
-    if not tasks:
+    if not tasks and response_type == "workflow":
         tasks = _workflow_tasks(intent, entities)
 
     incoming_actions = data.get("actions") if isinstance(data.get("actions"), list) else []
     actions = [action for action in incoming_actions if isinstance(action, dict) and action.get("action_id")]
-    if not actions:
+    if not actions and response_type == "workflow":
         actions = _action_plan(tasks, entities)
+    if response_type != "workflow":
+        tasks = []
+        actions = []
 
     missing_fields = data.get("missing_fields") if isinstance(data.get("missing_fields"), list) else []
     missing_fields = [str(item).strip() for item in missing_fields if str(item).strip()]
@@ -710,6 +745,8 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     visual_tour = data.get("visual_tour") if isinstance(data.get("visual_tour"), dict) else _visual_tour(intent, tasks, entities)
 
     return {
+        "response_type": response_type,
+        "assistant_reply": assistant_reply,
         "agent_mode": "guide",
         "intent": intent,
         "entities": entities,
@@ -736,6 +773,8 @@ def _merge_with_fallback(primary: dict[str, Any], fallback: dict[str, Any]) -> d
     """Keep AI intent, but never drop deterministic entities extracted from the same text."""
     if not fallback:
         return primary
+    if fallback.get("response_type") == "conversation":
+        return fallback
     merged = dict(primary)
     primary_entities = dict(primary.get("entities") or {})
     fallback_entities = fallback.get("entities") or {}
@@ -777,8 +816,12 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         return fallback
 
     system = (
-        "You are HireScore AI's helping agent planner. Return JSON only. "
-        "Parse the user's intent, entities, multi-step workflow tasks, and action-agent plan. "
+        "You are HireScore AI's conversational hiring copilot and task planner. Return JSON only. "
+        "First classify response_type as conversation, workflow, or clarification. "
+        "For greetings, thanks, casual conversation, or capability questions, use response_type conversation, write a concise natural assistant_reply, "
+        "set intent unknown, and return no tasks or actions. Never select a job for a greeting. "
+        "For an actionable ATS request, use response_type workflow and parse the user's intent, entities, ordered tasks, and actions. "
+        "For an ambiguous ATS request, use response_type clarification with assistant_reply containing one focused question and no executable actions. "
         "Do not invent job IDs or candidate IDs when they are not present in current_context. "
         "Understand English, Hinglish, broken English, typos, and ATS/recruitment terms. "
         "Supported intents: " + ", ".join(sorted(SUPPORTED_INTENTS)) + ". "
@@ -794,6 +837,8 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "current_route": current_route,
         "current_context": current_context or {},
         "response_shape": {
+            "response_type": "conversation | workflow | clarification",
+            "assistant_reply": "natural language response to show the user",
             "intent": "string",
             "entities": DEFAULT_ENTITIES,
             "tasks": [{"intent": "string", "description": "string", "entities": DEFAULT_ENTITIES}],
