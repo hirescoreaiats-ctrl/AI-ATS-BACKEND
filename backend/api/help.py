@@ -16,10 +16,24 @@ class HelpIntentRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000)
     current_route: str | None = None
     current_context: dict | None = None
+    conversation_history: list[dict] = Field(default_factory=list, max_length=12)
 
 
 class HelpActionExecuteRequest(BaseModel):
     confirmation_token: str = Field(..., min_length=20, max_length=10000)
+
+
+def _request_context(payload: HelpIntentRequest) -> dict:
+    context = dict(payload.current_context or {})
+    context["conversation_history"] = [
+        {
+            "role": str(item.get("role") or "user")[:20],
+            "content": str(item.get("content") or "")[:1000],
+        }
+        for item in payload.conversation_history[-12:]
+        if isinstance(item, dict) and str(item.get("content") or "").strip()
+    ]
+    return context
 
 
 @router.post("/parse-intent")
@@ -27,7 +41,7 @@ def parse_help_intent(payload: HelpIntentRequest, user=Depends(get_current_user)
     return parse_intent(
         message=payload.message,
         current_route=payload.current_route,
-        current_context=payload.current_context or {},
+        current_context=_request_context(payload),
     )
 
 
@@ -36,7 +50,7 @@ def plan_help_action(payload: HelpIntentRequest, user=Depends(get_current_user))
     return parse_intent(
         message=payload.message,
         current_route=payload.current_route,
-        current_context=payload.current_context or {},
+        current_context=_request_context(payload),
     )
 
 
@@ -49,7 +63,7 @@ def chat_with_help_agent(
     return prepare_action_agent(
         message=payload.message,
         current_route=payload.current_route,
-        current_context=payload.current_context or {},
+        current_context=_request_context(payload),
         db=db,
         user=user,
     )
