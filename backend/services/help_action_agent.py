@@ -9,6 +9,7 @@ import jwt
 from fastapi import HTTPException, status
 from sqlalchemy import false, func
 
+from backend.ai.search import hybrid_candidate_rank
 from backend.core.config import get_settings
 from backend.core.security import decode_token
 from backend.models import CandidateStageHistory, Interview, Job, Resume, User
@@ -19,6 +20,7 @@ from backend.services.help_intent import parse_intent
 
 GLOBAL_ROLES = {"admin", "super_admin"}
 SERVER_ACTIONS = {
+    "search_talent",
     "find_top_candidates",
     "shortlist_candidates",
     "reject_candidates",
@@ -26,7 +28,7 @@ SERVER_ACTIONS = {
     "move_to_interview_scheduling",
     "schedule_interview_slot",
 }
-MUTATING_ACTIONS = SERVER_ACTIONS - {"find_top_candidates"}
+MUTATING_ACTIONS = SERVER_ACTIONS - {"find_top_candidates", "search_talent"}
 MAX_MUTATION_CANDIDATES = 25
 CONFIRMATION_MINUTES = 10
 
@@ -103,6 +105,7 @@ def _candidate_payload(candidate: Resume) -> dict[str, Any]:
 
     return {
         "id": candidate.id,
+        "job_id": candidate.job_id,
         "full_name": candidate.full_name or candidate.form_full_name or "Candidate",
         "email": candidate.email or candidate.form_email,
         "designation": candidate.designation,
@@ -157,6 +160,35 @@ def _resolve_candidates(
         return []
 
     intent = result.get("intent")
+    if intent == "search_talent" or "search_talent" in action_ids:
+        search_query = str(entities.get("search_query") or "").strip()
+        if not search_query:
+            return []
+        rows = query.order_by(Resume.created_at.desc()).limit(500).all()
+        limit = min(max(int(entities.get("limit") or 10), 1), 25)
+        terms = [term for term in _normalized(search_query).split() if len(term) > 2]
+        lexical_ranked: list[tuple[float, str]] = []
+        for row in rows:
+            haystack = _normalized(" ".join([
+                row.designation or "", row.key_skills or "", row.domain or "", (row.resume_text or "")[:12000]
+            ]))
+            hits = sum(1 for term in terms if term in haystack)
+            if not hits:
+                continue
+            lexical_score = (hits / max(len(terms), 1)) + ((row.rank_score or row.final_score or 0) / 500)
+            lexical_ranked.append((lexical_score, row.id))
+        lexical_ranked.sort(reverse=True)
+        if lexical_ranked:
+            ranked_ids = [candidate_id for _, candidate_id in lexical_ranked[:limit]]
+        else:
+            ranked = hybrid_candidate_rank(search_query, rows)
+            ranked_ids = [
+                item["resume_id"]
+                for item in ranked
+                if float(item.get("semantic_score") or 0) >= 0.25
+            ][:limit]
+        rows_by_id = {row.id: row for row in rows}
+        return [rows_by_id[candidate_id] for candidate_id in ranked_ids if candidate_id in rows_by_id]
     if not job:
         return []
     if intent == "view_shortlisted_candidates":
@@ -230,7 +262,8 @@ def prepare_action_agent(
         if isinstance(action, dict) and action.get("action_id") in SERVER_ACTIONS
     ]
 
-    job, job_options = _resolve_job(db, user, entities)
+    is_talent_search = result.get("intent") == "search_talent"
+    job, job_options = (None, []) if is_talent_search else _resolve_job(db, user, entities)
     if job:
         entities["job_id"] = job.id
         entities["job_title"] = job.job_title or job.role
@@ -239,12 +272,39 @@ def prepare_action_agent(
     if candidates:
         entities["candidate_ids"] = [candidate.id for candidate in candidates]
 
+    if is_talent_search:
+        query_label = entities.get("search_query") or "your search"
+        result["entities"] = entities
+        result["candidate_preview"] = [_candidate_payload(candidate) for candidate in candidates]
+        result["job_options"] = []
+        result["confirmation"] = None
+        result["tasks"] = result.get("tasks") or []
+        result["actions"] = []
+        result["missing_fields"] = [] if entities.get("search_query") else ["search_query"]
+        result["requires_confirmation"] = False
+        result["ready_for_action_agent"] = False
+        result["clarification_needed"] = not bool(entities.get("search_query"))
+        result["clarification_question"] = None if entities.get("search_query") else "Which role or skills should I search for?"
+        result["assistant_reply"] = (
+            f"I found {len(candidates)} candidate match{'es' if len(candidates) != 1 else ''} for {query_label}."
+            if candidates
+            else f"I could not find a strong candidate match for {query_label}. Try adding core skills, seniority, or location."
+        )
+        result["guidance"] = result["assistant_reply"]
+        result["action_agent_plan"] = {
+            "enabled": False,
+            "actions": [],
+            "missing_fields": result["missing_fields"],
+            "requires_confirmation": False,
+        }
+        return result
+
     missing_fields = [
         field
         for field in (result.get("missing_fields") or [])
         if field not in {"job", "job_id", "job_title_or_job_id", "candidate_ids"}
     ]
-    needs_job = bool(action_ids) or result.get("intent") in {
+    needs_job = (bool(action_ids) and not is_talent_search) or result.get("intent") in {
         "view_shortlisted_candidates",
         "view_candidates_by_stage",
         "review_ai_ranked_candidates",

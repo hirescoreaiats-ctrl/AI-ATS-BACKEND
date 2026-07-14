@@ -17,6 +17,7 @@ AGENT_CONTRACT_VERSION = "2026-07-general-v1"
 
 
 SUPPORTED_INTENTS = {
+    "search_talent",
     "candidate_workflow",
     "create_job",
     "edit_job",
@@ -65,6 +66,7 @@ STAGE_ALIASES = {
 }
 
 DEFAULT_ENTITIES = {
+    "search_query": None,
     "job_title": None,
     "candidate_name": None,
     "candidate_group": None,
@@ -263,6 +265,13 @@ def _workflow_tasks(intent: str, entities: dict[str, Any]) -> list[dict[str, Any
     target_stage = entities.get("target_stage") or entities.get("stage")
     limit = entities.get("limit")
 
+    if intent == "search_talent":
+        tasks.append({
+            "intent": "search_talent",
+            "description": "Search the organization-wide candidate database by role, skills, and resume evidence.",
+            "entities": {"search_query": entities.get("search_query"), "limit": limit or 10},
+        })
+
     if intent in {"candidate_workflow", "select_top_candidates", "review_ai_ranked_candidates"}:
         tasks.append(
             {
@@ -390,6 +399,18 @@ def _action_plan(tasks: list[dict[str, Any]], entities: dict[str, Any]) -> list[
                     "requires_confirmation": False,
                 }
             )
+        elif task_intent == "search_talent":
+            actions.append(
+                {
+                    "action_id": "search_talent",
+                    "actor": "action_agent",
+                    "method": "GET",
+                    "endpoint": "/api/v1/talent/search",
+                    "needs": ["search_query"],
+                    "params": {"q": entities.get("search_query"), "limit": entities.get("limit") or 10},
+                    "requires_confirmation": False,
+                }
+            )
         elif task_intent == "shortlist_candidate":
             actions.append(
                 {
@@ -491,6 +512,8 @@ def _missing_fields_for_actions(actions: list[dict[str, Any]], entities: dict[st
         missing.append("scheduled_at")
     if any("meeting_url" in action.get("needs", []) for action in actions) and not entities.get("meeting_url"):
         missing.append("meeting_url")
+    if any("search_query" in action.get("needs", []) for action in actions) and not entities.get("search_query"):
+        missing.append("search_query")
     return missing
 
 
@@ -635,7 +658,17 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     ))
     shortlist_action = _shortlist_action_requested(text)
     view_shortlisted = _view_shortlisted_requested(text)
-    if all_candidates_requested:
+    discovery_match = re.search(
+        r"^(?:i\s+want|show\s+me|find|search|get|give\s+me|mujhe)?\s*(.+?)\s+(?:candidate|candidates|profiles|resumes)\s*$",
+        text,
+    )
+    discovery_query = _title_case_job(discovery_match.group(1)) if discovery_match else None
+    if discovery_query and not any(term in text for term in ("top ", "shortlist", "reject", " job", " of ", " for ")):
+        intent, confidence = "search_talent", 0.9
+        entities["search_query"] = discovery_query
+        entities["candidate_group"] = "all"
+        entities["job_title"] = None
+    elif all_candidates_requested:
         intent, confidence = "view_candidates_by_stage", 0.94
         entities["candidate_group"] = "all"
         entities["stage"] = None
@@ -921,6 +954,8 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "Understand English, Hinglish, broken English, typos, and ATS/recruitment terms. "
         "Supported intents: " + ", ".join(sorted(SUPPORTED_INTENTS)) + ". "
         "Entity fields: job_title, job_id, candidate_name, candidate_ids, candidate_group, stage, target_stage, date_time, meeting_url, email, plan, limit. "
+        "For requests such as 'data science candidates', 'find Python profiles', or role/skill candidate discovery without a specific job, "
+        "use intent search_talent and put the natural role/skill phrase in entities.search_query. This searches candidates across jobs. "
         "For requests like 'top 10 candidates for Data Analyst and move them to communication', use intent candidate_workflow "
         "with semantic tasks select_top_candidates then move_candidates_to_communication. "
         "For requests like 'shortlist candidate of Data Analyst job', use intent candidate_workflow, entities.job_title Data Analyst, candidate_group top_candidates, and do not use view_shortlisted_candidates. "

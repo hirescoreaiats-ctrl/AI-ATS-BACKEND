@@ -31,7 +31,7 @@ def _seed_workspace(db):
     candidates = [
         Resume(id="candidate-1", job_id=job.id, organization_id="org-a", full_name="Asha Singh", final_score=91, rank_score=94, status="Review", stage="review", is_active=True, recruiter_explanation="Strong SQL and analytics evidence.", strengths='["SQL", "Dashboarding"]', concerns='["Validate stakeholder depth"]', matched_skills='["SQL", "Power BI"]'),
         Resume(id="candidate-2", job_id=job.id, organization_id="org-a", full_name="Ravi Kumar", final_score=84, rank_score=87, status="Review", stage="review", is_active=True),
-        Resume(id="candidate-3", job_id=job.id, organization_id="org-a", full_name="Neha Shah", final_score=70, rank_score=72, status="Review", stage="review", is_active=True),
+        Resume(id="candidate-3", job_id=job.id, organization_id="org-a", full_name="Neha Shah", designation="Data Scientist", key_skills="Python, machine learning, statistics", final_score=70, rank_score=72, status="Review", stage="review", is_active=True),
     ]
     db.add_all([user, second_user, outsider, job, *candidates])
     db.commit()
@@ -171,3 +171,26 @@ def test_all_candidates_resolves_exact_job_title_without_asking_for_id(monkeypat
     assert result["job_options"] == []
     assert result["missing_fields"] == []
     assert result["clarification_needed"] is False
+
+
+def test_role_query_searches_candidates_across_jobs_without_job_picker(monkeypatch, db):
+    user, _, _, _, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="i want data science candidates",
+        current_route="/dashboard",
+        current_context={},
+        db=db,
+        user=user,
+    )
+
+    assert result["intent"] == "search_talent"
+    assert result["entities"]["search_query"] == "Data Science"
+    assert result["job_options"] == []
+    assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-3"]
+    assert result["clarification_needed"] is False
+    assert result["actions"] == []
