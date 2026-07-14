@@ -39,7 +39,6 @@ SUPPORTED_INTENTS = {
 
 STAGE_ALIASES = {
     "shortlisted": "shortlisted",
-    "shortlist": "shortlisted",
     "selected": "selected",
     "select": "selected",
     "rejected": "rejected",
@@ -93,7 +92,8 @@ NUMBER_WORDS = {
 
 def _norm(value: str | None) -> str:
     text = str(value or "").lower()
-    text = re.sub(r"[._-]+", " ", text)
+    text = re.sub(r"[^a-z0-9+#]+", " ", text)
+    text = re.sub(r"\bshort\s*(?:list|ist|lst|lis)\b", "shortlist", text)
     text = re.sub(r"\bupl\s*aod\b|\buplod\b|\buplaod\b", "upload", text)
     text = re.sub(r"\bcandiate\b|\bcandiadte\b", "candidate", text)
     text = re.sub(r"\bcommincation\b|\bcommuncation\b|\bcomunication\b", "communication", text)
@@ -105,7 +105,7 @@ def _norm(value: str | None) -> str:
 def _title_case_job(value: str | None) -> str | None:
     value = re.sub(
         r"\b(the|this|that|of|for|in|job|jobs|mujhe|muje|please|top|candidate|candidates|candiate|"
-        r"want|you|to|give|get|nikal|nikalo|find|show|list|do|de|bhej|send|unha|unhe|unka|aur|and|or|interview|"
+        r"want|need|you|to|give|get|nikal|nikalo|find|show|list|do|de|bhej|send|unha|unhe|unka|aur|and|or|interview|"
         r"schedule|communication|mai|me|mein|ke|kai|kay|liye|lia|liya)\b",
         " ",
         str(value or ""),
@@ -119,14 +119,14 @@ def _title_case_job(value: str | None) -> str | None:
 
 def _extract_job_title(message: str) -> str | None:
     patterns = [
-        r"(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)s?\s+(?:of|for)\s+([a-z0-9 .+#-]+)",
-        r"(?:give|get|show|find|list)\s+(?:me\s+)?(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)s?\s+(?:of|for)\s+([a-z0-9 .+#-]+)",
-        r"(?:candidate|candidates)\s+(?:nikal|nikalo|find|show|list|de do|do)\s+([a-z0-9 .+#-]+?)\s+(?:ke|kai|kay|for)\s*(?:liye|lia|liya)?\b",
-        r"([a-z0-9 .+#-]+?)\s+(?:ke|kai|kay)\s+(?:liye|lia|liya)\s+(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)",
-        r"(?:of|for|in)\s+([a-z0-9 .+#-]+?)\s+job\b",
-        r"([a-z0-9 .+#-]+?)\s+wali\s+job",
-        r"([a-z0-9 .+#-]+?)\s+job\s+me",
-        r"job\s+(?:of|for)\s+([a-z0-9 .+#-]+)",
+        r"(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|resumes|profile|profiles)s?\s+(?:of|for|in)\s+(.+?)(?:\s+(?:job|role|opening)\b|$)",
+        r"(?:give|get|show|find|list|shortlist|select|review)\s+(?:me\s+)?(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|resumes|profile|profiles)?\s*(?:of|for|in)\s+(.+?)(?:\s+(?:job|role|opening)\b|$)",
+        r"(?:candidate|candidates)\s+(?:nikal|nikalo|find|show|list|de do|do)\s+(.+?)\s+(?:ke|kai|kay|for)\s*(?:liye|lia|liya)?\b",
+        r"(.+?)\s+(?:ke|kai|kay)\s+(?:liye|lia|liya)\s+(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)",
+        r"(?:of|for|in)\s+(.+?)\s+(?:job|role|opening)\b",
+        r"(.+?)\s+wali\s+job",
+        r"(.+?)\s+job\s+me",
+        r"job\s+(?:of|for)\s+(.+)",
     ]
     for pattern in patterns:
         match = re.search(pattern, message, flags=re.I)
@@ -163,6 +163,12 @@ def _target_stage_from_text(text: str) -> str | None:
 
 def _candidate_selection_requested(text: str) -> bool:
     selection_terms = (
+        "shortlist candidate",
+        "shortlist candidates",
+        "shortlist resume",
+        "shortlist resumes",
+        "select candidate",
+        "select candidates",
         "candidate nikal",
         "candidates nikal",
         "candidate find",
@@ -178,6 +184,34 @@ def _candidate_selection_requested(text: str) -> bool:
     )
     return any(term in text for term in selection_terms) or bool(
         re.search(r"\b\d{1,3}\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b", text)
+    )
+
+
+def _shortlist_action_requested(text: str) -> bool:
+    return any(
+        term in text
+        for term in (
+            "shortlist candidate",
+            "shortlist candidates",
+            "shortlist resume",
+            "shortlist resumes",
+            "select candidate",
+            "select candidates",
+        )
+    )
+
+
+def _view_shortlisted_requested(text: str) -> bool:
+    return "shortlisted" in text or any(
+        term in text
+        for term in (
+            "view shortlist",
+            "show shortlist",
+            "list shortlist",
+            "shortlist list",
+            "shortlisted candidate",
+            "shortlisted candidates",
+        )
     )
 
 
@@ -198,6 +232,20 @@ def _workflow_tasks(intent: str, entities: dict[str, Any]) -> list[dict[str, Any
                 },
             }
         )
+
+    if target_stage == "shortlisted" and intent in {"candidate_workflow", "select_top_candidates"}:
+        if not any(task["intent"] == "shortlist_candidate" for task in tasks):
+            tasks.append(
+                {
+                    "intent": "shortlist_candidate",
+                    "description": "Shortlist the selected candidates after recruiter review.",
+                    "entities": {
+                        "job_title": entities.get("job_title"),
+                        "job_id": entities.get("job_id"),
+                        "candidate_ids": entities.get("candidate_ids"),
+                    },
+                }
+            )
 
     if intent == "move_candidates_to_communication" or target_stage == "communication":
         if not any(task["intent"] == "shortlist_candidate" for task in tasks):
@@ -520,14 +568,22 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     resume_terms = any(term in text for term in ("resume", "cv", "profile"))
     upload_terms = any(term in text for term in ("upload", "add", "dalna", "dalo", "add karna"))
     selection_requested = _candidate_selection_requested(text)
+    shortlist_action = _shortlist_action_requested(text)
+    view_shortlisted = _view_shortlisted_requested(text)
     if selection_requested and entities["target_stage"] in {"communication", "interview_scheduling"}:
         intent, confidence = "candidate_workflow", 0.92
         entities["candidate_group"] = "top_candidates"
+    elif shortlist_action:
+        intent, confidence = "candidate_workflow", 0.9
+        entities["candidate_group"] = "top_candidates"
+        entities["target_stage"] = "shortlisted"
     elif selection_requested:
         intent, confidence = "select_top_candidates", 0.88
         entities["candidate_group"] = "top_candidates"
-    elif stage == "shortlisted" and _has_any_word(text, ("want", "show", "view", "list", "candidate", "candidates")):
+    elif view_shortlisted and _has_any_word(text, ("want", "show", "view", "list", "candidate", "candidates")):
         intent, confidence = "view_shortlisted_candidates", 0.9
+        entities["stage"] = "shortlisted"
+        entities["candidate_group"] = "shortlisted"
     elif stage and _has_any_word(text, ("show", "view", "list", "candidate", "candidates")):
         intent, confidence = "view_candidates_by_stage", 0.86
     elif resume_terms and upload_terms:
@@ -658,6 +714,32 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     }
 
 
+def _merge_with_fallback(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    """Keep AI intent, but never drop deterministic entities extracted from the same text."""
+    if not fallback:
+        return primary
+    merged = dict(primary)
+    primary_entities = dict(primary.get("entities") or {})
+    fallback_entities = fallback.get("entities") or {}
+    for key, value in fallback_entities.items():
+        has_primary = primary_entities.get(key) not in (None, "", [])
+        has_fallback = value not in (None, "", [])
+        if not has_primary and has_fallback:
+            primary_entities[key] = value
+
+    if primary.get("intent") in {"unknown", None, ""} and fallback.get("intent") not in {"unknown", None, ""}:
+        merged["intent"] = fallback["intent"]
+        merged["confidence"] = max(float(primary.get("confidence") or 0), float(fallback.get("confidence") or 0))
+        merged["clarification_needed"] = fallback.get("clarification_needed", False)
+        merged["clarification_question"] = fallback.get("clarification_question")
+
+    merged["entities"] = primary_entities
+    normalized = normalize_intent_response(merged)
+    if fallback.get("intent") == "candidate_workflow" and primary.get("intent") in {"shortlist_candidate", "view_shortlisted_candidates", "unknown"}:
+        normalized = normalize_intent_response({**normalized, "intent": "candidate_workflow", "entities": normalized["entities"], "confidence": max(normalized["confidence"], 0.9)})
+    return normalized
+
+
 @lru_cache(maxsize=1)
 def _client():
     api_key = os.getenv("OPENAI_API_KEY") or get_settings().openai_api_key
@@ -685,8 +767,9 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "Entity fields: job_title, job_id, candidate_name, candidate_ids, candidate_group, stage, target_stage, date_time, meeting_url, email, plan, limit. "
         "For requests like 'top 10 candidates for Data Analyst and move them to communication', use intent candidate_workflow, "
         "tasks select_top_candidates then move_candidates_to_communication, and action-agent endpoints /results/{job_id} then /move-to-communication. "
+        "For requests like 'shortlist candidate of Data Analyst job', use intent candidate_workflow, entities.job_title Data Analyst, candidate_group top_candidates, and do not use view_shortlisted_candidates. "
         "For interview scheduling requests, include move_candidates_to_interview and schedule_interview tasks, and mark scheduled_at/meeting_url missing if absent. "
-        "For shortlisted candidate list requests, use intent view_shortlisted_candidates, candidate_group shortlisted, stage shortlisted, and candidate_name null."
+        "Only for already-shortlisted candidate list requests like 'show shortlisted candidates', use intent view_shortlisted_candidates, candidate_group shortlisted, stage shortlisted, and candidate_name null."
     )
     user_payload = {
         "message": message,
@@ -719,6 +802,6 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         )
         content = response.choices[0].message.content or "{}"
         parsed = json.loads(content)
-        return normalize_intent_response(parsed)
+        return _merge_with_fallback(normalize_intent_response(parsed), fallback)
     except Exception:
         return fallback

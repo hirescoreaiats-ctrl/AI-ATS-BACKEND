@@ -1,4 +1,4 @@
-from backend.services.help_intent import fallback_parse_intent, parse_intent
+from backend.services.help_intent import fallback_parse_intent, parse_intent, _merge_with_fallback, normalize_intent_response
 
 
 def should_require_candidate(result):
@@ -17,6 +17,33 @@ def test_shortlisted_candidates_for_job_does_not_require_candidate(monkeypatch):
     assert result["entities"]["stage"] == "shortlisted"
     assert result["entities"]["candidate_name"] is None
     assert should_require_candidate(result) is False
+
+
+def test_shortlist_action_with_typo_extracts_job_and_action_plan():
+    result = fallback_parse_intent("i want short;ist candidate of data analyst job")
+
+    assert result["intent"] == "candidate_workflow"
+    assert result["entities"]["job_title"] == "Data Analyst"
+    assert result["entities"]["candidate_group"] == "top_candidates"
+    assert [action["action_id"] for action in result["actions"]] == [
+        "find_top_candidates",
+        "shortlist_candidates",
+    ]
+    assert result["missing_fields"] == []
+
+
+def test_ai_response_keeps_fallback_job_title_when_ai_misses_entity():
+    fallback = fallback_parse_intent("i want short;ist candidate of data analyst job")
+    ai_result = normalize_intent_response({
+        "intent": "candidate_workflow",
+        "entities": {"job_title": None, "candidate_group": "top_candidates"},
+        "confidence": 0.9,
+    })
+
+    merged = _merge_with_fallback(ai_result, fallback)
+
+    assert merged["intent"] == "candidate_workflow"
+    assert merged["entities"]["job_title"] == "Data Analyst"
 
 
 def test_named_interview_request_requires_candidate():
