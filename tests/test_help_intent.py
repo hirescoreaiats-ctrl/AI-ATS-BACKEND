@@ -175,3 +175,37 @@ def test_ai_job_id_question_is_rewritten_for_normal_users():
 
     assert "job id" not in result["assistant_reply"].lower()
     assert "job_id" not in result["clarification_question"].lower()
+
+
+def test_top_ten_score_explanation_remains_a_candidate_group():
+    message = "i want ai explanation of data analyst top 10 candidate"
+    fallback = fallback_parse_intent(message)
+    ai_result = normalize_intent_response({
+        "response_type": "workflow",
+        "intent": "explain_candidate_score",
+        "entities": {"job_title": "Data Analyst", "limit": 10, "candidate_group": "top_candidates"},
+        "confidence": 0.92,
+    })
+
+    merged = _merge_with_fallback(ai_result, fallback)
+
+    assert merged["intent"] == "review_ai_ranked_candidates"
+    assert merged["entities"]["candidate_group"] == "top_candidates"
+    assert merged["entities"]["limit"] == 10
+    assert merged["entities"]["candidate_name"] is None
+    assert [action["action_id"] for action in merged["actions"]] == ["find_top_candidates"]
+
+
+def test_model_cannot_invent_executable_backend_endpoint():
+    result = normalize_intent_response({
+        "response_type": "workflow",
+        "intent": "create_job",
+        "entities": {},
+        "tasks": [{"intent": "create_job", "description": "Create a role", "entities": {}}],
+        "actions": [{"action_id": "delete_everything", "method": "DELETE", "endpoint": "/admin/all"}],
+        "confidence": 0.95,
+    })
+
+    assert result["tasks"][0]["intent"] == "create_job"
+    assert result["actions"] == []
+    assert result["agent_contract_version"] == "2026-07-general-v1"

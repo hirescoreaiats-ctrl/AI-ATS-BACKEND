@@ -29,7 +29,7 @@ def _seed_workspace(db):
     outsider = User(id="user-c", name="Other Recruiter", email="other@example.com", password="hash", role="recruiter", organization_id="org-b")
     job = Job(id="job-data", job_title="Data Analyst", role="Data Analyst", organization_id="org-a", is_active=True)
     candidates = [
-        Resume(id="candidate-1", job_id=job.id, organization_id="org-a", full_name="Asha Singh", final_score=91, rank_score=94, status="Review", stage="review", is_active=True),
+        Resume(id="candidate-1", job_id=job.id, organization_id="org-a", full_name="Asha Singh", final_score=91, rank_score=94, status="Review", stage="review", is_active=True, recruiter_explanation="Strong SQL and analytics evidence.", strengths='["SQL", "Dashboarding"]', concerns='["Validate stakeholder depth"]', matched_skills='["SQL", "Power BI"]'),
         Resume(id="candidate-2", job_id=job.id, organization_id="org-a", full_name="Ravi Kumar", final_score=84, rank_score=87, status="Review", stage="review", is_active=True),
         Resume(id="candidate-3", job_id=job.id, organization_id="org-a", full_name="Neha Shah", final_score=70, rank_score=72, status="Review", stage="review", is_active=True),
     ]
@@ -55,6 +55,9 @@ def test_preview_resolves_exact_job_and_top_candidates(monkeypatch, db):
 
     assert result["entities"]["job_id"] == job.id
     assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-1", "candidate-2"]
+    assert result["candidate_preview"][0]["recruiter_explanation"] == "Strong SQL and analytics evidence."
+    assert result["candidate_preview"][0]["strengths"] == ["SQL", "Dashboarding"]
+    assert result["candidate_preview"][0]["matched_skills"] == ["SQL", "Power BI"]
     assert result["missing_fields"] == []
     assert result["confirmation"]["token"]
     assert result["requires_confirmation"] is True

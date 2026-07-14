@@ -13,6 +13,7 @@ from backend.core.config import get_settings
 from backend.core.security import decode_token
 from backend.models import CandidateStageHistory, Interview, Job, Resume, User
 from backend.repositories.audit_repository import write_audit_log, write_candidate_activity
+from backend.services.candidate_intelligence import from_json_text
 from backend.services.help_intent import parse_intent
 
 
@@ -94,6 +95,12 @@ def _resolve_job(db, user: User, entities: dict[str, Any]) -> tuple[Job | None, 
 
 
 def _candidate_payload(candidate: Resume) -> dict[str, Any]:
+    def list_field(value: Any) -> list[str]:
+        parsed = from_json_text(value, [])
+        if isinstance(parsed, str):
+            parsed = [item.strip() for item in parsed.split(",") if item.strip()]
+        return [str(item).strip() for item in (parsed or []) if str(item).strip()][:6]
+
     return {
         "id": candidate.id,
         "full_name": candidate.full_name or candidate.form_full_name or "Candidate",
@@ -105,6 +112,12 @@ def _candidate_payload(candidate: Resume) -> dict[str, Any]:
         "stage": candidate.stage,
         "status": candidate.status,
         "ranking_reason": candidate.ranking_reason,
+        "recruiter_explanation": candidate.recruiter_explanation or candidate.ranking_reason or candidate.decision_reason,
+        "strengths": list_field(candidate.strengths),
+        "concerns": list_field(candidate.concerns),
+        "matched_skills": list_field(candidate.matched_skills),
+        "missing_skills": list_field(candidate.missing_skills),
+        "recommendation": candidate.ai_recommendation or candidate.shortlist_decision or candidate.status,
     }
 
 

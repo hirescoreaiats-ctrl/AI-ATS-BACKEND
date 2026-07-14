@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from functools import lru_cache
@@ -9,6 +10,10 @@ from typing import Any
 from openai import OpenAI
 
 from backend.core.config import get_settings
+
+
+logger = logging.getLogger(__name__)
+AGENT_CONTRACT_VERSION = "2026-07-general-v1"
 
 
 SUPPORTED_INTENTS = {
@@ -734,7 +739,7 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
         clarification_question = _friendly_user_text(clarification_question)
 
     incoming_tasks = data.get("tasks") if isinstance(data.get("tasks"), list) else []
-    tasks = [
+    model_tasks = [
         {
             "intent": str(task.get("intent") or "").strip(),
             "description": str(task.get("description") or "").strip(),
@@ -743,16 +748,16 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
         for task in incoming_tasks
         if isinstance(task, dict) and str(task.get("intent") or "").strip() in SUPPORTED_INTENTS
     ]
-    if not tasks and response_type == "workflow":
-        tasks = _workflow_tasks(intent, entities)
+    tasks = _workflow_tasks(intent, entities) if response_type == "workflow" else []
+    known_task_intents = {task["intent"] for task in tasks}
+    for task in model_tasks:
+        if task["intent"] not in known_task_intents:
+            tasks.append(task)
+            known_task_intents.add(task["intent"])
 
-    incoming_actions = data.get("actions") if isinstance(data.get("actions"), list) else []
-    actions = [action for action in incoming_actions if isinstance(action, dict) and action.get("action_id")]
-    if not actions and response_type == "workflow":
-        actions = _action_plan(tasks, entities)
-    if response_type != "workflow":
-        tasks = []
-        actions = []
+    # Language understanding belongs to AI; executable endpoint compilation
+    # belongs to the trusted backend and is never accepted from model output.
+    actions = _action_plan(tasks, entities) if response_type == "workflow" else []
 
     missing_fields = data.get("missing_fields") if isinstance(data.get("missing_fields"), list) else []
     missing_fields = [str(item).strip() for item in missing_fields if str(item).strip()]
@@ -767,6 +772,8 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     visual_tour = data.get("visual_tour") if isinstance(data.get("visual_tour"), dict) else _visual_tour(intent, tasks, entities)
 
     return {
+        "agent_contract_version": AGENT_CONTRACT_VERSION,
+        "understanding_source": str(data.get("understanding_source") or "deterministic"),
         "response_type": response_type,
         "assistant_reply": assistant_reply,
         "agent_mode": "guide",
@@ -831,6 +838,24 @@ def _merge_with_fallback(primary: dict[str, Any], fallback: dict[str, Any]) -> d
 
     merged["entities"] = primary_entities
     normalized = normalize_intent_response(merged)
+    fallback_group = (fallback.get("entities") or {}).get("candidate_group")
+    if (
+        fallback_group in {"top_candidates", "all", "shortlisted"}
+        and not normalized["entities"].get("candidate_name")
+        and normalized.get("intent") in {"view_candidate_profile", "explain_candidate_score"}
+    ):
+        group_intent = "view_shortlisted_candidates" if fallback_group == "shortlisted" else "review_ai_ranked_candidates"
+        normalized = normalize_intent_response({
+            **fallback,
+            "response_type": "workflow",
+            "intent": group_intent,
+            "entities": {**fallback.get("entities", {}), **normalized.get("entities", {})},
+            "assistant_reply": primary.get("assistant_reply"),
+            "guidance": primary.get("guidance") or fallback.get("guidance"),
+            "confidence": max(float(normalized.get("confidence") or 0), float(fallback.get("confidence") or 0)),
+            "clarification_needed": False,
+            "clarification_question": None,
+        })
     if fallback.get("intent") == "candidate_workflow" and primary.get("intent") in {"shortlist_candidate", "view_shortlisted_candidates", "unknown"}:
         normalized = normalize_intent_response({**normalized, "intent": "candidate_workflow", "entities": normalized["entities"], "confidence": max(normalized["confidence"], 0.9)})
     return normalized
@@ -845,32 +870,36 @@ def _client():
 
 
 def _model() -> str:
-    return os.getenv("OPENAI_HELP_INTENT_MODEL", "gpt-4.1-mini")
+    return os.getenv("OPENAI_HELP_INTENT_MODEL", "gpt-4.1")
 
 
 def parse_intent(message: str, current_route: str | None = None, current_context: dict | None = None) -> dict:
     fallback = fallback_parse_intent(message, current_route, current_context)
     client = _client()
     if client is None:
-        return fallback
+        return {**fallback, "understanding_source": "fallback", "ai_runtime": "not_configured"}
 
     system = (
         "You are HireScore AI's conversational hiring copilot and task planner. Return JSON only. "
         "First classify response_type as conversation, workflow, or clarification. "
-        "For greetings, thanks, casual conversation, or capability questions, use response_type conversation, write a concise natural assistant_reply, "
+        "Respond like a capable, concise hiring copilot, not a menu bot. Use conversation_history for follow-ups and references. "
+        "For greetings, thanks, casual conversation, product questions, or how-to questions, use response_type conversation and write a useful natural assistant_reply, "
         "set intent unknown, and return no tasks or actions. Never select a job for a greeting. "
-        "For an actionable ATS request, use response_type workflow and parse the user's intent, entities, ordered tasks, and actions. "
+        "For an actionable ATS request, use response_type workflow and parse the user's intent, entities, and ordered semantic tasks. "
+        "The backend compiles executable actions; do not invent methods, endpoints, or payloads. "
         "For an ambiguous ATS request, use response_type clarification with assistant_reply containing one focused question and no executable actions. "
         "Never ask the user for internal job_id or candidate_id values. Users know job titles, company names, locations, and candidate names; "
         "the server resolves internal IDs. If titles are ambiguous, ask the user to choose a friendly job option. "
         "If the user asks for all candidates of a named job, use response_type workflow, intent view_candidates_by_stage, candidate_group all, "
         "extract the job_title, and do not ask for job_id because the server resolves exact titles. "
+        "Candidate cardinality is strict: top N, all, shortlisted, or plural candidate requests are groups, not one candidate. "
+        "For score explanations of a group, use review_ai_ranked_candidates with candidate_group and limit; never ask the user to choose one candidate. "
         "Do not invent job IDs or candidate IDs when they are not present in current_context. "
         "Understand English, Hinglish, broken English, typos, and ATS/recruitment terms. "
         "Supported intents: " + ", ".join(sorted(SUPPORTED_INTENTS)) + ". "
         "Entity fields: job_title, job_id, candidate_name, candidate_ids, candidate_group, stage, target_stage, date_time, meeting_url, email, plan, limit. "
-        "For requests like 'top 10 candidates for Data Analyst and move them to communication', use intent candidate_workflow, "
-        "tasks select_top_candidates then move_candidates_to_communication, and action-agent endpoints /results/{job_id} then /move-to-communication. "
+        "For requests like 'top 10 candidates for Data Analyst and move them to communication', use intent candidate_workflow "
+        "with semantic tasks select_top_candidates then move_candidates_to_communication. "
         "For requests like 'shortlist candidate of Data Analyst job', use intent candidate_workflow, entities.job_title Data Analyst, candidate_group top_candidates, and do not use view_shortlisted_candidates. "
         "For interview scheduling requests, include move_candidates_to_interview and schedule_interview tasks, and mark scheduled_at/meeting_url missing if absent. "
         "Only for already-shortlisted candidate list requests like 'show shortlisted candidates', use intent view_shortlisted_candidates, candidate_group shortlisted, stage shortlisted, and candidate_name null."
@@ -885,7 +914,6 @@ def parse_intent(message: str, current_route: str | None = None, current_context
             "intent": "string",
             "entities": DEFAULT_ENTITIES,
             "tasks": [{"intent": "string", "description": "string", "entities": DEFAULT_ENTITIES}],
-            "actions": [{"action_id": "string", "actor": "action_agent", "method": "string", "endpoint": "string"}],
             "missing_fields": ["string"],
             "requires_confirmation": "boolean",
             "ready_for_action_agent": "boolean",
@@ -903,11 +931,16 @@ def parse_intent(message: str, current_route: str | None = None, current_context
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
             response_format={"type": "json_object"},
-            temperature=0,
-            max_tokens=700,
+            temperature=0.15,
+            max_tokens=1200,
         )
         content = response.choices[0].message.content or "{}"
         parsed = json.loads(content)
-        return _merge_with_fallback(normalize_intent_response(parsed), fallback)
-    except Exception:
-        return fallback
+        parsed["understanding_source"] = "openai"
+        result = _merge_with_fallback(normalize_intent_response(parsed), fallback)
+        result["understanding_source"] = "openai"
+        result["ai_runtime"] = "active"
+        return result
+    except Exception as exc:
+        logger.warning("Help Agent AI planning failed; using deterministic fallback: %s", exc.__class__.__name__)
+        return {**fallback, "understanding_source": "fallback", "ai_runtime": "error"}
