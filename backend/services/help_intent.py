@@ -123,6 +123,7 @@ def _extract_job_title(message: str) -> str | None:
         r"(?:give|get|show|find|list|shortlist|select|review)\s+(?:me\s+)?(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|resumes|profile|profiles)?\s*(?:of|for|in)\s+(.+?)(?:\s+(?:job|role|opening)\b|$)",
         r"(?:candidate|candidates)\s+(?:nikal|nikalo|find|show|list|de do|do)\s+(.+?)\s+(?:ke|kai|kay|for)\s*(?:liye|lia|liya)?\b",
         r"(.+?)\s+(?:ke|kai|kay)\s+(?:liye|lia|liya)\s+(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|profile)",
+        r"(.+?)(?:\s+job)?\s+(?:ke|ka|ki|kai|kay)\s+(?:top\s*)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:candidate|candidates|resume|resumes|profile|profiles)",
         r"(?:of|for|in)\s+(.+?)\s+(?:job|role|opening)\b",
         r"(.+?)\s+wali\s+job",
         r"(.+?)\s+job\s+me",
@@ -150,6 +151,8 @@ def _extract_limit(text: str) -> int | None:
         limit = int(raw) if raw.isdigit() else NUMBER_WORDS.get(raw)
         if limit:
             return max(1, min(limit, 100))
+    if re.search(r"\btop\s+(?:candidate|resume|profile)\b", text, flags=re.I):
+        return 1
     return None
 
 
@@ -188,7 +191,7 @@ def _candidate_selection_requested(text: str) -> bool:
 
 
 def _shortlist_action_requested(text: str) -> bool:
-    return any(
+    return bool(re.search(r"\b(?:candidate|candidates|resume|resumes)\s+shortlist\b", text)) or any(
         term in text
         for term in (
             "shortlist candidate",
@@ -422,6 +425,18 @@ def _action_plan(tasks: list[dict[str, Any]], entities: dict[str, Any]) -> list[
                     "requires_confirmation": True,
                 }
             )
+        elif task_intent == "reject_candidate":
+            actions.append(
+                {
+                    "action_id": "reject_candidates",
+                    "actor": "action_agent",
+                    "method": "POST",
+                    "endpoint": "/api/v1/help/execute",
+                    "needs": ["candidate_ids"],
+                    "batch": True,
+                    "requires_confirmation": True,
+                }
+            )
     return actions
 
 
@@ -523,7 +538,10 @@ def _extract_candidate_name(message: str) -> str | None:
     if match:
         return match.group(1)
     match = re.search(r"\b(?:candidate|profile)\s+([A-Za-z]{2,})\b", message, flags=re.I)
-    return match.group(1).capitalize() if match else None
+    if not match:
+        return None
+    value = match.group(1).capitalize()
+    return None if value.lower() in {"shortlist", "select", "reject", "show", "find", "list", "upload"} else value
 
 
 def _stage_from_text(text: str) -> str | None:
