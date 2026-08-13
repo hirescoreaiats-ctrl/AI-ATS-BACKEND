@@ -1,4 +1,5 @@
-from backend.routers.job import _jd_autofill_payload
+from backend.jd_engine import extract_experience
+from backend.routers.job import _format_experience_required, _jd_autofill_payload
 
 
 def test_jd_autofill_rejects_requirement_text_as_title_and_splits_fields():
@@ -40,3 +41,23 @@ def test_jd_autofill_rejects_requirement_text_as_title_and_splits_fields():
     assert fields["job_type"] == "Full Time"
     assert fields["experience_required"] == "3+ Years"
     assert fields["salary_range"] == "8-12 LPA"
+
+
+def test_jd_autofill_preserves_fresher_experience_even_with_salary_numbers():
+    jd_text = """
+    Job Title: Sales Executive
+    Location: Mohali, Punjab
+    Salary: Up to ₹15,000 per month + performance incentives
+    Experience Required: Fresher candidates can apply
+    Work Mode: Work From Office
+    """
+
+    fields = _jd_autofill_payload(jd_text)
+
+    assert fields["experience_required"] == "Fresher"
+    assert extract_experience(jd_text) == 0
+
+
+def test_experience_formatter_prefers_explicit_fresher_over_fallback_years():
+    assert _format_experience_required("Fresher / entry level", fallback_years=5) == "Fresher"
+    assert _format_experience_required("0-1 years", fallback_years=5) == "Fresher / 0-1 Years"

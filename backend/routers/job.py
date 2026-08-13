@@ -1377,7 +1377,37 @@ def _clean_autofill_title(*values: str) -> str:
     return ""
 
 
+FRESHER_EXPERIENCE_RE = re.compile(
+    r"\b(?:freshers?|fresher|fresh\s+graduate|entry[-\s]?level|graduate\s+trainee|trainee|"
+    r"no\s+(?:prior\s+)?experience|without\s+experience|zero\s+years?)\b",
+    flags=re.I,
+)
+
+
+def _is_fresher_experience(value: str) -> bool:
+    text = str(value or "")
+    if not text:
+        return False
+    if re.search(r"\b(?:no|not|non)\s+(?:freshers?|fresher|entry[-\s]?level|trainee)s?\b", text, flags=re.I):
+        return False
+    if FRESHER_EXPERIENCE_RE.search(text):
+        return True
+    if re.search(r"\b0\s*(?:-|\u2013|\u2014|to)\s*(?:1|2)\s*(?:years?|yrs?)\b", text, flags=re.I):
+        return True
+    if re.search(r"\b0\s*(?:-|\u2013|\u2014|to)\s*(?:6|12)\s*months?\b", text, flags=re.I):
+        return True
+    if re.search(r"\b0\s*\+?\s*(?:years?|yrs?)\b", text, flags=re.I):
+        return True
+    return False
+
+
 def _format_experience_required(value: str, fallback_years: float | int = 0) -> str:
+    raw_text = str(value or "")
+    if _is_fresher_experience(raw_text):
+        if re.search(r"\b0\s*(?:-|\u2013|\u2014|to)\s*2\s*(?:years?|yrs?)\b", raw_text, flags=re.I):
+            return "Fresher / 0-2 Years"
+        return "Fresher / 0-1 Years" if re.search(r"\b0\s*(?:-|\u2013|\u2014|to)\s*1\s*(?:years?|yrs?)\b", raw_text, flags=re.I) else "Fresher"
+
     text = _compact_jd_value(value, 80)
     text = re.sub(r"^(?:required|minimum|min|experience|required experience)\s*[:\-]?\s*", "", text, flags=re.I).strip()
 
@@ -1397,7 +1427,7 @@ def _format_experience_required(value: str, fallback_years: float | int = 0) -> 
     if years_match:
         return f"{years_match.group(1)}+ Years"
 
-    if fallback_years:
+    if fallback_years and float(fallback_years) > 0:
         years = int(fallback_years) if float(fallback_years).is_integer() else fallback_years
         return f"{years}+ Years"
     return ""
@@ -1535,14 +1565,23 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
     db = SessionLocal()
 
     try:
+        normalized_experience = (
+            _format_experience_required(job.experience_required or "", 0)
+            or _format_experience_required(job.jd_text or "", 0)
+        )
         enrichment = enrich_jd_for_scoring(
             job.jd_text,
             {
                 "job_title": job.job_title,
                 "role": job.job_title,
-                "experience_required": job.experience_required,
+                "experience_required": normalized_experience or job.experience_required,
             },
         )
+        min_experience_years = enrichment.get("min_experience_years")
+        if _is_fresher_experience(normalized_experience or job.experience_required or job.jd_text):
+            min_experience_years = 0
+        if not normalized_experience:
+            normalized_experience = _format_experience_required(job.experience_required or job.jd_text, min_experience_years or 0)
 
         edu = enrichment.get("education")
         if isinstance(edu, list):
@@ -1560,7 +1599,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
             job_type=job.job_type,
             salary_range=job.salary_range,
 
-            experience_required=job.experience_required,
+            experience_required=normalized_experience or job.experience_required,
             application_deadline=job.application_deadline,
             hiring_manager=job.hiring_manager,
 
@@ -1573,7 +1612,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
             role=enrichment.get("role") or job.job_title,
             required_skills=",".join(enrichment.get("required_skills", [])),
             preferred_skills=",".join(enrichment.get("preferred_skills", [])),
-            min_experience_years=enrichment.get("min_experience_years"),
+            min_experience_years=min_experience_years,
             education=edu,
             organization_id=_user_organization_id(user),
             owner_user_id=user.id,
@@ -1650,17 +1689,22 @@ def public_job(job_identifier: str):
         db.commit()
 
         jd_fields = _jd_autofill_payload(job.jd_text or "")
+        stored_experience = _format_experience_required(job.experience_required or "", 0)
+        inferred_experience = jd_fields.get("experience_required") or ""
+        min_experience_text = _format_experience_required("", job.min_experience_years or 0)
 
         data = {
             "job_id": job.id,
             "job_title": job.job_title or jd_fields.get("job_title"),
             "company": job.company_name,
+            "company_name": job.company_name,
             "department": job.department or jd_fields.get("department"),
             "location": jd_fields.get("location") or job.location,
             "work_mode": jd_fields.get("work_mode") or job.work_mode,
             "salary": job.salary_range or jd_fields.get("salary_range"),
+            "salary_range": job.salary_range or jd_fields.get("salary_range"),
             "job_type": jd_fields.get("job_type") or job.job_type,
-            "experience_required": jd_fields.get("experience_required") or job.experience_required,
+            "experience_required": stored_experience or inferred_experience or min_experience_text,
             "application_deadline": job.application_deadline,
             "hiring_manager": job.hiring_manager,
             "description": job.jd_text,
@@ -3046,9 +3090,14 @@ from fastapi import HTTPException
 class JobUpdate(BaseModel):
     job_title: str
     company_name: str
+    department: str | None = None
     location: str
+    work_mode: str | None = None
     salary_range: str
     job_type: str
+    experience_required: str | None = None
+    application_deadline: str | None = None
+    hiring_manager: str | None = None
     jd_text: str
 
 
@@ -3069,8 +3118,14 @@ def edit_job(job_id: str, job_data: JobUpdate):
     if job_data.company_name:
         job.company_name = job_data.company_name
 
+    if job_data.department is not None:
+        job.department = job_data.department
+
     if job_data.location:
         job.location = job_data.location
+
+    if job_data.work_mode is not None:
+        job.work_mode = job_data.work_mode
 
     if job_data.salary_range:
         job.salary_range = job_data.salary_range
@@ -3078,8 +3133,22 @@ def edit_job(job_id: str, job_data: JobUpdate):
     if job_data.job_type:
         job.job_type = job_data.job_type
 
+    if job_data.experience_required is not None:
+        job.experience_required = (
+            _format_experience_required(job_data.experience_required or "", 0)
+            or str(job_data.experience_required or "").strip()
+        )
+
+    if job_data.application_deadline is not None:
+        job.application_deadline = job_data.application_deadline
+
+    if job_data.hiring_manager is not None:
+        job.hiring_manager = job_data.hiring_manager
+
     if job_data.jd_text:
         job.jd_text = job_data.jd_text
+        if not job.experience_required:
+            job.experience_required = _format_experience_required(job.jd_text, 0) or job.experience_required
         enrichment = enrich_jd_for_scoring(
             job.jd_text,
             {
@@ -3091,7 +3160,7 @@ def edit_job(job_id: str, job_data: JobUpdate):
         job.role = enrichment.get("role") or job.role or job.job_title
         job.required_skills = ",".join(enrichment.get("required_skills", [])) or job.required_skills
         job.preferred_skills = ",".join(enrichment.get("preferred_skills", [])) or job.preferred_skills
-        job.min_experience_years = enrichment.get("min_experience_years")
+        job.min_experience_years = 0 if _is_fresher_experience(job.experience_required or job.jd_text) else enrichment.get("min_experience_years")
         edu = enrichment.get("education")
         if isinstance(edu, list):
             edu = ",".join(edu)

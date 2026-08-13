@@ -232,12 +232,30 @@ def extract_experience(value):
     if value is None:
         return 0
 
-    if isinstance(value, int):
-        return value
+    if isinstance(value, (int, float)):
+        return int(value)
 
-    nums = re.findall(r'\d+', str(value))
-    if nums:
-        return int(nums[0])
+    text = str(value or "")
+    if re.search(
+        r"\b(?:freshers?|fresher|fresh\s+graduate|entry[-\s]?level|graduate\s+trainee|trainee|"
+        r"no\s+(?:prior\s+)?experience|without\s+experience|zero\s+years?)\b",
+        text,
+        flags=re.I,
+    ):
+        return 0
+
+    patterns = [
+        r"\b(?:experience|exp|minimum|min|at\s+least|required)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:\+|plus)?\s*(?:years?|yrs?)\b",
+        r"\b(\d+(?:\.\d+)?)\s*(?:-|\u2013|\u2014|to)\s*\d+(?:\.\d+)?\s*(?:years?|yrs?)\b",
+        r"\b(\d+(?:\.\d+)?)\s*(?:\+|plus)\s*(?:years?|yrs?)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if match:
+            return int(float(match.group(1)))
+
+    if re.fullmatch(r"\s*\d+(?:\.\d+)?\s*", text):
+        return int(float(text))
 
     return 0
 
