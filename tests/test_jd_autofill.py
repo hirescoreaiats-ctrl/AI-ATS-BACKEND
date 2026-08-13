@@ -1,5 +1,5 @@
 from backend.jd_engine import extract_experience
-from backend.routers.job import _format_experience_required, _jd_autofill_payload
+from backend.routers.job import _format_experience_required, _jd_autofill_payload, _resolve_job_experience_required
 
 
 def test_jd_autofill_rejects_requirement_text_as_title_and_splits_fields():
@@ -61,3 +61,9 @@ def test_jd_autofill_preserves_fresher_experience_even_with_salary_numbers():
 def test_experience_formatter_prefers_explicit_fresher_over_fallback_years():
     assert _format_experience_required("Fresher / entry level", fallback_years=5) == "Fresher"
     assert _format_experience_required("0-1 years", fallback_years=5) == "Fresher / 0-1 Years"
+
+
+def test_public_experience_resolver_corrects_stale_numeric_value_when_jd_says_fresher():
+    jd_text = "Sales Executive. Freshers can apply. Salary up to 15000 per month."
+
+    assert _resolve_job_experience_required("5+ Years", jd_text, fallback_years=5) == "Fresher"

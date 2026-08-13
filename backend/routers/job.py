@@ -1433,6 +1433,19 @@ def _format_experience_required(value: str, fallback_years: float | int = 0) -> 
     return ""
 
 
+def _resolve_job_experience_required(explicit_value: str | None, jd_text: str | None, fallback_years: float | int = 0) -> str:
+    explicit = _format_experience_required(explicit_value or "", 0)
+    inferred = _format_experience_required(jd_text or "", 0)
+
+    # Existing roles may have a stale numeric value produced by older JD parsing
+    # even though the JD clearly says fresher / entry-level. Candidate-facing
+    # public pages should honor that clear JD signal.
+    if _is_fresher_experience(jd_text or ""):
+        return inferred or explicit or "Fresher"
+
+    return explicit or inferred or _format_experience_required("", fallback_years or 0)
+
+
 def _infer_work_mode(text: str) -> str:
     value = text or ""
     if re.search(r"\bremote\b|work\s+from\s+home|\bwfh\b", value, re.I):
@@ -1565,10 +1578,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
     db = SessionLocal()
 
     try:
-        normalized_experience = (
-            _format_experience_required(job.experience_required or "", 0)
-            or _format_experience_required(job.jd_text or "", 0)
-        )
+        normalized_experience = _resolve_job_experience_required(job.experience_required, job.jd_text, 0)
         enrichment = enrich_jd_for_scoring(
             job.jd_text,
             {
@@ -1581,7 +1591,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
         if _is_fresher_experience(normalized_experience or job.experience_required or job.jd_text):
             min_experience_years = 0
         if not normalized_experience:
-            normalized_experience = _format_experience_required(job.experience_required or job.jd_text, min_experience_years or 0)
+            normalized_experience = _resolve_job_experience_required(job.experience_required, job.jd_text, min_experience_years or 0)
 
         edu = enrichment.get("education")
         if isinstance(edu, list):
@@ -1689,9 +1699,11 @@ def public_job(job_identifier: str):
         db.commit()
 
         jd_fields = _jd_autofill_payload(job.jd_text or "")
-        stored_experience = _format_experience_required(job.experience_required or "", 0)
-        inferred_experience = jd_fields.get("experience_required") or ""
-        min_experience_text = _format_experience_required("", job.min_experience_years or 0)
+        public_experience = _resolve_job_experience_required(
+            job.experience_required,
+            job.jd_text,
+            job.min_experience_years or 0,
+        ) or jd_fields.get("experience_required") or ""
 
         data = {
             "job_id": job.id,
@@ -1704,7 +1716,7 @@ def public_job(job_identifier: str):
             "salary": job.salary_range or jd_fields.get("salary_range"),
             "salary_range": job.salary_range or jd_fields.get("salary_range"),
             "job_type": jd_fields.get("job_type") or job.job_type,
-            "experience_required": stored_experience or inferred_experience or min_experience_text,
+            "experience_required": public_experience,
             "application_deadline": job.application_deadline,
             "hiring_manager": job.hiring_manager,
             "description": job.jd_text,
