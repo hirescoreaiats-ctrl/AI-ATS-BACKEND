@@ -92,6 +92,12 @@ def download_supabase_file(uri: str) -> bytes:
     return response.content
 
 
+def download_stored_file(uri: str) -> bytes:
+    if is_supabase_uri(uri):
+        return download_supabase_file(uri)
+    return Path(uri).read_bytes()
+
+
 def materialize_resume_file(stored_path: str, original_filename: str | None = None) -> tuple[str, bool]:
     if not is_supabase_uri(stored_path):
         return stored_path, False

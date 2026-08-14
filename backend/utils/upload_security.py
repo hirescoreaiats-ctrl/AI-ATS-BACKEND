@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import HTTPException, UploadFile, status
 
@@ -47,11 +48,7 @@ def validate_upload(file: UploadFile, size_bytes: int) -> None:
 
 
 def validate_upload_metadata(file_name: str, content_type: str | None, size_bytes: int) -> None:
-    class UploadMetadata:
-        filename = file_name
-        content_type = content_type
-
-    validate_upload(UploadMetadata(), size_bytes)
+    validate_upload(SimpleNamespace(filename=file_name, content_type=content_type), size_bytes)
 
 
 def malware_scan(file_path: str) -> None:

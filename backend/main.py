@@ -13,6 +13,9 @@ from backend.middleware.audit import AccessLogMiddleware
 from backend.middleware.rate_limit import InMemoryRateLimitMiddleware
 from backend.middleware.security_headers import SecurityHeadersMiddleware
 from backend.models import Base
+from backend.requirement_platform import models as requirement_platform_models  # noqa: F401
+from backend.requirement_platform.api import admin_router as requirement_platform_admin_router
+from backend.requirement_platform.api import router as requirement_platform_router
 from backend.routers import auth, job, resume
 
 configure_logging()
@@ -192,6 +195,8 @@ app.include_router(organizations.router, prefix=settings.api_prefix)
 app.include_router(realtime.router, prefix=settings.api_prefix)
 app.include_router(talent.router, prefix=settings.api_prefix)
 app.include_router(uploads.router, prefix=settings.api_prefix)
+app.include_router(requirement_platform_router, prefix=settings.api_prefix)
+app.include_router(requirement_platform_admin_router, prefix=settings.api_prefix)
 
 frontend_dir = Path("frontend")
 if frontend_dir.exists():
