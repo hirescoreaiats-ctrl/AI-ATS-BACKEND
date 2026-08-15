@@ -100,6 +100,25 @@ def test_job_limit_enforcement_uses_authoritative_jobs(db):
     assert exc.value.detail["used"] == 1
 
 
+def test_active_job_limit_returns_a_clear_user_message(db):
+    user = pilot(max_total_jobs=10, max_active_jobs=1)
+    db.add(user)
+    add_job(db, user, "active-job", True)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        enforce_job_creation(db, user)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "code": "pilot_active_jobs_limit",
+        "message": "You already have 1 active job, which is your pilot limit. Close one active job or ask your administrator to increase the limit.",
+        "used": 1,
+        "limit": 1,
+        "remaining": 0,
+    }
+
+
 def test_resume_batch_is_checked_before_processing(db):
     user = pilot(max_resumes_per_job=2, max_total_resumes=10)
     db.add(user)

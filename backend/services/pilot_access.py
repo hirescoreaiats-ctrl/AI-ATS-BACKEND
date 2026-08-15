@@ -118,19 +118,21 @@ def enforce_job_creation(db, user: User) -> User:
     locked = lock_pilot_user(db, user.id)
     enforce_pilot_access(locked)
     usage = pilot_usage(db, locked)
-    if locked.max_total_jobs is not None and usage["total_jobs"] >= locked.max_total_jobs:
-        raise _limit_error(
-            "pilot_total_jobs_limit",
-            f"You've reached your pilot job limit ({usage['total_jobs']}/{locked.max_total_jobs}).",
-            used=usage["total_jobs"],
-            limit=locked.max_total_jobs,
-        )
     if locked.max_active_jobs is not None and usage["active_jobs"] >= locked.max_active_jobs:
+        active_job_label = "job" if usage["active_jobs"] == 1 else "jobs"
         raise _limit_error(
             "pilot_active_jobs_limit",
-            f"You've reached your active job limit ({usage['active_jobs']}/{locked.max_active_jobs}). Close an active job or contact your administrator.",
+            f"You already have {usage['active_jobs']} active {active_job_label}, which is your pilot limit. Close one active job or ask your administrator to increase the limit.",
             used=usage["active_jobs"],
             limit=locked.max_active_jobs,
+        )
+    if locked.max_total_jobs is not None and usage["total_jobs"] >= locked.max_total_jobs:
+        total_job_label = "job" if usage["total_jobs"] == 1 else "jobs"
+        raise _limit_error(
+            "pilot_total_jobs_limit",
+            f"You already have {usage['total_jobs']} {total_job_label}, which is your total pilot limit. Ask your administrator to increase the limit.",
+            used=usage["total_jobs"],
+            limit=locked.max_total_jobs,
         )
     locked.last_activity_at = utcnow()
     return locked
@@ -145,9 +147,10 @@ def enforce_job_activation(db, job: Job) -> None:
     enforce_pilot_access(owner)
     active_jobs = _owned_jobs_query(db, owner).filter(Job.is_active.is_(True), Job.id != job.id).count()
     if owner.max_active_jobs is not None and active_jobs >= owner.max_active_jobs:
+        active_job_label = "job" if active_jobs == 1 else "jobs"
         raise _limit_error(
             "pilot_active_jobs_limit",
-            f"You've reached your active job limit ({active_jobs}/{owner.max_active_jobs}). Close an active job or contact your administrator.",
+            f"You already have {active_jobs} active {active_job_label}, which is your pilot limit. Close one active job or ask your administrator to increase the limit.",
             used=active_jobs,
             limit=owner.max_active_jobs,
         )
