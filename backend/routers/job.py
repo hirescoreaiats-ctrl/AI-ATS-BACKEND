@@ -41,6 +41,7 @@ from backend.services.scoring_context import apply_job_jd_snapshot, apply_job_sc
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.storage import download_stored_file, is_remote_storage_uri, materialize_resume_file, persist_resume_file
 from backend.services.storage_service import is_vercel_blob_uri, upload_resume_file
+from backend.services.pilot_access import enforce_job_activation, enforce_job_creation, release_resume_reservation, reserve_resume_batch
 from backend.services.sourcing import (
     TRACKED_APPLICATION_SOURCES,
     build_apply_links,
@@ -1578,6 +1579,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
     db = SessionLocal()
 
     try:
+        effective_user = enforce_job_creation(db, user)
         normalized_experience = _resolve_job_experience_required(job.experience_required, job.jd_text, 0)
         enrichment = enrich_jd_for_scoring(
             job.jd_text,
@@ -1624,8 +1626,8 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
             preferred_skills=",".join(enrichment.get("preferred_skills", [])),
             min_experience_years=min_experience_years,
             education=edu,
-            organization_id=_user_organization_id(user),
-            owner_user_id=user.id,
+            organization_id=_user_organization_id(effective_user),
+            owner_user_id=effective_user.id,
         )
 
         db.add(new_job)
@@ -2572,6 +2574,7 @@ def sync_resume_folder(job_id: str):
     from backend.routers.resume import _queue_resume_processing_batch
 
     db = SessionLocal()
+    pilot_reservation_id = None
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
         if not job:
@@ -2585,6 +2588,7 @@ def sync_resume_folder(job_id: str):
         files = sorted(path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in allowed)
         if len(files) > settings.max_resume_upload_count:
             raise HTTPException(status_code=413, detail=f"Maximum {settings.max_resume_upload_count} resumes can be synced at once.")
+        pilot_reservation_id = reserve_resume_batch(db, job, len(files))
         imported = 0
         skipped = 0
         failed = 0
@@ -2698,6 +2702,7 @@ def sync_resume_folder(job_id: str):
             "messages": messages[:50],
         }
     finally:
+        release_resume_reservation(db, pilot_reservation_id)
         db.close()
 
 
@@ -2718,12 +2723,14 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
     allowed = {".pdf", ".docx", ".doc", ".txt"}
     max_file_size = settings.upload_bytes_limit
     db = SessionLocal()
+    pilot_reservation_id = None
     temp_dir = Path(tempfile.mkdtemp(prefix=f"resume_folder_{job_id}_"))
 
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        pilot_reservation_id = reserve_resume_batch(db, job, len(files))
 
         imported = 0
         skipped = 0
@@ -2878,6 +2885,7 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
             except Exception:
                 pass
         shutil.rmtree(temp_dir, ignore_errors=True)
+        release_resume_reservation(db, pilot_reservation_id)
         db.close()
 
 
@@ -3197,6 +3205,7 @@ def activate_job(job_id: str):
         db.close()
         return {"error": "Job not found"}
 
+    enforce_job_activation(db, job)
     job.is_active = True
 
     db.commit()

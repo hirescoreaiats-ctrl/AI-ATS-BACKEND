@@ -273,6 +273,25 @@ class User(Base):
     subscription_status = Column(String, default="unpaid", index=True)
     subscription_plan = Column(String, nullable=True)
     subscription_started_at = Column(DateTime, nullable=True)
+    company_name = Column(String, nullable=True)
+    pilot_started_at = Column(DateTime, nullable=True)
+    pilot_expires_at = Column(DateTime, nullable=True, index=True)
+    pilot_status = Column(String, nullable=True, index=True)
+    pilot_access_status = Column(String, nullable=True, index=True)
+    max_total_jobs = Column(Integer, nullable=True)
+    max_active_jobs = Column(Integer, nullable=True)
+    max_resumes_per_job = Column(Integer, nullable=True)
+    max_total_resumes = Column(Integer, nullable=True)
+    pilot_notes = Column(Text, nullable=True)
+    pilot_source = Column(String, nullable=True)
+    pilot_deactivated_at = Column(DateTime, nullable=True)
+    pilot_deactivated_by = Column(String, ForeignKey("users.id"), nullable=True)
+    pilot_deactivation_reason = Column(Text, nullable=True)
+    pilot_suspended_at = Column(DateTime, nullable=True)
+    pilot_suspended_by = Column(String, ForeignKey("users.id"), nullable=True)
+    pilot_suspension_reason = Column(Text, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    last_activity_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -337,6 +356,19 @@ class RecruiterInvitation(Base):
     status = Column(String, default="pending", index=True)
     token = Column(String, nullable=False, unique=True, index=True)
     expires_at = Column(DateTime, nullable=True, index=True)
+    accepted_at = Column(DateTime, nullable=True)
+    pilot_config_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class PilotResumeReservation(Base):
+    __tablename__ = "pilot_resume_reservations"
+
+    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("jobs.id"), nullable=False, index=True)
+    reserved_count = Column(Integer, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 

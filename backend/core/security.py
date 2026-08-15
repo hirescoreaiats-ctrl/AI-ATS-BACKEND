@@ -11,6 +11,7 @@ from jwt.utils import base64url_decode, base64url_encode
 from backend.core.config import get_settings
 from backend.database import get_db
 from backend.models import User
+from backend.services.pilot_access import enforce_pilot_access
 
 
 def hash_password(password: str) -> str:
@@ -81,6 +82,7 @@ def get_current_user(request: Request, db=Depends(get_db)) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     request.state.user_email = user.email
     request.state.user_id = user.id
+    enforce_pilot_access(user)
     return user
 
 

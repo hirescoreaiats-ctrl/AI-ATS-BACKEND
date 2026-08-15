@@ -29,6 +29,7 @@ from backend.core.config import get_settings
 from backend.services.storage import materialize_resume_file, persist_resume_file
 from backend.services.storage_service import upload_resume_file
 from backend.services.scoring_context import apply_job_scoring_snapshot
+from backend.services.pilot_access import release_resume_reservation, reserve_resume_batch
 from backend.utils.upload_security import malware_scan, secure_upload_path, validate_upload
 from backend.core.security import require_roles
 
@@ -853,6 +854,7 @@ async def upload_resumes(
     safe_tracking_url = (apply_tracking_url or "").strip()
     if not safe_tracking_url:
         safe_tracking_url = build_apply_links(job, db).get(safe_application_source) or build_apply_links(job, db)["main"]
+    pilot_reservation_id = reserve_resume_batch(db, job, len(files))
 
     request_id = uuid.uuid4().hex[:12]
     processed_count = 0
@@ -1129,6 +1131,7 @@ async def upload_resumes(
         skipped_count,
         failed_count,
     )
+    release_resume_reservation(db, pilot_reservation_id)
     db.close()
 
     processing_mode = _resume_processing_mode()

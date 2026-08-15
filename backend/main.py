@@ -123,6 +123,11 @@ def ensure_resume_columns():
         if inspector.has_table("candidate_assessments")
         else set()
     )
+    invitation_columns = (
+        {column["name"] for column in inspector.get_columns("recruiter_invitations")}
+        if inspector.has_table("recruiter_invitations")
+        else set()
+    )
 
     datetime_definition = "DATETIME" if settings.is_sqlite else "TIMESTAMP"
     boolean_false_definition = "BOOLEAN DEFAULT 0" if settings.is_sqlite else "BOOLEAN DEFAULT FALSE"
@@ -256,6 +261,29 @@ def ensure_resume_columns():
         add_column("users", user_columns, "subscription_status", "VARCHAR DEFAULT 'unpaid'")
         add_column("users", user_columns, "subscription_plan", "VARCHAR")
         add_column("users", user_columns, "subscription_started_at", datetime_definition)
+        add_column("users", user_columns, "company_name", "VARCHAR")
+        add_column("users", user_columns, "pilot_started_at", datetime_definition)
+        add_column("users", user_columns, "pilot_expires_at", datetime_definition)
+        add_column("users", user_columns, "pilot_status", "VARCHAR")
+        add_column("users", user_columns, "pilot_access_status", "VARCHAR")
+        add_column("users", user_columns, "max_total_jobs", "INTEGER")
+        add_column("users", user_columns, "max_active_jobs", "INTEGER")
+        add_column("users", user_columns, "max_resumes_per_job", "INTEGER")
+        add_column("users", user_columns, "max_total_resumes", "INTEGER")
+        add_column("users", user_columns, "pilot_notes", "TEXT")
+        add_column("users", user_columns, "pilot_source", "VARCHAR")
+        add_column("users", user_columns, "pilot_deactivated_at", datetime_definition)
+        add_column("users", user_columns, "pilot_deactivated_by", "VARCHAR")
+        add_column("users", user_columns, "pilot_deactivation_reason", "TEXT")
+        add_column("users", user_columns, "pilot_suspended_at", datetime_definition)
+        add_column("users", user_columns, "pilot_suspended_by", "VARCHAR")
+        add_column("users", user_columns, "pilot_suspension_reason", "TEXT")
+        add_column("users", user_columns, "last_login_at", datetime_definition)
+        add_column("users", user_columns, "last_activity_at", datetime_definition)
+
+        if invitation_columns:
+            add_column("recruiter_invitations", invitation_columns, "accepted_at", datetime_definition)
+            add_column("recruiter_invitations", invitation_columns, "pilot_config_json", "TEXT")
 
         add_column("candidate_assessments", candidate_assessment_columns, "response_id", "VARCHAR")
         add_column("candidate_assessments", candidate_assessment_columns, "score", "FLOAT")
