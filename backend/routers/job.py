@@ -19,7 +19,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlencode
 import requests
-from sqlalchemy import false, func
+from sqlalchemy import and_, case, false, func, or_
 from cryptography.fernet import Fernet, InvalidToken
 
 from backend.jd_engine import normalize_jd_skills
@@ -2310,38 +2310,27 @@ def download_csv(job_id: str):
 
 @router.get("/jobs")
 def get_jobs(user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
-
     db = SessionLocal()
     try:
         jobs = _scope_jobs_query(db.query(Job), user).order_by(Job.created_at.desc()).all()
-
+        job_ids = [job.id for job in jobs]
+        aggregate_rows = db.query(Resume.job_id, func.count(Resume.id), func.max(Resume.final_score), func.sum(case((and_(Resume.shortlisted == True, or_(Resume.status != "Communication", Resume.status.is_(None))), 1), else_=0)), func.sum(case((or_(Resume.status == "Communication", Resume.stage == "communication"), 1), else_=0))).filter(Resume.job_id.in_(job_ids), Resume.is_active == True).group_by(Resume.job_id).all() if job_ids else []
+        source_rows = db.query(Resume.job_id, Resume.application_source, func.count(Resume.id)).filter(Resume.job_id.in_(job_ids), Resume.is_active == True).group_by(Resume.job_id, Resume.application_source).all() if job_ids else []
+        aggregates = {row[0]: {"total_applicants": int(row[1] or 0), "top_score": float(row[2] or 0), "shortlisted_count": int(row[3] or 0), "communication_count": int(row[4] or 0)} for row in aggregate_rows}
+        sources_by_job = {}
+        for job_id, raw_source, count in source_rows:
+            source = normalize_application_source(raw_source)
+            sources_by_job.setdefault(job_id, {})[source] = int(count or 0)
         result = []
-
         for job in jobs:
-
-            resumes = db.query(Resume).filter(
-                Resume.job_id == job.id,
-                Resume.is_active == True
-            ).all()
-
-            total_applicants = len(resumes)
-            shortlisted_count = len([
-                r for r in resumes
-                if r.shortlisted and r.status != "Communication"
-            ])
-            communication_count = len([
-                r for r in resumes
-                if r.status == "Communication" or r.stage == "communication"
-            ])
-
-            top_score = 0
-            if resumes:
-                top_score = max([r.final_score or 0 for r in resumes])
+            aggregate = aggregates.get(job.id, {})
+            total_applicants = aggregate.get("total_applicants", 0)
+            shortlisted_count = aggregate.get("shortlisted_count", 0)
+            communication_count = aggregate.get("communication_count", 0)
+            top_score = aggregate.get("top_score", 0)
             ensure_apply_slug(job, db)
             source_counts = {source: 0 for source in [*TRACKED_APPLICATION_SOURCES, "unknown"]}
-            for resume in resumes:
-                source = normalize_application_source(resume.application_source)
-                source_counts[source] = source_counts.get(source, 0) + 1
+            source_counts.update(sources_by_job.get(job.id, {}))
 
             result.append({
 
@@ -3232,9 +3221,7 @@ def get_job_detail(
 
         resumes = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_active == True).all()
         source_counts = {source: 0 for source in [*TRACKED_APPLICATION_SOURCES, "unknown"]}
-        for resume in resumes:
-            source = normalize_application_source(resume.application_source)
-            source_counts[source] = source_counts.get(source, 0) + 1
+        source_counts.update(sources_by_job.get(job.id, {}))
 
         return {
             "id": job.id,
