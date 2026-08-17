@@ -41,8 +41,12 @@ def recruiter(org_id="org-a"):
     return SimpleNamespace(id=f"user-{org_id}", role="recruiter", organization_id=org_id)
 
 
-def admin():
-    return SimpleNamespace(id="admin-1", role="admin", organization_id=None)
+def admin(org_id="org-a"):
+    return SimpleNamespace(id="admin-1", role="admin", organization_id=org_id)
+
+
+def super_admin():
+    return SimpleNamespace(id="super-admin-1", role="super_admin", organization_id=None)
 
 
 def add_job(session, job_id, org_id, title):
@@ -153,11 +157,32 @@ def test_recruiter_cannot_read_other_org_job_detail(tenant_db):
     assert exc.value.status_code == 404
 
 
-def test_admin_can_still_see_all_jobs(tenant_db):
+def test_recruiter_cannot_read_other_org_job_results(tenant_db):
+    add_job(tenant_db, "job-b", "org-b", "Org B Job")
+    add_resume(tenant_db, "resume-b", "job-b", "org-b", 99)
+    tenant_db.commit()
+
+    with pytest.raises(job_router.HTTPException) as exc:
+        job_router.get_results("job-b", user=recruiter("org-a"))
+
+    assert exc.value.status_code == 404
+
+
+def test_organization_admin_sees_only_own_jobs(tenant_db):
     add_job(tenant_db, "job-a", "org-a", "Org A Job")
     add_job(tenant_db, "job-b", "org-b", "Org B Job")
     tenant_db.commit()
 
     jobs = job_router.get_jobs(user=admin())
+
+    assert [job["id"] for job in jobs] == ["job-a"]
+
+
+def test_super_admin_can_still_see_all_jobs(tenant_db):
+    add_job(tenant_db, "job-a", "org-a", "Org A Job")
+    add_job(tenant_db, "job-b", "org-b", "Org B Job")
+    tenant_db.commit()
+
+    jobs = job_router.get_jobs(user=super_admin())
 
     assert {job["id"] for job in jobs} == {"job-a", "job-b"}

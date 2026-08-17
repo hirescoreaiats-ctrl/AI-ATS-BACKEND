@@ -29,8 +29,7 @@ def talent_search(
         return cached
 
     query = db.query(Resume).filter(Resume.is_active == True)
-    if user.organization_id:
-        query = query.filter((Resume.organization_id == user.organization_id) | (Resume.organization_id == None))
+    query = query.filter(Resume.organization_id == user.organization_id)
     if stage != "all":
         query = query.filter(Resume.stage == stage)
 
@@ -91,7 +90,10 @@ def create_talent_pool(data: dict = Body(...), db=Depends(get_db), user=Depends(
 @router.post("/pools/{pool_id}/candidates")
 def add_candidate_to_pool(pool_id: str, data: dict = Body(...), db=Depends(get_db), user=Depends(get_current_user)):
     candidate_id = data.get("candidate_id")
-    if not db.query(Resume).filter(Resume.id == candidate_id).first():
+    pool = db.query(TalentPool).filter(TalentPool.id == pool_id, TalentPool.organization_id == user.organization_id).first()
+    if not pool:
+        raise HTTPException(status_code=404, detail="Talent pool not found")
+    if not db.query(Resume).filter(Resume.id == candidate_id, Resume.organization_id == user.organization_id).first():
         raise HTTPException(status_code=404, detail="Candidate not found")
     existing = db.query(TalentPoolCandidate).filter(
         TalentPoolCandidate.talent_pool_id == pool_id,

@@ -141,6 +141,23 @@ def _apply_invitation_to_user(invitation: RecruiterInvitation | None, user: User
     invitation.accepted_at = datetime.datetime.utcnow()
 
 
+def _ensure_user_organization(db, user: User) -> str | None:
+    """Create an isolated workspace for independent accounts; invitations keep their assigned workspace."""
+    if user.organization_id:
+        return user.organization_id
+    if (user.role or "").strip().lower() == "super_admin":
+        return None
+    workspace_name = (user.company_name or user.name or "HireScore").strip()
+    organization = Organization(
+        name=f"{workspace_name} Workspace",
+        slug=f"workspace-{secrets.token_hex(8)}",
+    )
+    db.add(organization)
+    db.flush()
+    user.organization_id = organization.id
+    return organization.id
+
+
 def _parse_datetime(value) -> datetime.datetime | None:
     if isinstance(value, datetime.datetime):
         return value
@@ -742,6 +759,7 @@ def signup(data: AuthRequest):
         _apply_invitation_to_user(invitation, user)
 
         db.add(user)
+        _ensure_user_organization(db, user)
         db.commit()
 
         return {"message": "Account created successfully"}
@@ -773,6 +791,7 @@ def login(data: AuthRequest, response: Response):
             raise HTTPException(status_code=400, detail="Invalid credentials")
 
         user.last_login_at = datetime.datetime.utcnow()
+        _ensure_user_organization(db, user)
         pilot_access = pilot_access_payload(user) if is_pilot(user) else None
         workspace_access = not pilot_access or pilot_access["status"] in {"active", "expiring_soon"}
         db.commit()
@@ -784,6 +803,7 @@ def login(data: AuthRequest, response: Response):
                 "email": user.email,
                 "name": user.name,
                 "role": user.role or "recruiter",
+                "organization_id": user.organization_id,
             }
         )
         csrf_token = secrets.token_urlsafe(24)
@@ -810,6 +830,7 @@ def login(data: AuthRequest, response: Response):
             "name": user.name,
             "email": user.email,
             "role": user.role or "recruiter",
+            "organization_id": user.organization_id,
             "subscription_status": user.subscription_status or "unpaid",
             "subscription_plan": user.subscription_plan,
             "workspace_access": workspace_access,
@@ -965,6 +986,7 @@ def _login_redirect_for_user(user: User, name: str | None = None) -> RedirectRes
             "email": user.email,
             "name": user.name,
             "role": user.role or "recruiter",
+            "organization_id": user.organization_id,
         }
     )
     redirect = (
@@ -1145,6 +1167,7 @@ def google_callback(code: str, state: str = None):
         _apply_invitation_to_user(invitation, user)
         _activate_subscription(user, "pilot" if invitation and (invitation.token or "").startswith("pilot_") else "manual")
         db.add(user)
+        _ensure_user_organization(db, user)
         db.commit()
 
     user.google_access_token = access_token
@@ -1155,6 +1178,7 @@ def google_callback(code: str, state: str = None):
     expires_in = int(token_json.get("expires_in") or 3600)
     user.google_token_expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=expires_in - 60)
     user.auth_provider = "google"
+    _ensure_user_organization(db, user)
     if purpose == "gmail_connect":
         user.outreach_sender_email = email.lower()
     db.commit()
@@ -1172,6 +1196,7 @@ def google_callback(code: str, state: str = None):
             "email": user.email,
             "name": user.name,
             "role": user.role or "recruiter",
+            "organization_id": user.organization_id,
         }
     )
 
@@ -1210,6 +1235,8 @@ def paid_signup_complete(pending_signup_token: str, access_code: str = None, pla
                 auth_provider=provider,
             )
             db.add(user)
+
+        _ensure_user_organization(db, user)
 
         user.auth_provider = user.auth_provider or provider
         _activate_subscription(user, plan)

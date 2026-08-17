@@ -15,6 +15,11 @@ from backend.utils.sanitize import sanitize_text
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
 
+def _require_organization_access(user, organization_id: str) -> None:
+    if user.role != "super_admin" and (not user.organization_id or user.organization_id != organization_id):
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+
 @router.post("")
 def create_organization(data: dict = Body(...), db=Depends(get_db), user=Depends(require_roles("admin", "recruiter"))):
     name = sanitize_text(data.get("name"), 160)
@@ -35,13 +40,14 @@ def create_organization(data: dict = Body(...), db=Depends(get_db), user=Depends
 @router.get("")
 def list_organizations(db=Depends(get_db), user=Depends(get_current_user)):
     query = db.query(Organization)
-    if user.role != "admin" and user.organization_id:
+    if user.role != "super_admin":
         query = query.filter(Organization.id == user.organization_id)
     return [{"id": org.id, "name": org.name, "slug": org.slug, "plan": org.plan} for org in query.limit(100).all()]
 
 
 @router.post("/{organization_id}/teams")
 def create_team(organization_id: str, data: dict = Body(...), db=Depends(get_db), user=Depends(require_roles("admin", "recruiter"))):
+    _require_organization_access(user, organization_id)
     team = Team(
         organization_id=organization_id,
         name=sanitize_text(data.get("name"), 120),
@@ -56,6 +62,7 @@ def create_team(organization_id: str, data: dict = Body(...), db=Depends(get_db)
 
 @router.post("/{organization_id}/invitations")
 def invite_recruiter(organization_id: str, data: dict = Body(...), db=Depends(get_db), user=Depends(require_roles("admin"))):
+    _require_organization_access(user, organization_id)
     email = (data.get("email") or "").strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=400, detail="Valid email is required")
@@ -75,6 +82,13 @@ def invite_recruiter(organization_id: str, data: dict = Body(...), db=Depends(ge
 
 @router.post("/teams/{team_id}/members")
 def add_team_member(team_id: str, data: dict = Body(...), db=Depends(get_db), user=Depends(require_roles("admin", "recruiter"))):
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    _require_organization_access(user, team.organization_id)
+    target = db.query(User).filter(User.id == data.get("user_id"), User.organization_id == team.organization_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
     member = TeamMember(team_id=team_id, user_id=data.get("user_id"), role=data.get("role") or "member")
     db.add(member)
     db.commit()
@@ -86,6 +100,7 @@ def update_user_role(user_id: str, data: dict = Body(...), db=Depends(get_db), u
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _require_organization_access(user, target.organization_id)
     target.role = data.get("role") or target.role
     db.commit()
     return {"id": target.id, "role": target.role}
@@ -93,8 +108,7 @@ def update_user_role(user_id: str, data: dict = Body(...), db=Depends(get_db), u
 
 @router.get("/{organization_id}/analytics")
 def organization_analytics(organization_id: str, db=Depends(get_db), user=Depends(get_current_user)):
-    if user.organization_id and user.organization_id != organization_id and user.role != "admin":
-        raise HTTPException(status_code=403, detail="Organization access denied")
+    _require_organization_access(user, organization_id)
     jobs = db.query(Job).filter(Job.organization_id == organization_id).all()
     candidates = db.query(Resume).filter(Resume.organization_id == organization_id, Resume.is_active == True).all()
     users = db.query(User).filter(User.organization_id == organization_id, User.is_active == True).all()

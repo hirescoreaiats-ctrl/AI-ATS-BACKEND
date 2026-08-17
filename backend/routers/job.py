@@ -69,7 +69,7 @@ REQUIRED_GOOGLE_ASSESSMENT_SCOPES = {
     "https://www.googleapis.com/auth/forms.responses.readonly",
 }
 
-GLOBAL_RECRUITER_ROLES = {"admin", "super_admin"}
+GLOBAL_RECRUITER_ROLES = {"super_admin"}
 
 
 def _is_global_recruiter(user: User) -> bool:
@@ -1733,10 +1733,11 @@ def public_job(job_identifier: str):
 
 
 @router.post("/jobs/{job_id}/ai-posts", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def generate_job_ai_posts(job_id: str):
+def generate_job_ai_posts(job_id: str, user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
     db = SessionLocal()
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1770,12 +1771,13 @@ def generate_job_ai_posts(job_id: str):
 # ---------------- GET RESULTS ----------------
 
 @router.get("/results/{job_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_results(job_id: str):
+def get_results(job_id: str, user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager"))):
 
     db = SessionLocal()
 
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
 
         if not job:
             return {"error": "Job not found"}

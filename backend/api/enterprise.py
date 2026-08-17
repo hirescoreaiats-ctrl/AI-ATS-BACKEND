@@ -443,8 +443,7 @@ def pipeline_analytics(job_id: str | None = None, db=Depends(get_db), user=Depen
     query = db.query(Resume).filter(Resume.is_active == True)
     if job_id:
         query = query.filter(Resume.job_id == job_id)
-    if user.organization_id:
-        query = query.filter((Resume.organization_id == user.organization_id) | (Resume.organization_id == None))
+    query = query.filter(Resume.organization_id == user.organization_id)
     rows = query.limit(5000).all()
     stage_counts = {}
     total_score = 0
