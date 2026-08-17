@@ -2099,6 +2099,10 @@ def get_jobs(user: User = Depends(require_roles("admin", "recruiter", "hiring_ma
 
     db = SessionLocal()
 
+    if not user.organization_id:
+        db.close()
+        return []
+
     jobs = db.query(Job).filter(Job.organization_id == user.organization_id).order_by(Job.created_at.desc()).all()
 
     result = []
