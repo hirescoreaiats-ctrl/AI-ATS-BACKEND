@@ -222,3 +222,14 @@ def test_admin_invite_preserves_limits_for_future_signup(db, monkeypatch):
     assert future_user.max_resumes_per_job == 500
     assert future_user.max_total_resumes == 2000
     assert invitation.status == "accepted"
+
+
+def test_admin_can_manage_pilot_from_another_workspace(db):
+    admin_org = Organization(id="admin-org", name="Admin Workspace", slug="admin-manage-workspace")
+    pilot_org = Organization(id="pilot-org", name="Pilot Workspace", slug="pilot-manage-workspace")
+    admin = User(id="admin-manage", name="Admin", email="manage-admin@example.com", password="hash", role="admin", organization_id=admin_org.id)
+    managed_pilot = pilot(id="managed-pilot", email="managed-pilot@example.com", organization_id=pilot_org.id)
+    db.add_all([admin_org, pilot_org, admin, managed_pilot])
+    db.commit()
+
+    assert auth_router._admin_pilot(db, managed_pilot.id, admin).id == managed_pilot.id

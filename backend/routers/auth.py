@@ -345,13 +345,6 @@ def list_pilot_users(admin: User = Depends(require_roles("admin", "super_admin")
     try:
         user_query = db.query(User).filter(User.subscription_plan == "pilot")
         invite_query = db.query(RecruiterInvitation).filter(RecruiterInvitation.token.like("pilot_%"))
-        if admin.role != "super_admin":
-            managed_org_ids = db.query(RecruiterInvitation.organization_id).filter(
-                RecruiterInvitation.invited_by_user_id == admin.id,
-                RecruiterInvitation.token.like("pilot_%"),
-            )
-            user_query = user_query.filter(User.organization_id.in_(managed_org_ids))
-            invite_query = invite_query.filter(RecruiterInvitation.invited_by_user_id == admin.id)
 
         users = user_query.order_by(User.created_at.desc()).limit(200).all()
         invitations = invite_query.order_by(RecruiterInvitation.created_at.desc()).limit(200).all()
@@ -494,8 +487,6 @@ def deactivate_pilot_user(user_id: str, data: dict | None = None, admin: User = 
         pilot = db.query(User).filter(User.id == user_id, User.subscription_plan == "pilot").first()
         if not pilot:
             raise HTTPException(status_code=404, detail="Pilot user not found")
-        if admin.role != "super_admin" and pilot.organization_id != admin.organization_id:
-            raise HTTPException(status_code=403, detail="Pilot user belongs to another organization")
         pilot.is_active = False
         pilot.subscription_status = "inactive"
         pilot.pilot_status = "deactivated"
@@ -522,8 +513,6 @@ def _admin_pilot(db, user_id: str, admin: User) -> User:
     pilot = db.query(User).filter(User.id == user_id, User.subscription_plan == "pilot").with_for_update().first()
     if not pilot:
         raise HTTPException(status_code=404, detail="Pilot user not found")
-    if admin.role != "super_admin" and pilot.organization_id != admin.organization_id:
-        raise HTTPException(status_code=403, detail="Pilot user belongs to another organization")
     return pilot
 
 
@@ -683,8 +672,6 @@ def resend_pilot_invitation(invitation_id: str, admin: User = Depends(require_ro
         invitation = db.query(RecruiterInvitation).filter(RecruiterInvitation.id == invitation_id, RecruiterInvitation.token.like("pilot_%")).with_for_update().first()
         if not invitation:
             raise HTTPException(status_code=404, detail="Pilot invitation not found")
-        if admin.role != "super_admin" and invitation.organization_id != admin.organization_id:
-            raise HTTPException(status_code=403, detail="Pilot invitation belongs to another organization")
         if invitation.status == "accepted":
             raise HTTPException(status_code=409, detail="Accepted invitations cannot be resent")
         invitation.status = "pending"
@@ -706,8 +693,6 @@ def cancel_pilot_invitation(invitation_id: str, admin: User = Depends(require_ro
         invitation = db.query(RecruiterInvitation).filter(RecruiterInvitation.id == invitation_id, RecruiterInvitation.token.like("pilot_%")).with_for_update().first()
         if not invitation:
             raise HTTPException(status_code=404, detail="Pilot invitation not found")
-        if admin.role != "super_admin" and invitation.organization_id != admin.organization_id:
-            raise HTTPException(status_code=403, detail="Pilot invitation belongs to another organization")
         if invitation.status == "accepted":
             raise HTTPException(status_code=409, detail="An activated account cannot be cancelled as an invitation")
         invitation.status = "cancelled"
