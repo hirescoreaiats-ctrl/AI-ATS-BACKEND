@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from backend.models import Job, Organization, Resume, User
 
 
-GLOBAL_ADMIN_ROLES = {"super_admin"}
+GLOBAL_ADMIN_ROLES = {"admin", "super_admin"}
 
 
 def is_global_admin(user: User) -> bool:

@@ -168,14 +168,17 @@ def test_recruiter_cannot_read_other_org_job_results(tenant_db):
     assert exc.value.status_code == 404
 
 
-def test_organization_admin_sees_only_own_jobs(tenant_db):
+def test_admin_sees_all_jobs_and_applicants_across_workspaces(tenant_db):
     add_job(tenant_db, "job-a", "org-a", "Org A Job")
     add_job(tenant_db, "job-b", "org-b", "Org B Job")
+    add_resume(tenant_db, "resume-a", "job-a", "org-a", 88)
+    add_resume(tenant_db, "resume-b", "job-b", "org-b", 99)
     tenant_db.commit()
 
     jobs = job_router.get_jobs(user=admin())
 
-    assert [job["id"] for job in jobs] == ["job-a"]
+    assert {job["id"] for job in jobs} == {"job-a", "job-b"}
+    assert sum(job["total_applicants"] for job in jobs) == 2
 
 
 def test_super_admin_can_still_see_all_jobs(tenant_db):

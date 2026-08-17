@@ -69,7 +69,7 @@ REQUIRED_GOOGLE_ASSESSMENT_SCOPES = {
     "https://www.googleapis.com/auth/forms.responses.readonly",
 }
 
-GLOBAL_RECRUITER_ROLES = {"super_admin"}
+GLOBAL_RECRUITER_ROLES = {"admin", "super_admin"}
 
 
 def _is_global_recruiter(user: User) -> bool:
