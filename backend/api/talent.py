@@ -10,6 +10,7 @@ from backend.core.cache import cache_get_json, cache_set_json
 from backend.core.security import get_current_user
 from backend.database import get_db
 from backend.models import Resume, SavedSearch, TalentPool, TalentPoolCandidate
+from backend.core.tenancy import current_organization_id, require_candidate
 
 router = APIRouter(prefix="/talent", tags=["talent-discovery"])
 
@@ -23,13 +24,14 @@ def talent_search(
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
-    cache_key = f"talent-search:{user.organization_id}:{q}:{stage}:{page}:{page_size}"
+    organization_id = current_organization_id(user)
+    cache_key = f"talent-search:{organization_id}:{q}:{stage}:{page}:{page_size}"
     cached = cache_get_json(cache_key)
     if cached:
         return cached
 
     query = db.query(Resume).filter(Resume.is_active == True)
-    query = query.filter(Resume.organization_id == user.organization_id)
+    query = query.filter(Resume.organization_id == organization_id)
     if stage != "all":
         query = query.filter(Resume.stage == stage)
 
@@ -48,8 +50,9 @@ def talent_search(
 
 @router.post("/saved-searches")
 def save_search(data: dict = Body(...), db=Depends(get_db), user=Depends(get_current_user)):
+    organization_id = current_organization_id(user)
     search = SavedSearch(
-        organization_id=user.organization_id,
+        organization_id=organization_id,
         owner_user_id=user.id,
         name=data.get("name") or data.get("query") or "Saved search",
         query=data.get("query") or "",
@@ -63,9 +66,10 @@ def save_search(data: dict = Body(...), db=Depends(get_db), user=Depends(get_cur
 
 @router.get("/saved-searches")
 def list_saved_searches(db=Depends(get_db), user=Depends(get_current_user)):
+    organization_id = current_organization_id(user)
     rows = (
         db.query(SavedSearch)
-        .filter((SavedSearch.owner_user_id == user.id) | (SavedSearch.organization_id == user.organization_id))
+        .filter(SavedSearch.organization_id == organization_id)
         .order_by(SavedSearch.created_at.desc())
         .limit(100)
         .all()
@@ -75,8 +79,9 @@ def list_saved_searches(db=Depends(get_db), user=Depends(get_current_user)):
 
 @router.post("/pools")
 def create_talent_pool(data: dict = Body(...), db=Depends(get_db), user=Depends(get_current_user)):
+    organization_id = current_organization_id(user)
     pool = TalentPool(
-        organization_id=user.organization_id,
+        organization_id=organization_id,
         owner_user_id=user.id,
         name=data.get("name") or "Talent pool",
         description=data.get("description"),
@@ -90,11 +95,11 @@ def create_talent_pool(data: dict = Body(...), db=Depends(get_db), user=Depends(
 @router.post("/pools/{pool_id}/candidates")
 def add_candidate_to_pool(pool_id: str, data: dict = Body(...), db=Depends(get_db), user=Depends(get_current_user)):
     candidate_id = data.get("candidate_id")
-    pool = db.query(TalentPool).filter(TalentPool.id == pool_id, TalentPool.organization_id == user.organization_id).first()
+    organization_id = current_organization_id(user)
+    pool = db.query(TalentPool).filter(TalentPool.id == pool_id, TalentPool.organization_id == organization_id).first()
     if not pool:
         raise HTTPException(status_code=404, detail="Talent pool not found")
-    if not db.query(Resume).filter(Resume.id == candidate_id, Resume.organization_id == user.organization_id).first():
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    require_candidate(db, candidate_id, user)
     existing = db.query(TalentPoolCandidate).filter(
         TalentPoolCandidate.talent_pool_id == pool_id,
         TalentPoolCandidate.candidate_id == candidate_id,

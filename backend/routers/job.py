@@ -2626,7 +2626,7 @@ def sync_resume_folder(job_id: str):
                         file_path.name,
                         job.id,
                         resume_id,
-                        organization_id=job.organization_id or "default_org",
+                        organization_id=job.organization_id,
                         mime_type=mimetypes.guess_type(file_path.name)[0],
                     )
                     stored_path = blob_metadata.storage_uri
@@ -2793,7 +2793,7 @@ async def upload_resume_folder(job_id: str, files: list[UploadFile] = File(...))
                         original_name,
                         job.id,
                         resume_id,
-                        organization_id=job.organization_id or "default_org",
+                        organization_id=job.organization_id,
                         mime_type=upload.content_type,
                     )
                     stored_path = blob_metadata.storage_uri

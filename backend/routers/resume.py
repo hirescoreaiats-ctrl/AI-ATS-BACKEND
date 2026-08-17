@@ -993,7 +993,7 @@ async def upload_resumes(
                             filename,
                             job_id,
                             resume_id,
-                            organization_id=job.organization_id or "default_org",
+                            organization_id=job.organization_id,
                             mime_type=file.content_type,
                         )
                         stored_file_path = blob_metadata.storage_uri

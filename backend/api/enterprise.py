@@ -6,7 +6,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from backend.core.security import get_current_user, require_roles
 from backend.database import get_db
-from backend.models import CandidateActivity, CandidateNote, CandidateStageHistory, CandidateTag, Interview, InterviewScorecard, Offer, OfferApproval, PipelineStage, Resume
+from backend.models import CandidateActivity, CandidateNote, CandidateStageHistory, CandidateTag, Interview, InterviewScorecard, Job, Offer, OfferApproval, PipelineStage, Resume
+from backend.core.tenancy import current_organization_id, require_candidate, require_job, scope_tenant_query
 from backend.repositories.audit_repository import write_audit_log, write_candidate_activity
 from backend.utils.sanitize import sanitize_text
 
@@ -20,9 +21,7 @@ def add_candidate_note(
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
-    candidate = db.query(Resume).filter(Resume.id == candidate_id, Resume.is_active == True).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = require_candidate(db, candidate_id, user, active_only=True)
 
     body = sanitize_text(data.get("body"))
     if not body:
@@ -53,9 +52,7 @@ def add_candidate_note(
 
 @router.get("/candidates/{candidate_id}/timeline")
 def candidate_timeline(candidate_id: str, db=Depends(get_db), user=Depends(get_current_user)):
-    candidate = db.query(Resume).filter(Resume.id == candidate_id).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = require_candidate(db, candidate_id, user)
 
     activities = (
         db.query(CandidateActivity)
@@ -92,7 +89,7 @@ def advanced_candidate_search(
 ):
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
-    query = db.query(Resume).filter(Resume.is_active == True)
+    query = scope_tenant_query(db.query(Resume).filter(Resume.is_active == True), Resume, user, allow_global_admin=True)
     if stage != "all":
         query = query.filter(Resume.stage == stage)
     if q:
@@ -135,9 +132,7 @@ def add_candidate_tag(candidate_id: str, data: dict = Body(...), db=Depends(get_
     tag_value = (data.get("tag") or "").strip().lower()
     if not tag_value:
         raise HTTPException(status_code=400, detail="tag is required")
-    candidate = db.query(Resume).filter(Resume.id == candidate_id).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = require_candidate(db, candidate_id, user)
     tag = db.query(CandidateTag).filter(CandidateTag.candidate_id == candidate_id, CandidateTag.tag == tag_value).first()
     if not tag:
         tag = CandidateTag(candidate_id=candidate_id, tag=tag_value, color=data.get("color"))
@@ -179,9 +174,7 @@ def move_candidate_stage(data: dict = Body(...), db=Depends(get_db), user=Depend
     }
     if stage not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported pipeline stage")
-    candidate = db.query(Resume).filter(Resume.id == candidate_id, Resume.is_active == True).first()
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+    candidate = require_candidate(db, candidate_id, user, active_only=True)
     previous_stage = candidate.stage
     candidate.stage = stage
     candidate.status = status
@@ -211,11 +204,13 @@ def move_candidate_stage(data: dict = Body(...), db=Depends(get_db), user=Depend
 
 @router.get("/pipeline/stages")
 def list_pipeline_stages(job_id: str | None = None, db=Depends(get_db), user=Depends(get_current_user)):
+    organization_id = current_organization_id(user, allow_global_admin=True)
     query = db.query(PipelineStage)
     if job_id:
+        require_job(db, job_id, user)
         query = query.filter((PipelineStage.job_id == job_id) | (PipelineStage.job_id == None))
-    elif user.organization_id:
-        query = query.filter((PipelineStage.organization_id == user.organization_id) | (PipelineStage.organization_id == None))
+    if organization_id is not None:
+        query = query.filter((PipelineStage.organization_id == organization_id) | (PipelineStage.organization_id == None))
     rows = query.order_by(PipelineStage.position.asc()).all()
     if not rows:
         return {"stages": default_pipeline_stages()}
@@ -229,8 +224,11 @@ def list_pipeline_stages(job_id: str | None = None, db=Depends(get_db), user=Dep
 
 @router.post("/pipeline/stages")
 def upsert_pipeline_stage(data: dict = Body(...), db=Depends(get_db), user=Depends(require_roles("admin", "recruiter"))):
+    organization_id = current_organization_id(user)
+    if data.get("job_id"):
+        require_job(db, data.get("job_id"), user)
     stage = PipelineStage(
-        organization_id=user.organization_id,
+        organization_id=organization_id,
         job_id=data.get("job_id"),
         key=data.get("key"),
         name=data.get("name"),
@@ -246,6 +244,7 @@ def upsert_pipeline_stage(data: dict = Body(...), db=Depends(get_db), user=Depen
 
 @router.get("/candidates/{candidate_id}/stage-history")
 def candidate_stage_history(candidate_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+    require_candidate(db, candidate_id, user)
     rows = (
         db.query(CandidateStageHistory)
         .filter(CandidateStageHistory.candidate_id == candidate_id)
@@ -273,7 +272,7 @@ def bulk_move_candidates(data: dict = Body(...), db=Depends(get_db), user=Depend
     candidate_ids = data.get("candidate_ids") or []
     stage = data.get("stage")
     status = data.get("status") or _status_for_stage(stage)
-    rows = db.query(Resume).filter(Resume.id.in_(candidate_ids), Resume.is_active == True).all()
+    rows = scope_tenant_query(db.query(Resume).filter(Resume.id.in_(candidate_ids), Resume.is_active == True), Resume, user, allow_global_admin=True).all()
     for candidate in rows:
         previous_stage = candidate.stage
         candidate.stage = stage
@@ -302,13 +301,15 @@ def bulk_move_candidates(data: dict = Body(...), db=Depends(get_db), user=Depend
 
 @router.post("/interviews")
 def schedule_interview(data: dict = Body(...), db=Depends(get_db), user=Depends(get_current_user)):
+    candidate = require_candidate(db, data.get("candidate_id"), user)
+    job = require_job(db, data.get("job_id") or candidate.job_id, user)
     scheduled_at = data.get("scheduled_at")
     if isinstance(scheduled_at, str) and scheduled_at:
         scheduled_at = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
 
     interview = Interview(
-        candidate_id=data.get("candidate_id"),
-        job_id=data.get("job_id"),
+        candidate_id=candidate.id,
+        job_id=job.id,
         interviewer_user_id=data.get("interviewer_user_id") or user.id,
         interview_type=data.get("interview_type") or "technical",
         scheduled_at=scheduled_at,
@@ -331,6 +332,12 @@ def schedule_interview(data: dict = Body(...), db=Depends(get_db), user=Depends(
 
 @router.post("/scorecards")
 def submit_scorecard(data: dict = Body(...), db=Depends(get_db), user=Depends(get_current_user)):
+    candidate = require_candidate(db, data.get("candidate_id"), user)
+    interview = db.query(Interview).join(Job, Job.id == Interview.job_id).filter(
+        Interview.id == data.get("interview_id"), Job.organization_id == candidate.organization_id
+    ).first()
+    if not interview or interview.candidate_id != candidate.id:
+        raise HTTPException(status_code=404, detail="Interview not found")
     scorecard = InterviewScorecard(
         interview_id=data.get("interview_id"),
         candidate_id=data.get("candidate_id"),
@@ -356,9 +363,11 @@ def submit_scorecard(data: dict = Body(...), db=Depends(get_db), user=Depends(ge
 
 @router.post("/offers")
 def create_offer(data: dict = Body(...), db=Depends(get_db), user=Depends(require_roles("admin", "recruiter"))):
+    candidate = require_candidate(db, data.get("candidate_id"), user)
+    job = require_job(db, data.get("job_id") or candidate.job_id, user)
     offer = Offer(
-        candidate_id=data.get("candidate_id"),
-        job_id=data.get("job_id"),
+        candidate_id=candidate.id,
+        job_id=job.id,
         compensation=data.get("compensation"),
         start_date=data.get("start_date"),
         status=data.get("status") or "draft",
@@ -382,6 +391,10 @@ def create_offer(data: dict = Body(...), db=Depends(get_db), user=Depends(requir
 
 @router.get("/offers/{offer_id}/approvals")
 def offer_approvals(offer_id: str, db=Depends(get_db), user=Depends(get_current_user)):
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    require_candidate(db, offer.candidate_id, user)
     rows = (
         db.query(OfferApproval)
         .filter(OfferApproval.offer_id == offer_id)
@@ -412,6 +425,10 @@ def decide_offer_approval(
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    require_candidate(db, offer.candidate_id, user)
     approval = db.query(OfferApproval).filter(OfferApproval.id == approval_id, OfferApproval.offer_id == offer_id).first()
     if not approval:
         raise HTTPException(status_code=404, detail="Approval step not found")
@@ -424,7 +441,6 @@ def decide_offer_approval(
     approval.notes = sanitize_text(data.get("notes"), 2000)
     approval.decided_at = datetime.utcnow()
 
-    offer = db.query(Offer).filter(Offer.id == offer_id).first()
     approvals = db.query(OfferApproval).filter(OfferApproval.offer_id == offer_id).all()
     if offer:
         if any(row.status == "rejected" for row in approvals):
@@ -440,10 +456,10 @@ def decide_offer_approval(
 
 @router.get("/pipeline/analytics")
 def pipeline_analytics(job_id: str | None = None, db=Depends(get_db), user=Depends(get_current_user)):
-    query = db.query(Resume).filter(Resume.is_active == True)
+    query = scope_tenant_query(db.query(Resume).filter(Resume.is_active == True), Resume, user, allow_global_admin=True)
     if job_id:
+        require_job(db, job_id, user)
         query = query.filter(Resume.job_id == job_id)
-    query = query.filter(Resume.organization_id == user.organization_id)
     rows = query.limit(5000).all()
     stage_counts = {}
     total_score = 0
