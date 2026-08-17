@@ -18,6 +18,7 @@ from backend.middleware.security_headers import SecurityHeadersMiddleware
 from backend.models import Base
 from backend.routers import auth, job, resume
 from backend.services.runtime import log_startup_runtime, operational_error_type
+from backend.services.tenant_repair import repair_tenant_assignments_at_startup
 
 configure_logging()
 settings = get_settings()
@@ -309,6 +310,7 @@ def ensure_resume_columns():
 
 
 ensure_resume_columns()
+repair_tenant_assignments_at_startup()
 
 app.include_router(job.router)
 app.include_router(resume.router)
