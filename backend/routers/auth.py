@@ -11,6 +11,7 @@ import datetime
 from fastapi.responses import RedirectResponse
 import requests
 import os
+import re
 import urllib.parse
 import secrets
 import string
@@ -221,17 +222,16 @@ def _send_pilot_invitation_email(invitation: RecruiterInvitation, invited_by: Us
     )
 
 
-def _ensure_admin_organization(db, admin: User) -> str:
-    local_admin = db.query(User).filter(User.id == admin.id).first()
-    if not local_admin:
-        raise HTTPException(status_code=401, detail="Admin account not found")
-    if local_admin.organization_id:
-        return local_admin.organization_id
-    slug = f"pilot-{local_admin.id[:8]}-{secrets.token_hex(3)}"
-    organization = Organization(name=f"{local_admin.name or 'HireScore'} Pilot Workspace", slug=slug)
+def _create_pilot_organization(db, email: str, config: dict) -> str:
+    label = str(config.get("company_name") or config.get("name") or email.split("@", 1)[0] or "Pilot").strip()
+    slug_base = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:70] or "pilot"
+    organization = Organization(
+        name=f"{label} Workspace",
+        slug=f"{slug_base}-{secrets.token_hex(6)}",
+        plan="pilot",
+    )
     db.add(organization)
     db.flush()
-    local_admin.organization_id = organization.id
     return organization.id
 
 
@@ -346,8 +346,12 @@ def list_pilot_users(admin: User = Depends(require_roles("admin", "super_admin")
         user_query = db.query(User).filter(User.subscription_plan == "pilot")
         invite_query = db.query(RecruiterInvitation).filter(RecruiterInvitation.token.like("pilot_%"))
         if admin.role != "super_admin":
-            user_query = user_query.filter(User.organization_id == admin.organization_id)
-            invite_query = invite_query.filter(RecruiterInvitation.organization_id == admin.organization_id)
+            managed_org_ids = db.query(RecruiterInvitation.organization_id).filter(
+                RecruiterInvitation.invited_by_user_id == admin.id,
+                RecruiterInvitation.token.like("pilot_%"),
+            )
+            user_query = user_query.filter(User.organization_id.in_(managed_org_ids))
+            invite_query = invite_query.filter(RecruiterInvitation.invited_by_user_id == admin.id)
 
         users = user_query.order_by(User.created_at.desc()).limit(200).all()
         invitations = invite_query.order_by(RecruiterInvitation.created_at.desc()).limit(200).all()
@@ -384,11 +388,9 @@ def create_pilot_user_invite(
     config = _pilot_config(data)
     db = SessionLocal()
     try:
-        organization_id = _ensure_admin_organization(db, admin)
         existing_user = db.query(User).filter(User.email == email).first()
         if existing_user:
-            if admin.role != "super_admin" and existing_user.organization_id not in {None, organization_id}:
-                raise HTTPException(status_code=403, detail="User belongs to another organization")
+            organization_id = existing_user.organization_id or _create_pilot_organization(db, email, config)
             existing_user.organization_id = organization_id
             existing_user.subscription_status = "active"
             existing_user.subscription_plan = "pilot"
@@ -413,12 +415,15 @@ def create_pilot_user_invite(
             db.query(RecruiterInvitation)
             .filter(
                 RecruiterInvitation.email == email,
-                RecruiterInvitation.organization_id == organization_id,
                 RecruiterInvitation.status == "pending",
+                RecruiterInvitation.token.like("pilot_%"),
             )
             .first()
         )
-        if not invitation:
+        if invitation:
+            organization_id = invitation.organization_id
+        else:
+            organization_id = _create_pilot_organization(db, email, config)
             invitation = RecruiterInvitation(
                 organization_id=organization_id,
                 invited_by_user_id=admin.id,

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from backend.models import Base, Job, RecruiterInvitation, Resume, User
+from backend.models import Base, Job, Organization, RecruiterInvitation, Resume, User
 from backend.routers import auth as auth_router
 from backend.routers.auth import _pilot_config
 from backend.services.pilot_access import (
@@ -186,8 +186,10 @@ def test_concurrent_resume_batches_cannot_claim_the_same_slots(db):
 
 def test_admin_invite_preserves_limits_for_future_signup(db, monkeypatch):
     Session = sessionmaker(autocommit=False, autoflush=False, bind=db.get_bind())
-    admin = User(id="admin-1", name="Admin", email="admin@example.com", password="hash", role="admin", is_active=True)
-    db.add(admin)
+    admin_org = Organization(id="admin-org", name="Admin Workspace", slug="admin-workspace")
+    admin = User(id="admin-1", name="Admin", email="admin@example.com", password="hash", role="admin", organization_id=admin_org.id, is_active=True)
+    db.add_all([admin_org, admin])
+    add_job(db, admin, "admin-job")
     db.commit()
     monkeypatch.setattr(auth_router, "SessionLocal", Session)
     monkeypatch.setattr(auth_router, "_send_pilot_invitation_email", lambda invitation, invited_by: {"provider": "test"})
@@ -210,6 +212,8 @@ def test_admin_invite_preserves_limits_for_future_signup(db, monkeypatch):
     assert result["status"] == "pending"
     assert result["email_sent"] is True
     invitation = db.query(RecruiterInvitation).filter(RecruiterInvitation.email == "testing@example.com").one()
+    assert invitation.organization_id != admin.organization_id
+    assert db.query(Job).filter(Job.organization_id == invitation.organization_id).count() == 0
     future_user = pilot(id="future-1", email="testing@example.com")
     auth_router._apply_invitation_to_user(invitation, future_user)
     assert future_user.company_name == "ABC Recruitment"
