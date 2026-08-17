@@ -1441,7 +1441,7 @@ async def parse_jd_file(file: UploadFile = File(...)):
 # ---------------- CREATE JOB ----------------
 
 @router.post("/create-job", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def create_job(job: JobCreate):
+def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "recruiter", "hiring_manager"))):
 
     db = SessionLocal()
 
@@ -1487,6 +1487,8 @@ def create_job(job: JobCreate):
             min_experience_years=enrichment.get("min_experience_years"),
             education=edu
         )
+        new_job.organization_id = user.organization_id
+        new_job.owner_user_id = user.id
 
         db.add(new_job)
         db.flush()
@@ -2093,11 +2095,11 @@ def download_csv(job_id: str):
 # ---------------- GET ALL JOBS (FOR ATS DASHBOARD) ----------------
 
 @router.get("/jobs", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def get_jobs():
+def get_jobs(user: User = Depends(require_roles("admin", "recruiter", "hiring_manager"))):
 
     db = SessionLocal()
 
-    jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+    jobs = db.query(Job).filter(Job.organization_id == user.organization_id).order_by(Job.created_at.desc()).all()
 
     result = []
 

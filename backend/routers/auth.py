@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from backend.core.config import get_settings
 from backend.core.security import create_access_token, get_current_user, hash_password, verify_password
 from backend.database import SessionLocal
-from backend.models import RecruiterInvitation, User
+from backend.models import Organization, RecruiterInvitation, User
 import jwt
 import datetime
 from fastapi.responses import RedirectResponse
@@ -121,6 +121,19 @@ def _apply_invitation_to_user(invitation: RecruiterInvitation | None, user: User
     invitation.status = "accepted"
 
 
+def _ensure_user_organization(db, user: User) -> str:
+    if user.organization_id:
+        return user.organization_id
+    organization = Organization(
+        name=f"{(user.name or 'HireScore').strip()} Workspace",
+        slug=f"workspace-{secrets.token_hex(8)}",
+    )
+    db.add(organization)
+    db.flush()
+    user.organization_id = organization.id
+    return organization.id
+
+
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
     return {
@@ -180,6 +193,7 @@ def signup(data: AuthRequest):
         _apply_invitation_to_user(invitation, user)
 
         db.add(user)
+        _ensure_user_organization(db, user)
         db.commit()
 
         return {"message": "Account created successfully"}
@@ -210,6 +224,9 @@ def login(data: AuthRequest, response: Response):
         if not verify_password(data.password, user.password):
             raise HTTPException(status_code=400, detail="Invalid credentials")
 
+        _ensure_user_organization(db, user)
+        db.commit()
+
         # create token
         token = create_access_token(
             {
@@ -217,6 +234,7 @@ def login(data: AuthRequest, response: Response):
                 "email": user.email,
                 "name": user.name,
                 "role": user.role or "recruiter",
+                "organization_id": user.organization_id,
             }
         )
         csrf_token = secrets.token_urlsafe(24)
@@ -243,6 +261,7 @@ def login(data: AuthRequest, response: Response):
             "name": user.name,
             "email": user.email,
             "role": user.role or "recruiter",
+            "organization_id": user.organization_id,
             "subscription_status": user.subscription_status or "unpaid",
             "subscription_plan": user.subscription_plan,
         }
@@ -391,6 +410,7 @@ def _login_redirect_for_user(user: User, name: str | None = None) -> RedirectRes
             "email": user.email,
             "name": user.name,
             "role": user.role or "recruiter",
+            "organization_id": user.organization_id,
         }
     )
     redirect = (
@@ -571,6 +591,7 @@ def google_callback(code: str, state: str = None):
         _apply_invitation_to_user(invitation, user)
         _activate_subscription(user, "manual")
         db.add(user)
+        _ensure_user_organization(db, user)
         db.commit()
 
     user.google_access_token = access_token
@@ -581,6 +602,7 @@ def google_callback(code: str, state: str = None):
     expires_in = int(token_json.get("expires_in") or 3600)
     user.google_token_expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=expires_in - 60)
     user.auth_provider = "google"
+    _ensure_user_organization(db, user)
     if purpose == "gmail_connect":
         user.outreach_sender_email = email.lower()
     db.commit()
@@ -598,6 +620,7 @@ def google_callback(code: str, state: str = None):
             "email": user.email,
             "name": user.name,
             "role": user.role or "recruiter",
+            "organization_id": user.organization_id,
         }
     )
 
@@ -636,6 +659,8 @@ def paid_signup_complete(pending_signup_token: str, access_code: str = None, pla
                 auth_provider=provider,
             )
             db.add(user)
+
+        _ensure_user_organization(db, user)
 
         user.auth_provider = user.auth_provider or provider
         _activate_subscription(user, plan)
