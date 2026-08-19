@@ -1869,7 +1869,7 @@ def _recover_chronological_work_records(text):
             _infer_designation(value)
             or re.search(
                 r"\b(?:firmware|embedded|hardware|software|systems?|consultant|contractor|director|"
-                r"engineer|developer|scientist|biologist|analyst|internship|intern|assistant|manager|lead|instructor)\b",
+                r"engineer|engineering|developer|scientist|biologist|analyst|internship|intern|assistant|manager|lead|instructor)\b",
                 value,
                 re.I,
             )
@@ -1917,14 +1917,23 @@ def _recover_chronological_work_records(text):
 
     def responsibility_text(index):
         collected = []
-        for offset in range(index + 1, min(len(lines), index + 26)):
+        for offset in range(index + 1, min(len(lines), index + 60)):
             following = lines[offset]
-            if offset > index + 1 and (
+            dated = range_re.search(following)
+            next_line = lines[offset + 1] if offset + 1 < len(lines) else ""
+            employment_boundary = bool(
                 compact_re.match(following)
                 or parenthesized_re.match(following)
-                or range_re.search(following)
                 or season_only_re.match(following)
-            ):
+                or (
+                    dated
+                    and (
+                        role_like(following[:dated.start()])
+                        or role_like(next_line)
+                    )
+                )
+            )
+            if offset > index + 1 and employment_boundary:
                 break
             if section_stop_re.fullmatch(following.strip(" :-|")):
                 break

@@ -701,7 +701,10 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             warnings.append(f"Skipped education/certification block as work experience: {company or role}")
             continue
 
-        internship = bool(INTERNSHIP_RE.search(block_text))
+        # Training or mentoring mentioned in responsibilities does not turn a
+        # multi-year professional role into an internship. Employment type is
+        # determined from the role title only.
+        internship = bool(INTERNSHIP_RE.search(role))
         role_hits = [term for term in role_terms if term and re.search(r"\b" + re.escape(term) + r"\b", role.lower())]
         role_title_score = _score_ratio(len(role_hits), min(max(len(role_terms), 1), 4))
         direct_role_match = bool((DIRECT_ROLE_PATTERNS.get(role_family) or re.compile(r"a^")).search(role))

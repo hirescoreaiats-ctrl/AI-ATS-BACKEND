@@ -3,6 +3,7 @@ import pytest
 from backend.experience_engine import looks_like_technical_entity_name, process_experience
 from backend.services.canonical_capabilities import capability_evidence
 from backend.services.jd_profile_engine import build_jd_profile
+from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.parsing_service import _clean_experience_records, _looks_like_bad_company, parse_resume_enterprise
 from backend.services.recruiter_decision import enrich_recruiter_decision
 from backend.services.scoring_service import score_candidate
@@ -199,6 +200,22 @@ Engenharia Eletrônica
     assert parsed["experience"]
     assert parsed["experience"][0]["company_name"] == "Sistemas Alfa Ltda"
     assert "Firmware" in parsed["experience"][0]["role"]
+
+
+def test_training_responsibility_does_not_cap_consultant_as_internship():
+    parsed = {
+        "total_experience_years": 6,
+        "experience": [{
+            "company_name": "Embedded Systems Ltd",
+            "role": "Consultant",
+            "start_date": "Jan 2020",
+            "end_date": "Jan 2026",
+            "description": "Developed embedded Linux BSPs, firmware and device drivers; also delivered in-house training.",
+        }],
+    }
+    profile = build_jd_profile("Firmware Engineer. Required embedded firmware, BSP and device drivers.", {"role": "Firmware Engineer"})
+    result = estimate_relevant_experience_v2(parsed, "", profile)
+    assert result["relevant_experience_years"] > 0.35
 
 
 def test_extracted_mcu_never_finishes_as_missing_microcontrollers():
