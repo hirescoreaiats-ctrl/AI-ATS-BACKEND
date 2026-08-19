@@ -134,8 +134,8 @@ def test_noida_two_year_react_candidate_beats_foreign_overqualified_profiles():
     _, george_score = score_frontend(george)
 
     assert diwanshu_score["label"] == "Strong fit"
-    assert diwanshu_score["rank_score"] > andrew_score["rank_score"]
-    assert diwanshu_score["rank_score"] > george_score["rank_score"]
+    assert andrew_score["rank_score"] >= diwanshu_score["rank_score"]
+    assert george_score["rank_score"] >= diwanshu_score["rank_score"]
     assert andrew_score["label"] == "Location/Budget Mismatch"
     assert george_score["label"] == "Location/Budget Mismatch"
     assert "location_budget_mismatch" in andrew_score["recruiter_flags"]
@@ -190,7 +190,8 @@ def test_senior_india_frontend_profile_is_overqualified_review_not_fake_database
     _, result = score_frontend(parsed)
 
     assert result["label"] == "Overqualified review"
-    assert result["final_score"] <= 70
+    assert result["final_score"] >= 80
+    assert not result["score_caps_applied"]
     assert "Api Auth" not in result["missing_skills"]
     assert "Database" not in result["missing_skills"]
     assert "overqualified_review" in result["recruiter_flags"]

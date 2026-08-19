@@ -234,13 +234,10 @@ def apply_parser_quality_gate(parsed, exp_data=None, jd_data=None, resume_text="
         confidence_cap = 62
 
     if cap < 100:
-        for key in ("final_score", "rank_score"):
-            if parsed.get(key) is not None:
-                parsed[key] = min(float(parsed.get(key) or 0), cap)
+        # Parser reliability is an eligibility/review signal, not technical
+        # capability. Preserve the score and lower only confidence.
         if parsed.get("confidence_score") is not None:
             parsed["confidence_score"] = min(float(parsed.get("confidence_score") or 0), confidence_cap)
-        parsed["recommendation"] = "in_review"
-        parsed["fit_band"] = "review"
 
     if "noisy_project_evidence" in flag_codes:
         parsed["projects"] = []

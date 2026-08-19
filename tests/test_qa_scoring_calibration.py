@@ -141,7 +141,7 @@ def test_direct_qa_slightly_above_range_is_review_not_rejected():
     assert result["label"] != "Rejected - missing core skills"
 
 
-def test_senior_qa_profile_is_capped_for_junior_role():
+def test_senior_qa_profile_keeps_technical_score_for_junior_role_and_is_flagged():
     parsed = {
         "full_name": "Anthony Montalto",
         "designation": "Senior Software Testing Engineer",
@@ -163,8 +163,8 @@ def test_senior_qa_profile_is_capped_for_junior_role():
 
     result = score_qa(parsed, parsed["experience"][0]["description"])
 
-    assert result["final_score"] <= 60
-    assert result["recommendation"] == "in_review"
+    assert result["final_score"] >= 80
+    assert not result["score_caps_applied"]
     assert "strongly_overqualified" in result["recruiter_flags"]
 
 

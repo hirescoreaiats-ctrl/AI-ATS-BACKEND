@@ -92,7 +92,7 @@ def test_senior_full_stack_candidate_is_review_overqualified_not_fake_low_releva
     result = score_candidate(parsed, FULL_STACK_JD, profile["must_have_skills"], {"role": "Full Stack Web Developer"}, FULL_STACK_JD, jd_profile=profile)
 
     assert result["final_score"] >= 60
-    assert result["recommendation"] == "in_review"
+    assert result["recommendation"] == "shortlisted"
     assert "overqualified" in result["recruiter_flags"]
     assert result["experience_fit"] == "senior_overqualified"
 
@@ -283,12 +283,12 @@ def test_strict_two_to_four_full_stack_zero_year_skill_match_is_not_shortlisted(
     result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Full Stack Developer"}, jd_text, jd_profile=profile)
 
     assert result["recommendation"] != "shortlisted"
-    assert result["final_score"] <= 60
+    assert result["final_score"] >= 65
     assert "below_jd_experience_range" in result["risk_flags"]
     assert result["label"] == "Below experience range"
 
 
-def test_strict_two_to_four_full_stack_one_point_five_years_is_capped():
+def test_two_to_four_full_stack_one_point_five_years_is_flagged_without_cap():
     jd_text, profile = strict_full_stack_profile()
     parsed = {
         "full_name": "Ajay Kumar",
@@ -309,12 +309,11 @@ def test_strict_two_to_four_full_stack_one_point_five_years_is_capped():
 
     result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Full Stack Developer"}, jd_text, jd_profile=profile)
 
-    assert result["recommendation"] != "shortlisted"
-    assert result["final_score"] <= 72
+    assert result["final_score"] >= 65
     assert "below_jd_experience_range" in result["risk_flags"]
 
 
-def test_strict_two_to_four_full_stack_over_range_is_review_not_shortlisted():
+def test_two_to_four_full_stack_over_range_is_flagged_without_fit_downgrade():
     jd_text, profile = strict_full_stack_profile()
     parsed = {
         "full_name": "Senior Candidate",
@@ -335,6 +334,6 @@ def test_strict_two_to_four_full_stack_over_range_is_review_not_shortlisted():
 
     result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Full Stack Developer"}, jd_text, jd_profile=profile)
 
-    assert result["recommendation"] != "shortlisted"
+    assert result["recommendation"] == "shortlisted"
     assert "over_jd_experience_range" in result["risk_flags"]
-    assert result["label"] == "Overqualified review"
+    assert result["final_score"] >= 70

@@ -533,18 +533,19 @@ class ResumeParsingRegressionTests(unittest.TestCase):
     @patch("backend.services.pipeline.candidate_embedding_payload", return_value={})
     @patch("backend.services.pipeline.cosine_similarity_cached", return_value=0.82)
     @patch("backend.services.parsing_service.parse_resume", return_value={})
-    def test_jd_experience_range_penalizes_overqualified_fit(self, *_):
-        parsed, _, _ = analyze_resume_for_job(
+    def test_jd_experience_range_flags_overqualified_fit_without_score_penalty(self, *_):
+        parsed, _, score = analyze_resume_for_job(
             SENIOR_BI_RESUME,
             "Data Analyst role. Experience: 1-3 Years. Requires Excel, SQL, Power BI, Tableau, data cleaning, communication.",
             ["Excel", "SQL", "Power BI", "Tableau", "Data Cleaning", "Communication"],
             {"role": "Data Analyst", "min_experience_years": 1, "education": "Bachelor"},
         )
 
-        self.assertGreater(parsed["overqualified_penalty"], 0)
+        self.assertEqual(parsed["overqualified_penalty"], 0)
         self.assertEqual(parsed["experience_target_max_years"], 3.0)
-        self.assertIn("over target experience range", parsed["ranking_reason"])
-        self.assertLess(parsed["final_score"], 85)
+        self.assertIn("over_experienced", score["recruiter_flags"])
+        self.assertEqual(score["seniority_score_adjustment"], 0)
+        self.assertEqual(score["final_score"], score["technical_fit_score"])
 
     def test_project_only_resume_does_not_count_education_or_cert_dates_as_work(self):
         parsed = self.parse_without_llm(PROJECT_ONLY_ANALYST_RESUME)
@@ -583,7 +584,7 @@ class ResumeParsingRegressionTests(unittest.TestCase):
         self.assertIn("PoKi", project_names)
         self.assertNotIn("OTHER PROFESSIONAL EXPERIENCE", " ".join(project_names))
 
-    def test_parser_quality_gate_caps_suspicious_extraction_before_shortlist(self):
+    def test_parser_quality_gate_preserves_technical_score_and_lowers_confidence(self):
         parsed = {
             "full_name": "Technical Skills Microsoft Word PowerPoint",
             "email": "",
@@ -616,10 +617,10 @@ class ResumeParsingRegressionTests(unittest.TestCase):
         apply_parser_quality_gate(parsed, exp_data, {}, "noisy resume text")
 
         self.assertEqual(report["parser_quality_action"], "manual_review_required")
-        self.assertLessEqual(parsed["final_score"], 58)
-        self.assertLessEqual(parsed["rank_score"], 58)
+        self.assertEqual(parsed["final_score"], 92)
+        self.assertEqual(parsed["rank_score"], 90)
         self.assertLessEqual(parsed["confidence_score"], 45)
-        self.assertEqual(parsed["recommendation"], "in_review")
+        self.assertEqual(parsed["recommendation"], "shortlisted")
         self.assertIn("Parser quality gate", parsed["ranking_reason"])
 
     @patch("backend.services.pipeline.candidate_embedding_payload", return_value={})

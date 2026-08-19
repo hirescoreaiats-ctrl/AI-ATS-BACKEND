@@ -886,16 +886,35 @@ KNOWN_SKILL_PATTERNS = [
     ("Firmware", re.compile(r"\bfirmware\b|\bembedded\s*hw\s*and\s*fw\b|\b(?:embedded\s*)?fw\b", re.I)),
     ("Embedded Software", re.compile(r"\bembedded\s+software\b", re.I)),
     ("Embedded Systems", re.compile(r"\bembedded\s+systems?\b", re.I)),
-    ("Embedded Hardware", re.compile(r"\bembedded\s*(?:hardware|hw)\b|\bembedded\s*hw\s*and\s*fw\b", re.I)),
-    ("Microcontrollers", re.compile(r"\bmicrocontrollers?\b|\bmcus?\b", re.I)),
+    ("Embedded Hardware", re.compile(
+        r"\bembedded\s*(?:hardware|hw)\b|\bembedded\s*hw\s*and\s*fw\b|\bboard\s+bring[-\s]?up\b|"
+        r"\b(?:pcb|board|circuit)\s+(?:design|development|debugging|validation)\b|"
+        r"\b(?:stm32\w*|esp32\w*|microcontrollers?|mcus?)\b.{0,100}\b(?:boards?|firmware|peripherals?|drivers?)\b|"
+        r"\b(?:boards?|firmware|peripherals?|drivers?)\b.{0,100}\b(?:stm32\w*|esp32\w*|microcontrollers?|mcus?)\b",
+        re.I,
+    )),
+    ("Microcontrollers", re.compile(
+        r"\bmicrocontrollers?\b|\bmcus?\b|\bstm32\w*\b|\besp32\w*\b|\bavr\w*\b|"
+        r"\bpic(?:18|24|32)?\w*\b|\bfreescale\b|\bsilicon\s+labs?\b|\bsilabs\b|\batmel\b|"
+        r"\b(?:arm\s+)?cortex[-\s]?m\d*\b|\bnxp\b(?=.{0,80}\b(?:mcu|microcontroller|firmware|embedded|rtos)\b)",
+        re.I,
+    )),
+    ("STM32", re.compile(r"\bstm32\w*\b", re.I)),
+    ("ESP32", re.compile(r"\besp32\w*\b", re.I)),
+    ("AVR", re.compile(r"\bavr\w*\b", re.I)),
+    ("PIC", re.compile(r"\bpic(?:18|24|32)?\w*\b", re.I)),
+    ("NXP", re.compile(r"\bnxp\b", re.I)),
     ("RTOS", re.compile(r"\brtos\b|\breal[-\s]?time\s+operating\s+systems?\b", re.I)),
     ("Real-time Systems", re.compile(r"\breal[-\s]?time\s+(?:embedded\s+)?systems?\b|\bresource[-\s]?constrained,?\s+real[-\s]?time\s+systems?\b", re.I)),
     ("Real-time Firmware", re.compile(r"\breal[-\s]?time\s+firmware\b|\bsafety[-\s]?critical,?\s+real[-\s]?time\s+firmware\b", re.I)),
     ("Printed Circuit Board", re.compile(r"\bpcbs?\b|\bprinted\s+circuit\s+boards?\b", re.I)),
-    ("Hardware/Software Integration", re.compile(r"\bhardware\s*/\s*software\s+integration\b|\bhardware[-\s]+software\s+integration\b|\bsystem[-\s]?integration\b", re.I)),
-    ("Electronic Schematics", re.compile(r"\belectronic\s+schematics?\b|\bread(?:ing)?\s+(?:and\s+understand(?:ing)?\s+)?schematics?\b", re.I)),
-    ("Laboratory Equipment", re.compile(r"\blaboratory\s+equipment\b|\blab\s+equipment\b|\boscilloscopes?\b|\bmultimeters?\b", re.I)),
-    ("RF Systems", re.compile(r"\brf\s+(?:systems?|testing|communication|qualification)\b|\bhf\s+and\s+vhf\b", re.I)),
+    ("Hardware/Software Integration", re.compile(r"\bhardware\s*/\s*(?:software|firmware)\s+integration\b|\bhardware[-\s]+(?:software|firmware)\s+integration\b|\bsystem[-\s]?integration\b|\bboard\s+bring[-\s]?up\b|\bperipheral\s+interfac(?:e|ing)\b", re.I)),
+    ("Electronic Schematics", re.compile(r"\belectronic\s+schematics?\b|\bread(?:ing)?\s+(?:and\s+understand(?:ing)?\s+)?schematics?\b|\bschematic\s+(?:development|design)\b|\bcircuit\s+design\b|\bpcb\s+(?:design|development)\b", re.I)),
+    ("Laboratory Equipment", re.compile(r"\blaboratory\s+equipment\b|\blab\s+equipment\b|\boscilloscopes?\b|\bmultimeters?\b|\blogic\s+analy[sz]ers?\b|\bjtag\s+debuggers?\b|\btest\s+instrumentation\b", re.I)),
+    ("RF Systems", re.compile(r"\brf(?:[-\s]?over[-\s]?fiber)?\b|\brf\s+(?:systems?|testing|communication|qualification|transceivers?)\b|\bhf\s+and\s+vhf\b|\bradio\s+systems?\b|\bwireless\s+communications?\b", re.I)),
+    ("Peripheral Interfaces", re.compile(r"\b(?:i2c|spi|uart|usb|adc|dac|can(?:\s+bus)?|lin(?:\s+bus)?|jtag|gpio)\b", re.I)),
+    ("Manufacturing Test", re.compile(r"\b(?:manufacturing|factory|production)\s+(?:test(?:ing)?|qualification|support)\b|\btest\s+(?:platforms?|fixtures?)\b|\bdiagnostic\s+(?:tools?|utilities)\b", re.I)),
+    ("Continuation Engineering", re.compile(r"\bcontinuation\s+engineering\b|\blegacy\s+(?:c\s+)?(?:code|firmware)\b|\binherited\s+codebase\b|\bproduct\s+lifecycle\s+support\b|\brefactor(?:ed|ing)?\b", re.I)),
     ("Communication Systems", re.compile(r"\bcommunications?\s+systems?\b|\bhf\s+and\s+vhf\s+communication\s+systems?\b", re.I)),
     ("Telecommunications", re.compile(r"\btelecommunications?\b", re.I)),
     ("Machine Learning", re.compile(r"\bmachine\s+learning\b|\bml\b", re.I)),

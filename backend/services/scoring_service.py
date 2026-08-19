@@ -4,6 +4,8 @@ from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.role_taxonomy import match_core_skill_groups
 from backend.services.taxonomy import equivalent_skill, expand_skill_requirements, known_skills_in_text, normalize_skill_list
 from backend.services.recruiter_decision import enrich_recruiter_decision
+from backend.services.canonical_capabilities import capability_evidence
+from backend.services.scoring_policy import apply_global_scoring_policy
 
 
 def infer_seniority(title, years=0, experience_text=""):
@@ -176,6 +178,10 @@ def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=Non
     candidate_skills = normalize_skill_list(candidate_skills or parsed.get("key_skills", []))
     direct_skill_list = any(required.lower() == skill.lower() for skill in candidate_skills)
     equivalent_skill_list = equivalent or any(equivalent_skill(skill, required) for skill in candidate_skills)
+
+    canonical_evidence = capability_evidence(required, parsed, resume_text, role_family)
+    if canonical_evidence:
+        return canonical_evidence
 
     company_texts = []
     work_texts = []
@@ -1540,36 +1546,33 @@ def _frontend_experience_fit(parsed, jd_profile):
         score = 94
     elif relevant <= 4.5:
         label = "slightly_over_range"
-        score = 84
+        score = 94
         overqualified = True
     elif relevant <= 6:
         label = "overqualified_review"
-        score = 70
+        score = 94
         overqualified = True
     elif relevant <= 8:
         label = "senior_overqualified"
-        score = 58
+        score = 94
         overqualified = True
         strong_overqualified = True
     else:
         label = "senior_overqualified"
-        score = 48
+        score = 94
         overqualified = True
         strong_overqualified = True
 
     if jd_max <= 3 and total >= 10:
         label = "senior_overqualified"
-        score = min(score, 45)
         overqualified = True
         strong_overqualified = True
     elif jd_max <= 3 and total >= 8:
         label = "senior_overqualified"
-        score = min(score, 55)
         overqualified = True
         strong_overqualified = True
     elif jd_max <= 3 and total >= 6:
         label = "overqualified_review"
-        score = min(score, 65)
         overqualified = True
 
     return {
@@ -1663,10 +1666,10 @@ def _full_stack_experience_fit(parsed, jd_profile):
         overqualified = True
         if relevant <= jd_max + 2:
             label = "experienced_above_range"
-            score = 82
+            score = 92
         else:
             label = "senior_overqualified"
-            score = 70 if relevant < 8 else 62
+            score = 92
     else:
         label = "best_fit"
         score = 92 if relevant else 65
@@ -1712,15 +1715,15 @@ def _backend_experience_fit(parsed, jd_profile):
         score = 92
     elif relevant <= 5:
         label = "strong_slightly_senior"
-        score = 82
+        score = 92
         overqualified = True
     elif relevant <= 8:
         label = "overqualified_review"
-        score = 68
+        score = 92
         overqualified = True
     else:
         label = "senior_overqualified"
-        score = 58
+        score = 92
         overqualified = True
     return {
         "score": round(score, 2),
@@ -1820,11 +1823,10 @@ def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, 
     good_to_have_score = (good_to_have_result.get("score") or 0) * 100
 
     final_score = (
-        core_skill_percent * 0.40
-        + experience_fit["score"] * 0.20
-        + project_work_strength * 0.15
-        + location_fit["score"] * 0.10
-        + salary_fit["score"] * 0.10
+        core_skill_percent * 0.50
+        + experience_fit["score"] * 0.15
+        + project_work_strength * 0.20
+        + role_relevance * 0.10
         + good_to_have_score * 0.05
     )
 
@@ -1876,6 +1878,7 @@ def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, 
         _append_unique(risk_flags, ["parser_quality"])
         _append_unique(recruiter_flags, ["parser_manual_review"])
 
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
     for cap in caps:
         final_score = min(final_score, cap["cap"])
 
@@ -1922,6 +1925,7 @@ def _score_candidate_frontend(parsed, jd_text, jd_skills, jd_data, resume_text, 
 
     return {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "strong_match" if final_score >= 84 else "good_match" if final_score >= 68 else "review" if final_score >= 45 else "low_match",
         "skill_score": round(core_skill_percent * 0.40, 2),
@@ -2094,12 +2098,11 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         seniority_score = 0
         good_to_have_score = 0
         final_score = (
-            core_skill_percent * 0.35
-            + project_work_strength * 0.25
+            core_skill_percent * 0.38
+            + project_work_strength * 0.27
             + experience_fit["score"] * 0.15
             + role_relevance * 0.15
             + deployment_score * 0.05
-            + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.05
         )
 
     if len(missing_core_groups) >= 3:
@@ -2117,6 +2120,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
         caps.append({"cap": 58, "reason": "Parser quality requires manual review."})
         _append_unique(risk_flags, ["parser_quality"])
         _append_unique(recruiter_flags, ["parser_manual_review"])
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
     for cap in caps:
         final_score = min(final_score, cap["cap"])
 
@@ -2152,6 +2156,7 @@ def _score_candidate_full_stack(parsed, jd_text, jd_skills, jd_data, resume_text
 
     return {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "strong_match" if final_score >= 84 else "good_match" if final_score >= 68 else "review" if final_score >= 45 else "low_match",
         "skill_score": round(core_skill_percent * 0.35, 2),
@@ -2285,11 +2290,10 @@ def _score_candidate_backend(parsed, jd_text, jd_skills, jd_data, resume_text, j
     technical_match_score = round(core_skill_percent * 0.72 + project_work_strength * 0.28, 2)
     experience_fit_score = experience_fit["score"]
     final_score = (
-        core_skill_percent * 0.42
-        + project_work_strength * 0.23
+        core_skill_percent * 0.46
+        + project_work_strength * 0.27
         + experience_fit_score * 0.17
         + role_relevance * 0.10
-        + _safe_float(parsed.get("parser_quality_score"), parsed.get("resume_quality_score") or 70) * 0.08
     )
 
     risk_flags = []
@@ -2332,6 +2336,7 @@ def _score_candidate_backend(parsed, jd_text, jd_skills, jd_data, resume_text, j
         _append_unique(risk_flags, ["parser_quality"])
         _append_unique(recruiter_flags, ["parser_manual_review"])
 
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
     for cap in caps:
         final_score = min(final_score, cap["cap"])
 
@@ -2377,6 +2382,7 @@ def _score_candidate_backend(parsed, jd_text, jd_skills, jd_data, resume_text, j
 
     return {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "strong_match" if final_score >= 84 else "good_match" if final_score >= 68 else "review" if final_score >= 45 else "low_match",
         "skill_score": round(core_skill_percent * 0.42, 2),
@@ -2914,8 +2920,8 @@ def _applied_ml_experience_fit(parsed, jd_profile):
     if relevant <= max_years:
         return {"score": 100, "label": "ideal_4_6_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
     if relevant <= 8:
-        return {"score": 78, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
-    return {"score": 58, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
+        return {"score": 100, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 100, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
 
 
 def _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile):
@@ -2928,6 +2934,7 @@ def _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text
     weighted_groups = sum(group_results[group]["score"] * weight for group, weight in APPLIED_ML_GROUP_WEIGHTS.items())
     experience_fit = _applied_ml_experience_fit(parsed, jd_profile)
     final_score = weighted_groups + experience_fit["score"] * 0.05
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
 
     mandatory_groups = ["cv_ocr_document_ai", "llm_nlp_vlm_multimodal", "production_ml_mlops"]
     strong_mandatory = [group for group in mandatory_groups if group_results[group]["strong"]]
@@ -3033,6 +3040,7 @@ def _score_candidate_applied_ml(parsed, jd_text, jd_skills, jd_data, resume_text
 
     result = {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "strong_match" if final_score >= 80 else "good_match" if final_score >= 70 else "review" if final_score >= 50 else "low_match",
         "skill_score": round(weighted_groups, 2),
@@ -3199,8 +3207,8 @@ def _product_architect_experience_fit(parsed, jd_profile):
     if relevant <= max_years:
         return {"score": 100, "label": "ideal_8_10_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
     if relevant <= max_years + 2:
-        return {"score": 82, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
-    return {"score": 58, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
+        return {"score": 100, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 100, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
 
 
 def _product_architect_wrong_role_flags(sections, group_results):
@@ -3229,6 +3237,7 @@ def _score_candidate_product_architect(parsed, jd_text, jd_skills, jd_data, resu
     weighted_groups = sum(group_results[group]["score"] * weight for group, weight in PRODUCT_ARCHITECT_GROUP_WEIGHTS.items())
     experience_fit = _product_architect_experience_fit(parsed, jd_profile)
     final_score = weighted_groups + experience_fit["score"] * 0.05
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
 
     mandatory_groups = [
         "architecture_system_design",
@@ -3365,6 +3374,7 @@ def _score_candidate_product_architect(parsed, jd_text, jd_skills, jd_data, resu
 
     result = {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "strong_match" if final_score >= 82 else "good_match" if final_score >= 72 else "review" if final_score >= 50 else "low_match",
         "skill_score": round(weighted_groups, 2),
@@ -3533,8 +3543,8 @@ def _m365_experience_fit(parsed, jd_profile):
     if relevant <= max_years:
         return {"score": 100, "label": "ideal_8_10_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
     if relevant <= max_years + 2:
-        return {"score": 82, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
-    return {"score": 58, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
+        return {"score": 100, "label": "senior_review", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 100, "label": "over_experienced", "relevant_years": relevant, "total_years": total, "fit": "over"}
 
 
 def _m365_wrong_role_flags(sections, group_results):
@@ -3572,6 +3582,7 @@ def _score_candidate_m365_migration(parsed, jd_text, jd_skills, jd_data, resume_
     weighted_groups = sum(group_results[group]["score"] * weight for group, weight in M365_MIGRATION_GROUP_WEIGHTS.items())
     experience_fit = _m365_experience_fit(parsed, jd_profile)
     final_score = weighted_groups + experience_fit["score"] * 0.05
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
 
     mandatory_groups = [
         "m365_migration",
@@ -3706,6 +3717,7 @@ def _score_candidate_m365_migration(parsed, jd_text, jd_skills, jd_data, resume_
 
     result = {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "strong_match" if final_score >= 82 else "good_match" if final_score >= 72 else "review" if final_score >= 50 else "low_match",
         "skill_score": round(weighted_groups, 2),
@@ -3905,8 +3917,8 @@ def _aml_experience_fit(parsed, jd_profile, sections):
     if relevant <= max_years:
         return {"score": 100, "label": "ideal_5_7_years", "relevant_years": relevant, "total_years": total, "fit": "within"}
     if relevant <= 9:
-        return {"score": 84, "label": "slightly_over_5_7_years", "relevant_years": relevant, "total_years": total, "fit": "over"}
-    return {"score": 70, "label": "over_experienced_for_l2", "relevant_years": relevant, "total_years": total, "fit": "over"}
+        return {"score": 100, "label": "slightly_over_5_7_years", "relevant_years": relevant, "total_years": total, "fit": "over"}
+    return {"score": 100, "label": "over_experienced_for_l2", "relevant_years": relevant, "total_years": total, "fit": "over"}
 
 
 def _aml_wrong_role_flags(sections, group_results):
@@ -3997,6 +4009,7 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
     weighted_groups = sum(group_results[group]["score"] * weight for group, weight in AML_TM_GROUP_WEIGHTS.items())
     experience_fit = _aml_experience_fit(parsed, jd_profile, sections)
     final_score = weighted_groups + experience_fit["score"] * 0.25
+    final_score_before_caps = round(max(0, min(100, final_score)), 2)
 
     mandatory_groups = ["transaction_monitoring", "aml_investigations", "case_management", "sar_str"]
     strong_mandatory = [group for group in mandatory_groups if group_results[group]["strong"]]
@@ -4228,6 +4241,7 @@ def _score_candidate_aml_transaction_monitoring(parsed, jd_text, jd_skills, jd_d
 
     result = {
         "final_score": final_score,
+        "final_score_before_caps": final_score_before_caps,
         "rank_score": rank_score,
         "fit_band": "excellent_match" if final_score >= 90 else "strong_match" if final_score >= 80 else "good_review" if final_score >= 70 else "partial_match" if final_score >= 60 else "low_match",
         "skill_score": round(
@@ -4470,15 +4484,8 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         experience_fit_percent = min(100, round((relevant_years / min_years) * 100, 2))
     else:
         experience_fit_percent = min(100, round((relevant_years / 2) * 100, 2)) if relevant_years else 35
-    if max_years and total_years > max_years + 3 and relevant_years > max_years:
-        experience_fit_percent = max(35, experience_fit_percent - min(30, (total_years - max_years) * 4))
     over_target_years = max(0, total_years - max_years) if max_years else 0
     overqualified_penalty = 0
-    if max_years and over_target_years > 1:
-        comparison_years = relevant_years if relevant_years > 0 else total_years
-        if comparison_years > max_years:
-            overqualified_penalty = min(18, round((over_target_years - 1) * 1.6, 2))
-            experience_fit_percent = max(25, experience_fit_percent - overqualified_penalty)
 
     role_relevance = _safe_float(parsed.get("role_relevance_score"))
     evidence_strength = _project_work_evidence_strength(
@@ -4568,7 +4575,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             final_score += uplift
             applied_boosts.append({"boost": uplift, "reason": "Direct QA professional evidence covers most core groups despite missing optional tool keywords."})
         if alignment == "direct" and mandatory_coverage >= 60 and professional_group_count >= 3:
-            boost = 7 if seniority_fit != "over" else 4
+            boost = 7
             final_score += boost
             applied_boosts.append({"boost": boost, "reason": "Direct QA title with professional evidence across core QA groups."})
         if alignment == "direct" and min_years and relevant_years >= min_years and professional_group_count >= 2:
@@ -4596,7 +4603,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             final_score += uplift
             applied_boosts.append({"boost": uplift, "reason": "Direct Business Analyst role evidence covers core BA responsibilities."})
         if direct_ba_title and critical_count >= 3:
-            boost = 7 if seniority_fit != "over" else 4
+            boost = 7
             final_score += boost
             applied_boosts.append({"boost": boost, "reason": "Direct Business Analyst title with requirements/stakeholder evidence."})
         elif alignment in {"adjacent", "transferable"} and critical_count >= 3 and mandatory_coverage >= 55:
@@ -4982,7 +4989,8 @@ def _contains_skill_text(skill, text):
 
 def score_candidate(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile=None):
     if jd_profile:
-        return _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        result = _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_text, jd_profile)
+        return apply_global_scoring_policy(result, jd_profile, parsed)
 
     candidate_skills = normalize_skill_list(parsed.get("key_skills", []))
     required_skills = expand_skill_requirements(jd_skills)
@@ -5229,9 +5237,9 @@ def calculate_rank_score(
         + min(100, evidence_points * 7) * 0.08
         + confidence_score * 0.10
     )
-    rank_score -= seniority_gap * 2.5
+    rank_score -= min(0.5, seniority_gap * 0.1)
     rank_score -= min(18, missing_core_penalty * 0.55)
-    rank_score -= min(14, overqualified_penalty * 0.75)
+    rank_score -= min(0.5, overqualified_penalty * 0.05)
     return max(0, min(100, round(rank_score, 2)))
 
 

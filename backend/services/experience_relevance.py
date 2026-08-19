@@ -912,11 +912,11 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
 
         final_block_score = round(
             role_title_score * 0.25
-            + skill_evidence_score * 0.30
-            + responsibility_match_score * 0.18
-            + domain_match_score * 0.12
-            + seniority_signal_score * 0.08
-            + recency_score * 0.07,
+            + skill_evidence_score * 0.31
+            + responsibility_match_score * 0.25
+            + domain_match_score * 0.165
+            + seniority_signal_score * 0.005
+            + recency_score * 0.02,
             2,
         )
         if role_title_score >= 75 and domain_match_score >= 35:

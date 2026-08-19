@@ -36,6 +36,8 @@ def calculate_seniority_penalty(jd_role, resume_role):
     # Resume lower level than JD → penalty
     if resume_score < jd_score:
         difference = jd_score - resume_score
-        return difference * 3  # 3 points per level difference
+        # Seniority is recruiter context, not a proxy for demonstrated
+        # capability.  Keep the legacy path effectively score-neutral.
+        return min(0.5, difference * 0.1)
 
     return 0

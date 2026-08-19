@@ -22,7 +22,7 @@ def test_jd_profile_extracts_critical_must_have():
     assert profile["scoring_config_key"] == "data_analytics"
 
 
-def test_missing_critical_must_have_caps_score_and_blocks_strong_match():
+def test_missing_critical_must_have_is_proportional_and_blocks_strong_match_without_cap():
     jd_text = """
     Data Analyst
     Must have SQL, Power BI, and Advanced Excel.
@@ -55,7 +55,8 @@ def test_missing_critical_must_have_caps_score_and_blocks_strong_match():
     result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Data Analyst", "min_experience_years": 2}, jd_text, jd_profile=profile)
 
     assert "Power BI" in result["missing_critical_skills"]
-    assert result["final_score"] <= 65
+    assert result["final_score"] == result["final_score_before_caps"]
+    assert not result["score_caps_applied"]
     assert result["shortlist_decision"] != "Strong Match"
     assert "critical_skill_gap" in result["risk_flags"]
 
@@ -83,7 +84,8 @@ def test_low_parser_confidence_becomes_needs_review():
 
     result = score_candidate(parsed, jd_text, profile["must_have_skills"], {"role": "Backend Developer", "min_experience_years": 1}, jd_text, jd_profile=profile)
 
-    assert result["final_score"] <= 58
+    assert result["final_score"] > 58
+    assert result["technical_fit_score"] == result["final_score"]
     assert result["shortlist_decision"] == "Needs Review"
     assert "parser_quality" in result["risk_flags"]
 

@@ -401,18 +401,20 @@ def analyze_resume_for_job(text, jd_text, jd_skills, jd_data):
     parsed.update(score_data)
     quality_report = apply_parser_quality_gate(parsed, exp_data, jd_data, text)
     apply_safe_primary_fields(parsed)
-    if quality_report.get("parser_quality_action") == "manual_review_required" and parsed.get("final_score", 0) > 58:
-        parsed["final_score"] = 58
-        parsed["rank_score"] = min(parsed.get("rank_score") or 58, 58)
-        parsed["fit_band"] = "review"
-        score_data["final_score"] = parsed["final_score"]
-        score_data["rank_score"] = parsed["rank_score"]
-        score_data["fit_band"] = parsed["fit_band"]
-        caps = score_data.setdefault("score_caps_applied", [])
-        caps.append({"cap": 58, "reason": "Parser quality requires manual review."})
+    if quality_report.get("parser_quality_action") != "auto_rank_ok":
+        # Confidence controls auto-shortlisting, never the technical fit score.
         flags = score_data.setdefault("recruiter_flags", [])
-        if "parser_manual_review" not in flags:
-            flags.append("parser_manual_review")
+        flag = "parser_manual_review" if quality_report.get("parser_quality_action") == "manual_review_required" else "parser_review_required"
+        if flag not in flags:
+            flags.append(flag)
+        risks = score_data.setdefault("risk_flags", [])
+        if "parser_quality" not in risks:
+            risks.append("parser_quality")
+        score_data.setdefault("review_findings", []).append({
+            "category": "parser_confidence",
+            "reason": "Parser quality requires manual evidence verification.",
+            "score_effect": 0,
+        })
     score_data.update({
         "final_score": parsed.get("final_score"),
         "rank_score": parsed.get("rank_score"),

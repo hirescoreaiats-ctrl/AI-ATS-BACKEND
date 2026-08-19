@@ -176,13 +176,10 @@ def _has_strong_group_evidence(score_data: dict) -> bool:
 
 
 def _decision_for(score_data: dict, missing_critical: list[str]) -> tuple[str, str, str]:
-    final_score = _safe_float(score_data.get("final_score"))
+    final_score = _safe_float(score_data.get("technical_fit_score") or score_data.get("final_score"))
     confidence = _safe_float(score_data.get("confidence_score"), 70)
-    caps = score_data.get("score_caps_applied") or []
     risk_flags = {str(item).lower() for item in (score_data.get("risk_flags") or [])}
     recruiter_flags = {str(item).lower() for item in (score_data.get("recruiter_flags") or [])}
-    cap_text = " ".join(str(item.get("reason") or "") for item in caps if isinstance(item, dict)).lower()
-    severe_cap = bool(re.search(r"missing critical|wrong role|parser quality|below 1 year|non-direct|mismatch|cannot exceed", cap_text))
     parser_low = "parser_quality" in risk_flags or "parser_manual_review" in recruiter_flags
     evidence_strength = _safe_float(
         score_data.get("project_strength_score")
@@ -191,14 +188,14 @@ def _decision_for(score_data: dict, missing_critical: list[str]) -> tuple[str, s
     )
 
     if parser_low or confidence < 45:
-        return "Needs Review", "Parser confidence is low; recruiter validation is required.", "in_review"
+        return "Needs Review", "Technical fit is shown separately; parser evidence requires recruiter validation.", "in_review"
     if final_score < 55:
         return "Reject", "Score is below the recruiter fit threshold for this JD.", "rejected"
     if missing_critical and final_score < 70:
         return "Maybe", "Candidate is missing critical must-have evidence; consider only if transferable background matters.", "in_review"
-    if final_score >= 85 and not missing_critical and not severe_cap and evidence_strength >= 55 and confidence >= 65:
+    if final_score >= 85 and not missing_critical and evidence_strength >= 55 and confidence >= 65:
         return "Strong Match", "High JD fit with strong evidence and no severe recruiter caps.", "shortlisted"
-    if final_score >= 70 and not severe_cap:
+    if final_score >= 70:
         return "Good Match", "Most JD requirements are covered with acceptable confidence.", "shortlisted"
     if final_score >= 55:
         return "Maybe", "Partial or transferable fit; recruiter review is recommended.", "in_review"
@@ -232,34 +229,32 @@ def enrich_recruiter_decision(score_data: dict, jd_profile: dict | None = None, 
     missing_core_groups = score_data.get("missing_core_skill_groups") or []
 
     if missing_critical and role_family not in SPECIALIZED_ROLE_FAMILIES:
-        transferable_ok = evidence_strength >= 80 and relevant_years >= max(min_years or 0, 1)
-        _cap_score(
-            score_data,
-            75 if transferable_ok else 65,
-            "Missing critical must-have skill evidence: " + ", ".join(missing_critical[:4]),
-            "missing_critical_must_have",
-            "critical_skill_gap",
-        )
+        _append_unique(score_data.setdefault("recruiter_flags", []), ["missing_critical_must_have"])
+        _append_unique(score_data.setdefault("risk_flags", []), ["critical_skill_gap"])
     if role_alignment in {"mismatch", "weak"}:
-        _cap_score(score_data, 55, "Candidate role family does not align with the JD.", "wrong_role_family", "role_family_mismatch")
+        _append_unique(score_data.setdefault("recruiter_flags", []), ["wrong_role_family"])
+        _append_unique(score_data.setdefault("risk_flags", []), ["role_family_mismatch"])
     elif role_alignment == "transferable":
         if mandatory_coverage < 75 or core_coverage < 65:
-            _cap_score(score_data, 68, "Candidate fit is transferable rather than a direct role-family match.", "transferable_role_fit", "role_family_transferable")
+            _append_unique(score_data.setdefault("recruiter_flags", []), ["transferable_role_fit"])
+            _append_unique(score_data.setdefault("risk_flags", []), ["role_family_transferable"])
     if min_years and relevant_years < min_years and role_family not in SPECIALIZED_ROLE_FAMILIES:
-        limit = 60 if relevant_years < max(1, min_years * 0.5) else 72
-        _cap_score(score_data, limit, "Relevant experience is below the JD minimum.", "below_jd_minimum_experience", "below_jd_experience_range")
+        _append_unique(score_data.setdefault("recruiter_flags", []), ["below_jd_minimum_experience"])
+        _append_unique(score_data.setdefault("risk_flags", []), ["below_jd_experience_range"])
     if parser_action == "manual_review_required" or confidence < 45:
-        _cap_score(score_data, 58, "Parser confidence is low; score cannot be trusted for auto-shortlist.", "parser_manual_review", "parser_quality")
+        _append_unique(score_data.setdefault("recruiter_flags", []), ["parser_manual_review"])
+        _append_unique(score_data.setdefault("risk_flags", []), ["parser_quality"])
     if evidence_strength < 35 and not _has_strong_group_evidence(score_data) and _safe_float(score_data.get("final_score")) >= 70:
-        _cap_score(score_data, 78, "No strong project/work evidence was found for the core JD skills.", "weak_core_work_evidence", "evidence_gap")
+        _append_unique(score_data.setdefault("recruiter_flags", []), ["weak_core_work_evidence"])
+        _append_unique(score_data.setdefault("risk_flags", []), ["evidence_gap"])
     if len(missing_core_groups) >= 2 and role_family not in SPECIALIZED_ROLE_FAMILIES:
-        _cap_score(score_data, min(65, _safe_float(score_data.get("final_score"), 65)), "Multiple JD core skill groups are missing.", "missing_core_skill_groups", "core_group_gap")
+        _append_unique(score_data.setdefault("recruiter_flags", []), ["missing_core_skill_groups"])
+        _append_unique(score_data.setdefault("risk_flags", []), ["core_group_gap"])
 
     decision, reason, recommendation = _decision_for(score_data, missing_critical)
     score_data["shortlist_decision"] = decision
     score_data["decision_reason"] = reason
-    if not score_data.get("recommendation"):
-        score_data["recommendation"] = recommendation
+    score_data["recommendation"] = recommendation
     score_data["fit_band"] = {
         "Strong Match": "strong_match",
         "Good Match": "good_match",
@@ -297,6 +292,14 @@ def enrich_recruiter_decision(score_data: dict, jd_profile: dict | None = None, 
     score_data["concerns"] = concerns[:6]
     score_data["confidence"] = confidence
     score_data["recruiter_explanation"] = reason
+    score_data["canonical_decision"] = {
+        "decision": decision,
+        "recommendation": recommendation,
+        "fit_band": score_data.get("fit_band"),
+        "reason": reason,
+    }
+    score_data["technical_fit_score"] = _safe_float(score_data.get("technical_fit_score") or score_data.get("final_score"))
+    score_data["eligibility_status"] = "needs_review" if parser_action == "manual_review_required" else "not_evaluated"
     score_data["score_breakdown"] = score_data.get("scoring_breakdown") or {}
 
     breakdown = score_data.get("scoring_breakdown")

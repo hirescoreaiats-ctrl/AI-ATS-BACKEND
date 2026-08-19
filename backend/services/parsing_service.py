@@ -1,4 +1,7 @@
 import re
+from difflib import SequenceMatcher
+
+from backend.experience_engine import looks_like_technical_entity_name
 
 from backend.ai_parser import parse_resume
 from backend.extractor import extract_name
@@ -48,6 +51,56 @@ def _normalize_parser_text(text):
     }
     for pattern, replacement in ocr_replacements.items():
         text = re.sub(pattern, replacement, text, flags=re.I)
+    # Extensible Portuguese technical-resume normalization. Original text is
+    # retained by the canonical profile; this normalized copy is only used to
+    # identify sections, dates, roles, and evidence consistently.
+    multilingual_replacements = {
+        r"\bExperi[eê]ncia\s+Profissional\b": "Professional Experience",
+        r"\bHabilidades\s+Profissionais\b": "Technical Skills",
+        r"\bEduca[cç][aã]o\b": "Education",
+        r"\bSobre\s+Mim\b": "About Me",
+        r"\bAtual\b": "Present",
+        r"\bJan(?:eiro)?\b": "Jan",
+        r"\bFev(?:ereiro)?\b": "Feb",
+        r"\bMar(?:[cç]o)?\b": "Mar",
+        r"\bAbr(?:il)?\b": "Apr",
+        r"\bMai(?:o)?\b": "May",
+        r"\bJun(?:ho)?\b": "Jun",
+        r"\bJul(?:ho)?\b": "Jul",
+        r"\bAgo(?:sto)?\b": "Aug",
+        r"\bSet(?:embro)?\b": "Sep",
+        r"\bOut(?:ubro)?\b": "Oct",
+        r"\bNov(?:embro)?\b": "Nov",
+        r"\bDez(?:embro)?\b": "Dec",
+        r"\bEngenheiro\s+de\s+Sistemas?\s+Embarcados?\b": "Embedded Systems Engineer",
+        r"\bEngenheiro\s+de\s+Hardware\s+e\s+Firmware\b": "Hardware and Firmware Engineer",
+        r"\bEngenheiro\s+de\s+Hardware\b": "Hardware Engineer",
+        r"\bDesenvolvedor\s+de\s+Hardware\s+e\s*Firmware\b": "Hardware and Firmware Developer",
+        r"\bInstrutor\s+de\s+Forma[cç][aã]o\s+Profissional\s*-?\s*Eletr[oô]nica\b": "Electronics Instructor",
+        r"\bInicia[cç][aã]o\s+Cient[ií]fica\b": "Research Assistant",
+        r"\bsistemas?\s+embarcados?\b": "embedded systems",
+        r"\bmicrocontroladores?\b": "microcontrollers",
+        r"\bdesenvolvimento\s+de\s+esquem[aá]tico\b": "schematic development",
+        r"\bplacas?\s+de\s+circuito\s+impresso\b": "printed circuit boards",
+        r"\beletr[oô]nica\b": "electronics",
+        r"\bautoma[cç][aã]o\b": "automation",
+        r"\brmware\b": "firmware",
+    }
+    for pattern, replacement in multilingual_replacements.items():
+        text = re.sub(pattern, replacement, text, flags=re.I)
+    text = re.sub(
+        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s*,\s*(\d{2,4})\b",
+        r"\1 \2",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"^(?P<role>(?:Embedded\s+Systems|Hardware(?:\s+and\s+Firmware)?)\s+(?:Engineer|Developer)|"
+        r"Electronics\s+Instructor|Research\s+Assistant)\s+em\s+(?P<company>.+)$",
+        r"\g<role> at \g<company>",
+        text,
+        flags=re.I | re.M,
+    )
     text = re.sub(r"@\s*gmail\s*\.\s*com\b", "@gmail.com", text, flags=re.I)
     text = re.sub(r"\s+(?=(?:EDUCATION|WORK EXPERIENCE|PROJECTS|KEY SKILLS|TECHNICAL SKILLS|CERTIFICATIONS|ACHIEVEMENTS)\b)", "\n", text)
     text = re.sub(r"\b(EDUCATION|WORK EXPERIENCE|PROJECTS|KEY SKILLS|TECHNICAL SKILLS|CERTIFICATIONS|ACHIEVEMENTS)\s+", r"\1\n", text)
@@ -89,7 +142,7 @@ def _looks_like_section_or_role_name(value):
     if len(text) > 70 or len(text.split()) > 5:
         return True
     return bool(re.search(
-        r"\b(data analyst|data analytics experience|business analyst|bi analyst|profile|summary|about me|objective|career objective|"
+        r"\b(data analyst|data analytics experience|business analyst|bi analyst|profile|summary|about me|sobre mim|objective|career objective|"
         r"about|github|github\.com|linkedin|portfolio|coursework|select coursework|main developer|skills|technical skills|"
         r"education|projects?|experience|contact|email|e-mail|resume|curriculum vitae|cv|preferred full name|"
         r"job title|company name|department|hiring manager|application form|position applied|developer\s+at|engineer\s+at|"
@@ -499,7 +552,7 @@ def _extract_sections(text):
 
 def _infer_designation(text):
     role_patterns = [
-        r"\b(?:Senior|Junior|Lead|Principal)?\s*(?:Backend|Frontend|Full Stack|Software|Salesforce|CRM|Data|Machine Learning|AI|DevOps|Cloud|Customer Support|Administrative)?\s*(?:Engineer|Developer|Analyst|Scientist|Architect|Manager|Coordinator|Trainer|Associate|Assistant|Representative|Rep|Instructor|Administrator|Consultant|Specialist)\b",
+        r"\b(?:Senior|Junior|Lead|Principal)?\s*(?:Backend|Frontend|Full Stack|Software|Salesforce|CRM|Data|Machine Learning|AI|DevOps|Cloud|Customer Support|Administrative|Embedded Systems|Hardware and Firmware|Hardware|Electronics)?\s*(?:Engineer|Developer|Analyst|Scientist|Architect|Manager|Coordinator|Trainer|Associate|Assistant|Representative|Rep|Instructor|Administrator|Consultant|Specialist)\b",
         r"\b(?:Product|Project|Program)\s+Manager\b",
     ]
 
@@ -682,6 +735,26 @@ def _looks_like_bad_company(value):
     compact_text = re.sub(r"[^a-z]", "", text.lower())
     if not text:
         return True
+    if text.endswith("(") or re.match(r"^(?:and|or|using|with|for)\b", text, re.I):
+        return True
+    if re.fullmatch(
+        r"(?:object[-\s]?oriented design|a[-\s]?spice|tricore|autosar(?:\s+swc)?|"
+        r"silicon valley|poland|pl|and|lua)",
+        text,
+        re.I,
+    ):
+        return True
+    if re.match(
+        r"^(?:fixing|implementation|implementing|creating|maintaining|developing|writing|"
+        r"simulation|unit tests?|being responsible|davinci\b|autosar\b)",
+        text,
+        re.I,
+    ):
+        return True
+    if looks_like_technical_entity_name(text):
+        return True
+    if len(text.split()) <= 5 and re.search(r"\b(?:systems|labs)\b$", text, re.I):
+        return False
     if re.fullmatch(
         r"(us|usa|u\.s\.|u\.s\.a\.|wa|net|js|sms|api|api\s*&|java|react|node\.?js|express\.?js|"
         r"html\s+css|css|website|machine\s+learning|lead|&\s*team\s+lead|uttar\s+pradesh|"
@@ -1195,6 +1268,7 @@ def _infer_experience_v2(text, sections):
 
     def clean_company(value):
         value = _compact_spaced_letters(value or "")
+        value = re.sub(r"^(?:at|with|for)\s+", "", value, flags=re.I)
         replacements = {
             "VITALITYLIVING": "Vitality Living",
             "HABERCORPORATION": "Haber Corporation",
@@ -1312,6 +1386,16 @@ def _infer_experience_v2(text, sections):
     def role_company_from_multiline_date(index, before_date):
         previous_lines = lines[max(0, index - 5):index]
         previous = lines[index - 1] if index > 0 else ""
+        role_at_company = re.match(
+            r"(?P<role>.+?\b(?:Engineer|Developer|Instructor|Assistant|Consultant|Analyst|Manager))\s+at\s+(?P<company>.+)$",
+            previous,
+            re.I,
+        )
+        if role_at_company:
+            role = _infer_designation(role_at_company.group("role")) or normalize_designation(role_at_company.group("role"))
+            company = strip_location_suffix(role_at_company.group("company"))
+            if role and looks_like_company(company):
+                return role, company
         role = _infer_designation(before_date) or _infer_designation(previous)
         if not role:
             return "", ""
@@ -1725,11 +1809,203 @@ def _recover_pipe_experience_records(text):
     return records
 
 
+def _recover_chronological_work_records(text):
+    """Recover common chronological CV layouts without relying on job titles.
+
+    Supported layouts include company-date/title, title-company/date,
+    parenthesized date ranges, compact year-role-company lines, and seasonal
+    internships. Responsibilities are segmented at the next chronological
+    header so evidence stays attached to the correct role.
+    """
+    normalized = _normalize_parser_text(text)
+    records = []
+    month = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{2,4}"
+    year = r"(?:19|20)\d{2}"
+    season = r"(?:Summer|Winter|Spring|Autumn|Fall)\s*'?\s*\d{2,4}"
+    point = rf"(?:{month}|{year}|{season})"
+    end_point = rf"(?:Present|Current|Till\s+Date|{point})"
+    range_re = re.compile(rf"(?P<start>{point})\s*(?:-|to|till)\s*(?P<end>{end_point})", re.I)
+    raw_lines = [_compact_spaced_letters(line.strip()) for line in normalized.splitlines() if line.strip()]
+    lines = []
+    index = 0
+    while index < len(raw_lines):
+        line = raw_lines[index]
+        # PDF columns commonly wrap a role/company header immediately before
+        # or inside its parenthesized date range. Rejoin only chronology-shaped
+        # lines so ordinary responsibility bullets remain untouched.
+        if index + 1 < len(raw_lines) and not range_re.search(line):
+            candidate = f"{line} {raw_lines[index + 1]}"
+            if range_re.search(candidate) and re.search(
+                r"\b(?:engineer|developer|consultant|contractor|scientist|analyst|intern|assistant|manager|lead|instructor)\b",
+                line,
+                re.I,
+            ):
+                lines.append(candidate)
+                index += 2
+                continue
+        lines.append(line)
+        index += 1
+    compact_re = re.compile(
+        rf"^(?P<start>{year})\s*-\s*(?P<end>present|current|{year})\s*-\s*"
+        r"(?P<role>[^-]{3,90})\s*-\s*(?P<company>[^-]{2,100})$",
+        re.I,
+    )
+    parenthesized_re = re.compile(
+        rf"^(?P<role>[^()|]{{3,100}}?)\s+-\s+(?P<company>[^()]{{2,120}}?)\s*"
+        rf"\((?P<start>{point})\s*(?:-|to)\s*(?P<end>{end_point})\)",
+        re.I,
+    )
+    season_only_re = re.compile(rf"^(?P<first>{season})(?:\s*,\s*(?P<second>{season}))?$", re.I)
+
+    section_stop_re = re.compile(
+        r"^(?:education|skills?|technical skills?|expertise|selected publications?|certifications?|"
+        r"projects? and teams|contact|languages?)$",
+        re.I,
+    )
+
+    def role_like(value):
+        value = str(value or "").strip(" .,-|")
+        return bool(
+            _infer_designation(value)
+            or re.search(
+                r"\b(?:firmware|embedded|hardware|software|systems?|consultant|contractor|director|"
+                r"engineer|developer|scientist|biologist|analyst|internship|intern|assistant|manager|lead|instructor)\b",
+                value,
+                re.I,
+            )
+        )
+
+    def company_like(value):
+        value = re.sub(r"^(?:at|with|for)\s+", "", str(value or "").strip(" .,-|"), flags=re.I)
+        return bool(value and len(value) <= 100 and not _looks_like_bad_company(value) and not role_like(value))
+
+    def clean_recovered_company(value):
+        value = re.sub(r"^(?:at|with|for)\s+", "", str(value or "").strip(" .,-|"), flags=re.I)
+        location_tail = re.match(
+            r"^(?P<left>.+?),\s*(?:[A-Z]{2,3},?\s*)?(?:USA|US|Canada|Taiwan|India|UK|Poland)$",
+            value,
+            re.I,
+        )
+        if location_tail:
+            left = location_tail.group("left").strip()
+            anchor = re.match(
+                r"^(?P<company>.+?\b(?:Technology|Technologies|Healthcare|Systems|Solutions|Networks|Labs|Group))\b",
+                left,
+                re.I,
+            )
+            if anchor:
+                value = anchor.group("company")
+            else:
+                words = left.split()
+                value = " ".join(words[:-1]) if len(words) > 1 else left
+        value = re.sub(r"\s+(?:USA|Canada|Taiwan|India|UK|Poland)$", "", value, flags=re.I).strip(" .,-|")
+        return value
+
+    def split_role_company(value):
+        value = str(value or "").strip(" .,-|")
+        at_match = re.match(r"(?P<role>.+?)\s+at\s+(?P<company>.+)$", value, re.I)
+        if at_match and role_like(at_match.group("role")) and company_like(at_match.group("company")):
+            return at_match.group("role").strip(), at_match.group("company").strip()
+        parts = [part.strip(" .,-|") for part in re.split(r"\s+-\s+", value) if part.strip(" .,-|")]
+        if len(parts) >= 2:
+            for cut in range(1, len(parts)):
+                role = " - ".join(parts[:cut])
+                company = " - ".join(parts[cut:])
+                if role_like(role) and company_like(company):
+                    return role, company
+        return "", ""
+
+    def responsibility_text(index):
+        collected = []
+        for offset in range(index + 1, min(len(lines), index + 26)):
+            following = lines[offset]
+            if offset > index + 1 and (
+                compact_re.match(following)
+                or parenthesized_re.match(following)
+                or range_re.search(following)
+                or season_only_re.match(following)
+            ):
+                break
+            if section_stop_re.fullmatch(following.strip(" :-|")):
+                break
+            collected.append(following)
+        return " ".join(collected)[:1800]
+
+    for index, line in enumerate(lines):
+        compact = compact_re.match(line)
+        if compact:
+            role = compact.group("role").strip()
+            company = compact.group("company").strip()
+            if role_like(role) and company_like(company):
+                records.append({
+                    "company_name": company,
+                    "role": normalize_designation(role) or role,
+                    "start_date": compact.group("start"),
+                    "end_date": compact.group("end"),
+                    "description": " ".join([line, responsibility_text(index)])[:1800],
+                })
+            continue
+
+        parenthesized = parenthesized_re.match(line)
+        if parenthesized:
+            company = re.sub(r"\s*,\s*(?:[A-Za-z .]+|[A-Z]{2})$", "", parenthesized.group("company")).strip(" .,-|")
+            role = parenthesized.group("role").strip()
+            if role_like(role) and company_like(company):
+                records.append({
+                    "company_name": company,
+                    "role": normalize_designation(role) or role,
+                    "start_date": parenthesized.group("start"),
+                    "end_date": parenthesized.group("end"),
+                    "description": " ".join([line, responsibility_text(index)])[:1800],
+                })
+            continue
+
+        date_match = range_re.search(line)
+        seasonal = season_only_re.match(line)
+        if not date_match and not seasonal:
+            continue
+
+        start = date_match.group("start") if date_match else seasonal.group("first")
+        end = date_match.group("end") if date_match else (seasonal.group("second") or seasonal.group("first"))
+        before = line[:date_match.start()].strip(" .,-|") if date_match else ""
+        role = ""
+        company = ""
+        if before:
+            role, company = split_role_company(before)
+            if not company and company_like(before):
+                company = before
+            if not role and role_like(before):
+                role = _infer_designation(before) or before
+
+        previous = lines[index - 1] if index > 0 else ""
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        if not company:
+            previous_role, previous_company = split_role_company(previous)
+            if previous_company:
+                role, company = previous_role, previous_company
+            elif company_like(previous):
+                company = previous
+        if not role and role_like(following) and not range_re.search(following):
+            role = _infer_designation(following) or following.strip(" .,-|")
+        if not role and role_like(previous) and not company_like(previous):
+            role = _infer_designation(previous) or previous.strip(" .,-|")
+        if company and role:
+            records.append({
+                "company_name": clean_recovered_company(company),
+                "role": normalize_designation(role) or role,
+                "start_date": start,
+                "end_date": end,
+                "description": " ".join([previous if before else "", line, following, responsibility_text(index)])[:1800],
+            })
+    return records
+
+
 def _clean_experience_records(records):
     best_by_period = {}
 
     def canonical_company(value):
         value = _compact_spaced_letters(str(value or ""))
+        value = re.sub(r"^(?:at|with|for)\s+", "", value, flags=re.I)
         replacements = {
             "VITALITYLIVING": "Vitality Living",
             "HABERCORPORATION": "Haber Corporation",
@@ -1832,6 +2108,14 @@ def _clean_experience_records(records):
             score -= 8
         if re.search(r"\b(analyst|engineer|developer|manager|associate|consultant|executive|intern|assistant)\b", role, re.I):
             score += 2
+        if len(role.split()) > 12:
+            score -= 8
+        if company and re.search(
+            r"\b(?:microcontrollers?|processors?|architectures?|platforms?|interfaces?)\s+" + re.escape(company) + r"\b",
+            description,
+            re.I,
+        ):
+            score -= 10
         return score
 
     for job in records or []:
@@ -1846,7 +2130,26 @@ def _clean_experience_records(records):
             description,
         ]).lower()
 
-        company = canonical_company(job.get("company_name"))
+        raw_company = str(job.get("company_name") or "")
+        business_role_suffix = re.search(
+            r"\s+-\s+((?:New\s+)?Business Development(?:\s*\([^)]*\))?)\s*$",
+            raw_company,
+            re.I,
+        )
+        if business_role_suffix:
+            raw_company = raw_company[:business_role_suffix.start()]
+            if re.fullmatch(r"(?:developer|engineer|analyst|associate)?", str(job.get("role") or ""), re.I):
+                job["role"] = business_role_suffix.group(1)
+        company = canonical_company(raw_company)
+        if looks_like_technical_entity_name(company, description):
+            continue
+        if re.fullmatch(
+            r"(?:senior|junior|lead)\s+(?:hardware|software|firmware|systems?)"
+            r"(?:\s+(?:test|validation|development))?",
+            company,
+            re.I,
+        ):
+            continue
         if re.fullmatch(r"WEIGHT WATCHERS OF MIDDLE AND EAST TN", company, re.I):
             company = "Weight Watchers of Middle and East TN"
         stripped_company = _remove_skill_noise_from_company(company)
@@ -1942,7 +2245,33 @@ def _clean_experience_records(records):
         key=lambda item: quality(item),
         reverse=True,
     )
-    return cleaned[:12]
+    deduped = []
+    for candidate in cleaned:
+        company = re.sub(r"\W+", " ", str(candidate.get("company_name") or "").lower()).strip()
+        role = re.sub(r"\W+", " ", str(candidate.get("role") or "").lower()).strip()
+        description = re.sub(r"\s+", " ", str(candidate.get("description") or "").lower()).strip()
+        start = re.sub(r"\W+", "", str(candidate.get("start_date") or "").lower())
+        end = re.sub(r"\W+", "", str(candidate.get("end_date") or "").lower())
+        duplicate = False
+        for existing in deduped:
+            ex_company = re.sub(r"\W+", " ", str(existing.get("company_name") or "").lower()).strip()
+            ex_role = re.sub(r"\W+", " ", str(existing.get("role") or "").lower()).strip()
+            ex_description = re.sub(r"\s+", " ", str(existing.get("description") or "").lower()).strip()
+            same_period = (
+                start == re.sub(r"\W+", "", str(existing.get("start_date") or "").lower())
+                and end == re.sub(r"\W+", "", str(existing.get("end_date") or "").lower())
+            )
+            company_similarity = SequenceMatcher(None, company, ex_company).ratio() if company and ex_company else 0
+            role_similarity = SequenceMatcher(None, role, ex_role).ratio() if role and ex_role else 0
+            description_similarity = SequenceMatcher(None, description, ex_description).ratio() if description and ex_description else 0
+            if same_period and (
+                (company_similarity >= 0.86 and (role_similarity >= 0.72 or description_similarity >= 0.80))
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            deduped.append(candidate)
+    return deduped[:12]
 
 
 def _infer_certifications(text):
@@ -2743,6 +3072,8 @@ def _apply_parser_reliability_layer(parsed, sections, parser_flags):
         if not isinstance(job, dict):
             continue
         company, company_confidence, company_flag = _validate_parser_company(job.get("company_name"))
+        if looks_like_technical_entity_name(company, str(job.get("description") or "")):
+            company, company_confidence, company_flag = "", 0.25, "company_needs_review"
         job["company_name"] = company
         if company:
             job["company_confidence"] = company_confidence
@@ -2884,6 +3215,18 @@ def parse_resume_enterprise(text, ai_parse_override=None):
     parsed["full_name"] = parsed.get("full_name") or extract_name(text)
     parsed["email"] = _clean_email(parsed.get("email") or _regex_search(r"[\w\.-]+@[\w\.-]+\.\w+", text))
     parsed["full_name"] = _clean_person_name(parsed.get("full_name"), parsed.get("email"))
+    declared_name = re.search(r"\b(?:eu\s+sou|meu\s+nome\s+[ée])\s+([A-ZÀ-ÖØ-Ý][\wÀ-ÖØ-öø-ÿ'-]+(?:\s+[A-ZÀ-ÖØ-Ý][\wÀ-ÖØ-öø-ÿ'-]+){1,5})", text, re.I)
+    if declared_name and (not parsed.get("full_name") or _looks_like_section_or_role_name(parsed.get("full_name"))):
+        parsed["full_name"] = re.sub(r"\s+", " ", declared_name.group(1)).strip(" .,-")
+    if not parsed.get("full_name") or _looks_like_section_or_role_name(parsed.get("full_name")):
+        decorated_header = re.search(
+            r"(?im)^(?:\d{1,2}/\d{1,2}/\d{4},?\s+\d{1,2}:\d{2}\s+)?"
+            r"(?:CV\s*-\s*)?(?P<name>[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'-]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'-]+){1,3})"
+            r"\s*-\s*(?:Resume|CV|[A-Z][A-Za-z .]+,\s*[A-Z]{2,3})\s*$",
+            text,
+        )
+        if decorated_header:
+            parsed["full_name"] = decorated_header.group("name").strip()
     spaced_name = _recover_spaced_header_name(text, parsed.get("email"))
     if spaced_name and (
         not parsed.get("full_name")
@@ -2925,6 +3268,7 @@ def parse_resume_enterprise(text, ai_parse_override=None):
         + _recover_season_experience_records(text)
         + _recover_inline_experience_records(text)
         + _recover_pipe_experience_records(text)
+        + _recover_chronological_work_records(text)
         + _recover_company_year_records_from_text(text)
     )
     employer_header = _recover_single_employer_header(text)

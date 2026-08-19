@@ -71,9 +71,57 @@ NON_WORK_EXPERIENCE_RE = re.compile(
 )
 
 
+CORPORATE_FORM_RE = re.compile(
+    r"\b(?:inc|incorporated|llc|ltd|limited|corp|corporation|company|co\.?|pvt|private|"
+    r"services|solutions|technologies|systems|labs|group|university|school|consulting)\b",
+    re.I,
+)
+KNOWN_ACRONYM_COMPANIES = {"ibm", "sap", "hcl", "hp", "amd", "arm", "3m", "abb", "kpmg"}
+TECHNICAL_ENTITY_RE = re.compile(
+    r"^(?:[A-Z0-9]{2,8}|[A-Z0-9]{2,8}(?:[-/][A-Z0-9]{2,8})+)$"
+)
+TECHNICAL_ENTITY_WORD_RE = re.compile(
+    r"\b(?:protocol|interface|bus|firmware|hardware|software|microcontroller|processor|chip|"
+    r"testing|automation|architecture|framework|database|cloud|oem|odm|rtos|autosar)\b",
+    re.I,
+)
+
+
+def looks_like_technical_entity_name(value, context=""):
+    """Reject technology/responsibility tokens masquerading as employers.
+
+    The structural acronym rule covers future protocols and platform names;
+    known acronym companies and names with an explicit corporate form remain
+    valid. Context is used when available, but common technical markers do not
+    need candidate-specific exceptions.
+    """
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" .,-|")
+    if not text or CORPORATE_FORM_RE.search(text):
+        return False
+    if text.lower() in KNOWN_ACRONYM_COMPANIES:
+        if context and text.lower() in {"arm", "amd"} and re.search(
+            r"\b(?:cortex|processors?|microcontrollers?|architecture|instruction set|chip|platform)\b",
+            str(context),
+            re.I,
+        ):
+            return True
+        return False
+    if TECHNICAL_ENTITY_WORD_RE.fullmatch(text):
+        return True
+    if TECHNICAL_ENTITY_RE.fullmatch(text):
+        contextual = str(context or "")
+        return bool(
+            len(text) <= 5
+            or re.search(r"\b(?:using|with|via|protocol|interface|bus|tool|technology|vendor|support)\b", contextual, re.I)
+        )
+    return False
+
+
 def _valid_company_name(value):
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if not text:
+        return False
+    if looks_like_technical_entity_name(text):
         return False
     lowered = text.lower().strip(" :-|")
     if lowered in INVALID_COMPANY_TOKENS:

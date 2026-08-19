@@ -709,6 +709,67 @@ def _requirement_lines(jd_text=""):
     return hard[:10], soft[:10]
 
 
+def _requirement_tiers(jd_text="", must_have=None, nice_to_have=None):
+    """Separate capability importance from recruiter eligibility language."""
+    text = jd_text or ""
+    must_have = normalize_skill_list(must_have or [])
+    nice_to_have = normalize_skill_list(nice_to_have or [])
+    explicit_hard = []
+    strong_required = []
+    supporting_required = []
+    preferred = list(nice_to_have)
+    for skill in must_have:
+        pattern = re.escape(skill).replace(r"\ ", r"\s+")
+        hard = re.search(
+            r"\b(?:must(?:\s+have)?|mandatory|non[-\s]?negotiable|required)\b.{0,90}\b" + pattern + r"\b|"
+            r"\b" + pattern + r"\b.{0,90}\b(?:must(?:\s+have)?|mandatory|non[-\s]?negotiable)\b",
+            text,
+            re.I,
+        )
+        strong = re.search(
+            r"\b(?:strong|hands[-\s]?on|extensive|demonstrated|proven)\b.{0,80}\b" + pattern + r"\b|"
+            r"\b" + pattern + r"\b.{0,80}\b(?:strong|hands[-\s]?on|extensive|demonstrated|proven)\b",
+            text,
+            re.I,
+        )
+        if hard:
+            explicit_hard.append(skill)
+        elif strong:
+            strong_required.append(skill)
+        else:
+            supporting_required.append(skill)
+    return {
+        "hard_required": normalize_skill_list(explicit_hard),
+        "strong_required": normalize_skill_list(strong_required),
+        "supporting_required": normalize_skill_list(supporting_required),
+        "preferred": normalize_skill_list(preferred),
+        "optional": [],
+    }
+
+
+def _eligibility_constraints(jd_text="", min_years=0, max_years=0, location="", work_mode=""):
+    text = jd_text or ""
+    constraints = []
+    hard_min = re.search(
+        r"\b(?:minimum\s+\d+(?:\.\d+)?\s*(?:years?|yrs?)\s+required|must\s+have\s+\d+(?:\.\d+)?\+?\s*(?:years?|yrs?)|"
+        r"candidates?\s+below\s+\d+(?:\.\d+)?\s*(?:years?|yrs?)\s+will\s+not\s+be\s+considered)\b",
+        text,
+        re.I,
+    )
+    hard_max = re.search(r"\bmaximum\s+\d+(?:\.\d+)?\s*(?:years?|yrs?)\b", text, re.I)
+    if min_years:
+        constraints.append({"type": "experience_minimum", "value": min_years, "hard": bool(hard_min)})
+    if max_years:
+        constraints.append({"type": "experience_maximum", "value": max_years, "hard": bool(hard_max)})
+    if location or work_mode:
+        constraints.append({
+            "type": "location_work_mode",
+            "value": " / ".join(item for item in [str(location or ""), str(work_mode or "")] if item),
+            "hard": bool(re.search(r"\bmust\s+be\s+local|will\s+not\s+consider\s+remote|onsite\s+required\b", text, re.I)),
+        })
+    return constraints
+
+
 def _critical_must_have_from_jd(jd_text="", must_have=None, hard_requirements=None):
     must_have = normalize_skill_list(must_have or [])
     hard_requirements = hard_requirements or []
@@ -804,12 +865,12 @@ def _apply_embedded_firmware_profile(must_have, nice_to_have, jd_text):
     """Keep required and preferred embedded requirements in their JD sections."""
     text = str(jd_text or "")
     required_match = re.search(
-        r"required\s+qualifications?(?P<body>.*?)(?:preferred\s+qualifications?|ideal\s+candidate|$)",
+        r"required(?:\s+qualifications?)?\s*:?(?P<body>.*?)(?:preferred(?:\s+qualifications?)?|ideal\s+candidate|$)",
         text,
         re.I | re.S,
     )
     preferred_match = re.search(
-        r"preferred\s+qualifications?(?P<body>.*?)(?:ideal\s+candidate|$)",
+        r"preferred(?:\s+qualifications?)?\s*:?(?P<body>.*?)(?:ideal\s+candidate|$)",
         text,
         re.I | re.S,
     )
@@ -960,6 +1021,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     critical_must_have = _critical_must_have_from_jd(jd_text or "", must_have, hard)
     tools_platforms = _tools_platforms_from_skills(must_have + nice_to_have)
     location, work_mode = _location_work_mode(jd_text or "", jd_data)
+    requirement_tiers = _requirement_tiers(jd_text or "", must_have, nice_to_have)
+    eligibility_constraints = _eligibility_constraints(jd_text or "", min_years, max_years, location, work_mode)
     domain_keywords = normalize_skill_list([
         item
         for item in [
@@ -975,6 +1038,12 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "jd_text": jd_text or "",
         "must_have_skills": must_have,
         "critical_must_have": critical_must_have,
+        "requirement_tiers": requirement_tiers,
+        "eligibility_constraints": eligibility_constraints,
+        "experience_range_is_hard": any(
+            item.get("hard") for item in eligibility_constraints
+            if item.get("type") in {"experience_minimum", "experience_maximum"}
+        ),
         "nice_to_have_skills": nice_to_have,
         "min_experience_years": min_years,
         "max_experience_years": max_years,
@@ -1043,6 +1112,12 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         "min_experience_years": min_years,
         "max_experience_years": max_years,
         "critical_must_have": critical_must_have,
+        "requirement_tiers": requirement_tiers,
+        "eligibility_constraints": eligibility_constraints,
+        "experience_range_is_hard": any(
+            item.get("hard") for item in eligibility_constraints
+            if item.get("type") in {"experience_minimum", "experience_maximum"}
+        ),
         "must_have": must_have,
         "must_have_skills": must_have,
         "nice_to_have": nice_to_have,
