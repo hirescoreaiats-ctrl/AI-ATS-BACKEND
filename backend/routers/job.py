@@ -122,6 +122,43 @@ def _require_job_visible(job: Job | None, user: User):
     return job
 
 
+def _visible_candidate_query(db, user: User):
+    return _scope_resume_job_query(
+        db.query(Resume).join(Job, Resume.job_id == Job.id),
+        user,
+    )
+
+
+def _get_visible_candidate(db, resume_id: str, user: User, *, active_only: bool = True) -> Resume:
+    query = _visible_candidate_query(db, user).filter(Resume.id == resume_id)
+    if active_only:
+        query = query.filter(Resume.is_active == True)
+    candidate = query.first()
+    if not candidate:
+        # A cross-tenant identifier must not disclose that the row exists.
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return candidate
+
+
+def _candidate_identity_key(candidate: Resume):
+    email = (candidate.email or candidate.form_email or "").strip().lower()
+    if email:
+        return ("email", email)
+    phone = re.sub(r"\D+", "", candidate.phone or candidate.form_phone or "")
+    return ("phone", phone) if phone else ("resume", candidate.id)
+
+
+def _ranking_freshness_key(candidate: Resume):
+    """Select the latest canonical job-specific ranking deterministically."""
+    return (
+        int(getattr(candidate, "ranking_version", 0) or 0),
+        getattr(candidate, "ranking_updated_at", None) or datetime.min,
+        getattr(candidate, "processing_completed_at", None) or datetime.min,
+        getattr(candidate, "created_at", None) or datetime.min,
+        str(candidate.id or ""),
+    )
+
+
 def _text_value(value) -> str:
     if value is None:
         return ""
@@ -408,6 +445,14 @@ def _candidate_value_is_polluted(value, kind: str = "text") -> bool:
     return False
 
 
+def _candidate_manual_overrides(candidate: Resume) -> dict:
+    try:
+        values = json.loads(getattr(candidate, "manual_overrides_json", None) or "{}")
+        return values if isinstance(values, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
 def _trim_project_evidence_noise(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -643,6 +688,7 @@ def _repair_stored_candidate_profile(candidate: Resume, job: Job, force: bool = 
             jd_data,
         )
 
+        manual_overrides = _candidate_manual_overrides(candidate)
         candidate.full_name = parsed.get("full_name") or candidate.form_full_name or candidate.full_name
         candidate.email = (parsed.get("email") or candidate.form_email or candidate.email or "").strip().lower()
         candidate.phone = _safe_profile_phone(parsed.get("phone"), candidate.form_phone)
@@ -672,7 +718,15 @@ def _repair_stored_candidate_profile(candidate: Resume, job: Job, force: bool = 
         candidate.missing_skills = ",".join(parsed.get("missing_skills", []))
         candidate.skill_match_percent = parsed.get("skill_match_percent")
         apply_resume_intelligence_fields(candidate, parsed)
-        apply_job_scoring_snapshot(candidate, job, parsed.get("jd_profile_json"))
+        for attr, value in manual_overrides.items():
+            if hasattr(candidate, attr):
+                setattr(candidate, attr, value)
+        if manual_overrides:
+            # Recruiter corrections are authoritative; publish a score built
+            # from those restored values rather than the raw parser identity.
+            _rescore_candidate_from_stored_fields(candidate, job)
+        else:
+            apply_job_scoring_snapshot(candidate, job, parsed.get("jd_profile_json"))
         return True
     except Exception:
         logger.exception("Stored candidate profile repair failed for %s", candidate.id)
@@ -751,6 +805,11 @@ def _candidate_result_payload(candidate: Resume, job: Job, note_map=None, tag_ma
         "processing_error": candidate.processing_error,
         "processing_started_at": candidate.processing_started_at.isoformat() if candidate.processing_started_at else None,
         "processing_completed_at": candidate.processing_completed_at.isoformat() if candidate.processing_completed_at else None,
+        "ranking_version": int(getattr(candidate, "ranking_version", 0) or 0),
+        "ranking_updated_at": candidate.ranking_updated_at.isoformat() if getattr(candidate, "ranking_updated_at", None) else None,
+        "ranking_status": candidate.shortlist_decision or candidate.fit_band or candidate.ai_recommendation,
+        "manual_override_fields": sorted(_candidate_manual_overrides(candidate)),
+        "workflow_status": candidate.status,
         "status": candidate.status,
         "stage": candidate.stage,
         "mail_status": candidate.mail_status,
@@ -1804,26 +1863,8 @@ def get_results(job_id: str, user: User = Depends(require_roles("admin", "super_
         unique = {}
 
         for r in resumes:
-            key = (
-                r.email.strip().lower() if r.email else None,
-                r.phone.strip() if r.phone else None
-            )
-            if key == (None, None):
-                key = (r.id, None)
-
-            def result_priority(row):
-                status_priority = {
-                    "Interview Scheduling": 60,
-                    "Communication": 50,
-                    "Shortlisted": 40,
-                    "Review": 20,
-                    "Rejected": 10,
-                    "Dropped": 0,
-                }
-                workflow_signal = (5 if row.mail_status else 0) + (5 if row.response_status else 0)
-                return (status_priority.get(row.status or "", 0), workflow_signal, row.final_score or 0)
-
-            if key not in unique or result_priority(r) > result_priority(unique[key]):
+            key = _candidate_identity_key(r)
+            if key not in unique or _ranking_freshness_key(r) > _ranking_freshness_key(unique[key]):
                 unique[key] = r
 
         resumes = list(unique.values())
@@ -1941,12 +1982,13 @@ def rescore_job_candidates(job_id: str):
 
 
 @router.post("/candidate-reparse/{resume_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def reparse_candidate_profile(resume_id: str):
+def reparse_candidate_profile(
+    resume_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
     try:
-        candidate = db.query(Resume).filter(Resume.id == resume_id).first()
-        if not candidate:
-            raise HTTPException(status_code=404, detail="Candidate not found")
+        candidate = _get_visible_candidate(db, resume_id, user)
 
         job = db.query(Job).filter(Job.id == candidate.job_id).first()
         if not job:
@@ -1968,12 +2010,14 @@ def reparse_candidate_profile(resume_id: str):
 
 
 @router.post("/candidate-update/{resume_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def update_candidate_profile(resume_id: str, data: dict = Body(...)):
+def update_candidate_profile(
+    resume_id: str,
+    data: dict = Body(...),
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
     try:
-        candidate = db.query(Resume).filter(Resume.id == resume_id, Resume.is_active == True).first()
-        if not candidate:
-            raise HTTPException(status_code=404, detail="Candidate not found")
+        candidate = _get_visible_candidate(db, resume_id, user)
 
         job = db.query(Job).filter(Job.id == candidate.job_id).first()
         if not job:
@@ -2010,6 +2054,16 @@ def update_candidate_profile(resume_id: str, data: dict = Body(...)):
         if "projects" in data:
             candidate.projects = json.dumps(_manual_project_records(data.get("projects")), ensure_ascii=False)
 
+        editable_fields = {
+            "full_name", "email", "phone", "location", "designation",
+            "last_company_name", "education", "total_experience_years",
+            "key_skills", "projects",
+        }
+        manual_overrides = _candidate_manual_overrides(candidate)
+        for attr in editable_fields.intersection(data):
+            manual_overrides[attr] = getattr(candidate, attr)
+        candidate.manual_overrides_json = json.dumps(manual_overrides, ensure_ascii=False)
+
         should_review = bool(data.get("review", True))
         if should_review:
             _rescore_candidate_from_stored_fields(candidate, job)
@@ -2034,12 +2088,13 @@ def update_candidate_profile(resume_id: str, data: dict = Body(...)):
 
 
 @router.post("/candidate-rereview/{resume_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def rereview_candidate_profile(resume_id: str):
+def rereview_candidate_profile(
+    resume_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
     try:
-        candidate = db.query(Resume).filter(Resume.id == resume_id, Resume.is_active == True).first()
-        if not candidate:
-            raise HTTPException(status_code=404, detail="Candidate not found")
+        candidate = _get_visible_candidate(db, resume_id, user)
 
         job = db.query(Job).filter(Job.id == candidate.job_id).first()
         if not job:
@@ -3429,12 +3484,13 @@ def track_candidate(resume_id: str):
 
 
 @router.get("/candidate-workspace/{resume_id}", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
-def candidate_workspace(resume_id: str):
+def candidate_workspace(
+    resume_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
     db = SessionLocal()
     try:
-        candidate = db.query(Resume).filter(Resume.id == resume_id, Resume.is_active == True).first()
-        if not candidate:
-            raise HTTPException(status_code=404, detail="Candidate not found")
+        candidate = _get_visible_candidate(db, resume_id, user)
         notes = (
             db.query(CandidateNote)
             .filter(CandidateNote.candidate_id == resume_id)

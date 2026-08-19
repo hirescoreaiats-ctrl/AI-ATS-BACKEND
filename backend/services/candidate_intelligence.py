@@ -75,7 +75,9 @@ def apply_resume_intelligence_fields(resume, parsed):
         if hasattr(resume, attr) and key in parsed:
             setattr(resume, attr, parsed.get(key))
     for field in JSON_INTELLIGENCE_FIELDS:
-        if hasattr(resume, field):
+        # A stored-field re-review intentionally supplies only fields it can
+        # recompute. Do not erase parse evidence/provenance that is absent.
+        if hasattr(resume, field) and field in parsed:
             setattr(resume, field, to_json_text(parsed.get(field)))
 
 

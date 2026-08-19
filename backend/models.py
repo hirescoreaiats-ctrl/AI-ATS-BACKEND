@@ -153,6 +153,7 @@ class Resume(Base):
     safe_parsed_json = Column(Text, nullable=True)
     field_confidence_json = Column(Text, nullable=True)
     field_sources_json = Column(Text, nullable=True)
+    manual_overrides_json = Column(Text, nullable=True)
     text_extraction_quality = Column(Text, nullable=True)
     experience_relevance_label = Column(String, nullable=True)
     experience_evidence = Column(Text, nullable=True)
@@ -166,6 +167,8 @@ class Resume(Base):
     score_job_id = Column(String, nullable=True, index=True)
     score_jd_hash = Column(String, nullable=True, index=True)
     score_jd_profile_version = Column(String, nullable=True, index=True)
+    ranking_version = Column(Integer, nullable=False, default=0, index=True)
+    ranking_updated_at = Column(DateTime, nullable=True, index=True)
 
     # 🔹 AI Explanation
     resume_text = Column(Text, nullable=True)

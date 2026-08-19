@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any
 
 from backend.jd_engine import normalize_jd_skills
@@ -63,6 +64,12 @@ def apply_job_scoring_snapshot(resume, job, jd_profile: dict | None = None) -> d
         resume.jd_profile_json = json.dumps(profile or {}, ensure_ascii=False)
     if hasattr(resume, "jd_profile_snapshot_json"):
         resume.jd_profile_snapshot_json = json.dumps(profile or {}, ensure_ascii=False)
+    # A score write and its JD snapshot are one canonical ranking publication.
+    # Readers use this monotonic version/timestamp to reject older duplicate rows.
+    if hasattr(resume, "ranking_version"):
+        resume.ranking_version = int(getattr(resume, "ranking_version", 0) or 0) + 1
+    if hasattr(resume, "ranking_updated_at"):
+        resume.ranking_updated_at = datetime.utcnow()
     return profile
 
 

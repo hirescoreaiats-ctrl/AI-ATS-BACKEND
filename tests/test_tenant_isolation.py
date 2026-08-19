@@ -168,6 +168,17 @@ def test_recruiter_cannot_read_other_org_job_results(tenant_db):
     assert exc.value.status_code == 404
 
 
+def test_recruiter_cannot_rereview_other_org_candidate(tenant_db):
+    add_job(tenant_db, "job-b", "org-b", "Org B Job")
+    add_resume(tenant_db, "resume-b", "job-b", "org-b", 99)
+    tenant_db.commit()
+
+    with pytest.raises(job_router.HTTPException) as exc:
+        job_router.rereview_candidate_profile("resume-b", user=recruiter("org-a"))
+
+    assert exc.value.status_code == 404
+
+
 def test_admin_sees_all_jobs_and_applicants_across_workspaces(tenant_db):
     add_job(tenant_db, "job-a", "org-a", "Org A Job")
     add_job(tenant_db, "job-b", "org-b", "Org B Job")
