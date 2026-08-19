@@ -2,7 +2,13 @@ import hashlib
 import json
 import re
 
-from backend.services.role_taxonomy import detect_role_family, dynamic_core_groups, role_family_default_must_have, role_family_default_nice_to_have
+from backend.services.role_taxonomy import (
+    detect_role_family,
+    dynamic_core_groups,
+    role_family_default_core_groups,
+    role_family_default_must_have,
+    role_family_default_nice_to_have,
+)
 from backend.services.taxonomy import SKILL_CATEGORIES, expand_skill_requirements, known_skills_in_text, normalize_skill_list
 
 
@@ -794,6 +800,43 @@ def _profile_responsibility_signals(role_family, jd_text=""):
     return found[:20]
 
 
+def _apply_embedded_firmware_profile(must_have, nice_to_have, jd_text):
+    """Keep required and preferred embedded requirements in their JD sections."""
+    text = str(jd_text or "")
+    required_match = re.search(
+        r"required\s+qualifications?(?P<body>.*?)(?:preferred\s+qualifications?|ideal\s+candidate|$)",
+        text,
+        re.I | re.S,
+    )
+    preferred_match = re.search(
+        r"preferred\s+qualifications?(?P<body>.*?)(?:ideal\s+candidate|$)",
+        text,
+        re.I | re.S,
+    )
+    required_section = required_match.group("body") if required_match else text
+    preferred_section = preferred_match.group("body") if preferred_match else ""
+    required_explicit = known_skills_in_text(required_section)
+    preferred_explicit = known_skills_in_text(preferred_section)
+
+    core_required = [
+        skill for skill in role_family_default_must_have("embedded_firmware")
+        if skill in known_skills_in_text(text)
+        or skill in {"Embedded Firmware", "Embedded Systems"}
+    ]
+    required = normalize_skill_list(required_explicit + core_required)
+    if not required:
+        required = role_family_default_must_have("embedded_firmware")
+
+    required_keys = {item.lower() for item in required}
+    preferred = normalize_skill_list(
+        preferred_explicit
+        + nice_to_have
+        + [item for item in must_have if item.lower() not in required_keys]
+    )
+    preferred = [item for item in preferred if item.lower() not in required_keys]
+    return required, preferred
+
+
 def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     jd_data = jd_data or {}
     role_title = _first_text(jd_data.get("role"), jd_data.get("job_title"), jd_data.get("title"))
@@ -807,7 +850,11 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     nice_to_have = normalize_skill_list([skill for skill in nice_skills if skill.lower() not in {item.lower() for item in must_have}])
 
     family_text = " ".join([role_title, jd_text or "", " ".join(must_have), " ".join(nice_to_have)])
-    role_family, role_family_confidence = detect_role_family(family_text, must_have + nice_to_have)
+    role_family, role_family_confidence = detect_role_family(
+        family_text,
+        must_have + nice_to_have,
+        role_title=role_title,
+    )
     applied_ml_hybrid = _is_applied_ml_hybrid(role_title, jd_text, must_have + nice_to_have)
     product_architect_profile = _is_product_software_architect(role_title, jd_text, must_have + nice_to_have)
     m365_migration_profile = _is_m365_migration_sme(role_title, jd_text, must_have + nice_to_have)
@@ -853,6 +900,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
     must_have, nice_to_have = _split_full_stack_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
     must_have, nice_to_have = _split_dotnet_requirements(role_family, must_have, nice_to_have)
     must_have, nice_to_have = _split_frontend_requirements(role_family, role_title, jd_text, must_have, nice_to_have)
+    if role_family == "embedded_firmware":
+        must_have, nice_to_have = _apply_embedded_firmware_profile(must_have, nice_to_have, jd_text)
     if role_family == "applied_ml_engineer":
         must_have, nice_to_have, applied_ml_core_groups = _apply_applied_ml_profile(must_have, nice_to_have, jd_text)
     if role_family == "product_software_architect":
@@ -867,6 +916,8 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
         seniority = "mid-level" if min_years >= 2 else "unknown"
     hard, soft = _requirement_lines(jd_text)
     core_groups = dynamic_core_groups(role_family, must_have, jd_text or "")
+    if role_family == "embedded_firmware":
+        core_groups = role_family_default_core_groups(role_family)
     if applied_ml_core_groups:
         core_groups = applied_ml_core_groups
     if product_architect_core_groups:
@@ -962,6 +1013,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
                 "AML Transaction Monitoring Analyst L2",
                 "Senior AML Analyst",
             ] if role_family == "aml_transaction_monitoring"
+            else ["Embedded Systems Engineer", "Firmware Engineer", "Hardware/Software Engineer"] if role_family == "embedded_firmware"
             else []
         ),
         "role_group": (
@@ -969,6 +1021,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             else "Product Engineering / Software Architecture" if role_family == "product_software_architect"
             else "Microsoft 365 / Collaboration Migration" if role_family == "m365_migration_sme"
             else "AML / Financial Crime Compliance" if role_family == "aml_transaction_monitoring"
+            else "Embedded / Firmware Engineering" if role_family == "embedded_firmware"
             else ""
         ),
         "specialization": (
@@ -976,6 +1029,7 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             else ["System Design", "Backend Architecture", "Product Engineering", "Hands-on Coding", "Technical Leadership"] if role_family == "product_software_architect"
             else ["Tenant-to-Tenant Migration", "Exchange Migration", "Teams/SharePoint/OneDrive Migration", "Quest ODM", "PowerShell"] if role_family == "m365_migration_sme"
             else ["AML Transaction Monitoring", "AML Investigations", "Case Management", "SAR/STR", "Banking Exposure"] if role_family == "aml_transaction_monitoring"
+            else ["Embedded Firmware", "Embedded Systems", "Hardware/Software Integration", "Real-time Systems"] if role_family == "embedded_firmware"
             else []
         ),
         "role_family_confidence": role_family_confidence,
@@ -1019,8 +1073,28 @@ def build_jd_profile(jd_text, jd_data=None, jd_skills=None):
             "product software architecture" if role_family == "product_software_architect"
             else "microsoft 365 migration" if role_family == "m365_migration_sme"
             else "aml transaction monitoring investigations" if role_family == "aml_transaction_monitoring"
+            else "embedded firmware hardware systems" if role_family == "embedded_firmware"
             else (role_family if role_family != "other" else "")
         ),
+        "family_detection_signals": [
+            signal for signal in [
+                "firmware" if re.search(r"\bfirmware\b", family_text, re.I) else "",
+                "embedded software" if re.search(r"\bembedded\s+software\b", family_text, re.I) else "",
+                "embedded systems" if re.search(r"\bembedded\s+systems?\b", family_text, re.I) else "",
+                "microcontrollers" if re.search(r"\bmicrocontrollers?\b", family_text, re.I) else "",
+                "RTOS" if re.search(r"\brtos\b", family_text, re.I) else "",
+                "C" if re.search(r"\bC\s+(?:programming|development)\b", family_text) else "",
+            ] if signal
+        ] if role_family == "embedded_firmware" else [],
+        "rejected_family_signals": {
+            "qa": [
+                signal for signal in [
+                    "testing" if re.search(r"\btest(?:ing|ed)?\b", family_text, re.I) else "",
+                    "validation" if re.search(r"\bvalidation\b", family_text, re.I) else "",
+                    "automation" if re.search(r"\bautomation\b", family_text, re.I) else "",
+                ] if signal
+            ]
+        } if role_family == "embedded_firmware" else {},
         "hard_requirements": hard,
         "soft_requirements": soft,
         "positive_signals": [

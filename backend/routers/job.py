@@ -857,6 +857,21 @@ def _rescore_candidate_from_stored_fields(candidate: Resume, job: Job):
         "preferred_skills": job.preferred_skills or "",
     }
     projects = _candidate_projects(candidate)
+    intelligence = resume_intelligence_payload(candidate)
+    raw_parse = intelligence.get("raw_parsed_json") or {}
+    safe_parse = intelligence.get("safe_parsed_json") or {}
+    stored_experience = []
+    for stored_parse in (raw_parse, safe_parse):
+        if isinstance(stored_parse, dict) and isinstance(stored_parse.get("experience"), list):
+            stored_experience = [item for item in stored_parse["experience"] if isinstance(item, dict)]
+            if stored_experience:
+                break
+    if not stored_experience:
+        stored_experience = [{
+            "company_name": candidate.last_company_name or "",
+            "role": candidate.designation or "",
+            "description": candidate.resume_text or "",
+        }]
     parsed = {
         "full_name": candidate.full_name,
         "email": candidate.email,
@@ -870,16 +885,12 @@ def _rescore_candidate_from_stored_fields(candidate: Resume, job: Job):
         "parser_quality_score": candidate.parser_quality_score,
         "parser_confidence": candidate.parser_confidence or candidate.parser_quality_score,
         "parser_quality_action": candidate.parser_quality_action,
-        "parser_quality_flags": resume_intelligence_payload(candidate).get("parser_quality_flags") or [],
-        "parser_warnings": resume_intelligence_payload(candidate).get("parser_warnings") or [],
+        "parser_quality_flags": intelligence.get("parser_quality_flags") or [],
+        "parser_warnings": intelligence.get("parser_warnings") or [],
         "ai_parse_status": candidate.ai_parse_status,
         "extraction_quality_score": candidate.extraction_quality_score,
-        "low_confidence_fields": resume_intelligence_payload(candidate).get("low_confidence_fields") or [],
-        "experience": [{
-            "company_name": candidate.last_company_name or "",
-            "role": candidate.designation or "",
-            "description": candidate.resume_text or "",
-        }],
+        "low_confidence_fields": intelligence.get("low_confidence_fields") or [],
+        "experience": stored_experience,
         "resume_quality_score": candidate.resume_quality_score or 70,
         "domain": candidate.domain,
     }

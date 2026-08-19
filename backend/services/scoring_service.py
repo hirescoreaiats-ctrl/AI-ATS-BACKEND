@@ -2,7 +2,7 @@ import re
 
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.role_taxonomy import match_core_skill_groups
-from backend.services.taxonomy import equivalent_skill, expand_skill_requirements, normalize_skill_list
+from backend.services.taxonomy import equivalent_skill, expand_skill_requirements, known_skills_in_text, normalize_skill_list
 from backend.services.recruiter_decision import enrich_recruiter_decision
 
 
@@ -118,13 +118,32 @@ def _skill_match(required, candidate_skills):
 
 
 def _skill_pattern(skill):
-    return re.compile(r"\b" + re.escape(str(skill or "").lower()).replace(r"\ ", r"\s+") + r"\b", re.I)
+    canonical = str(skill or "").strip().lower()
+    aliases = {
+        "debugging": r"\bdebug(?:ged|ging)?\b",
+        "embedded hardware": r"\bembedded\s*(?:hardware|hw)\b|\bembedded\s*hw\s*and\s*fw\b",
+        "embedded firmware": r"\bembedded\s*(?:firmware|fw)\b|\bembedded\s*hw\s*and\s*fw\b",
+        "firmware": r"\bfirmware\b|\bembedded\s*hw\s*and\s*fw\b|\b(?:embedded\s*)?fw\b",
+        "embedded systems": r"\bembedded\s+systems?\b|\brtos\b|\breal[-\s]?time\s+firmware\b",
+        "microcontrollers": r"\bmicrocontrollers?\b|\bmcus?\b",
+        "hardware/software integration": r"\bhardware\s*/\s*software\s+integration\b|\bhardware[-\s]+software\s+integration\b|\bsystem[-\s]?integration\b|(?:\bhardware\b|\bpcbs?\b|\bboards?\b).{0,140}(?:\bfirmware\b|\brtos\b)|(?:\bfirmware\b|\brtos\b).{0,140}(?:\bhardware\b|\bpcbs?\b|\bboards?\b)",
+        "rtos": r"\brtos\b|\breal[-\s]?time\s+operating\s+systems?\b",
+        "real-time systems": r"\breal[-\s]?time\s+(?:embedded\s+)?systems?\b|\bresource[-\s]?constrained,?\s+real[-\s]?time\s+systems?\b",
+        "real-time firmware": r"\breal[-\s]?time\s+firmware\b",
+        "printed circuit board": r"\bpcbs?\b|\bprinted\s+circuit\s+boards?\b",
+        "rf systems": r"\brf\s+(?:systems?|testing|communication|qualification)\b|\bhf\s+and\s+vhf\b",
+        "communication systems": r"\bcommunications?\s+systems?\b|\bhf\s+and\s+vhf\s+communication\s+systems?\b",
+    }
+    return re.compile(aliases.get(canonical, r"\b" + re.escape(canonical).replace(r"\ ", r"\s+") + r"\b"), re.I)
 
 
 def _skill_in_text(skill, text):
     if not skill or not text:
         return False
-    return bool(_skill_pattern(skill).search(str(text or "")))
+    if _skill_pattern(skill).search(str(text or "")):
+        return True
+    required = str(skill or "").lower()
+    return any(item.lower() == required for item in known_skills_in_text(text or ""))
 
 
 def _skill_snippet(skill, text):
@@ -141,6 +160,7 @@ def _strong_context(text):
     return bool(re.search(
         r"\b(built|developed|implemented|designed|automated|optimized|created|delivered|integrated|"
         r"configured|customized|handled|managed|analy[sz]ed|reported|deployed|owned|led|improved|reduced|increased|"
+        r"debugged|tested|validated|troubleshot|maintained|refactored|brought\s+up|"
         r"\d+(?:%|k|,\d{3}| users?| records?| dashboards?| reports?))\b",
         str(text or ""),
         re.I,
@@ -151,7 +171,7 @@ def _training_context(text):
     return bool(re.search(r"\b(certification|certificate|certified|course|training|trailhead|coursera|udemy|bootcamp|virtual internship)\b", str(text or ""), re.I))
 
 
-def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=None, equivalent=False):
+def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=None, equivalent=False, role_family="other"):
     parsed = parsed or {}
     candidate_skills = normalize_skill_list(candidate_skills or parsed.get("key_skills", []))
     direct_skill_list = any(required.lower() == skill.lower() for skill in candidate_skills)
@@ -251,6 +271,17 @@ def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=Non
         }
 
     if direct_skill_list:
+        if role_family == "embedded_firmware":
+            return {
+                "skill": required,
+                "status": "matched",
+                "evidence_level": "skills_section_only",
+                "depth": "skills_section_evidence",
+                "evidence_text": _skill_snippet(required, resume_text) or required,
+                "source": "skills_section",
+                "weight": _skill_evidence_weight({"evidence_level": "skills_section_only"}),
+                "employer_name_only": False,
+            }
         return {
             "skill": required,
             "status": "weak",
@@ -273,6 +304,29 @@ def _classify_skill_evidence(required, parsed, resume_text, candidate_skills=Non
             "weight": min(0.12, _skill_evidence_weight({"evidence_level": "keyword_only"})),
             "employer_name_only": False,
         }
+
+    if role_family == "embedded_firmware" and required in {"C", "Microcontrollers"}:
+        contextual_text = " ".join([resume_text or "", *work_texts])
+        context_patterns = {
+            "C": r"\b(?:embedded\s+(?:firmware|software|systems?)|firmware|rtos|real[-\s]?time\s+firmware|resource[-\s]?constrained\s+firmware)\b",
+            "Microcontrollers": r"\b(?:firmware\s+across\s+multiple\s+chip\s+architectures?|embedded\s+(?:firmware|hardware)|rtos\s+firmware)\b",
+        }
+        if re.search(context_patterns[required], contextual_text, re.I):
+            return {
+                "skill": required,
+                "status": "verify",
+                "evidence_level": "contextual_support",
+                "depth": "contextual_support",
+                "evidence_text": (
+                    "Strong embedded firmware/RTOS evidence exists, but the exact technology is not explicitly identified."
+                ),
+                "source": "contextual_inference",
+                "reason": (
+                    f"Strong embedded evidence exists, but {required} is not explicitly identified in the resume."
+                ),
+                "weight": 0.28,
+                "employer_name_only": False,
+            }
 
     if _skill_in_text(required, resume_text):
         context = _skill_snippet(required, resume_text)
@@ -509,8 +563,7 @@ BA_CRITICAL_GROUPS = {
 
 def _is_qa_target(jd_profile):
     family = (jd_profile.get("role_family") or "").lower()
-    role_title = jd_profile.get("role_title") or ""
-    return family in QA_TARGET_FAMILIES or bool(QA_DIRECT_TITLE_RE.search(role_title))
+    return family in QA_TARGET_FAMILIES
 
 
 def _is_business_analyst_target(jd_profile):
@@ -626,7 +679,12 @@ def _qa_role_identity(parsed, mandatory_coverage, professional_group_count):
 def _generic_role_identity(parsed, jd_profile, mandatory_coverage, role_relevance, evidence_strength):
     primary_title = str(parsed.get("current_title") or parsed.get("designation") or "").strip()
     latest_role = _latest_experience_role(parsed)
-    title_text = f"{primary_title} {latest_role}".lower()
+    historical_roles = " ".join(
+        str(job.get("role") or "")
+        for job in parsed.get("experience") or []
+        if isinstance(job, dict)
+    )
+    title_text = f"{primary_title} {latest_role} {historical_roles}".lower()
     role_title = str(jd_profile.get("role_title") or "").lower()
     title_tokens = {
         token for token in re.findall(r"[a-z][a-z0-9+#.]{2,}", role_title)
@@ -687,6 +745,8 @@ def _attach_jd_profile_metadata(score_data, jd_profile, parsed=None, role_identi
     relevant = _safe_float(parsed.get("relevant_experience_years"))
     score_data.setdefault("unrelated_experience_years", round(max(0, total - relevant), 2))
     score_data.setdefault("experience_confidence", parsed.get("role_relevance_score"))
+    score_data.setdefault("parser_confidence", parsed.get("parser_confidence") or parsed.get("parser_quality_score"))
+    score_data.setdefault("ranking_confidence", score_data.get("confidence_score"))
     if role_identity:
         score_data.setdefault("primary_role_label", role_identity.get("primary_role_label"))
         score_data.setdefault("primary_role_family", role_identity.get("primary_role_family"))
@@ -4313,7 +4373,9 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         )
         return _attach_jd_profile_metadata(result, jd_profile, parsed, role_identity)
 
-    candidate_skills = normalize_skill_list(parsed.get("key_skills", []))
+    candidate_skills = normalize_skill_list(
+        parsed.get("key_skills", []) + known_skills_in_text(resume_text or "")
+    )
     required_skills = normalize_skill_list(jd_profile.get("must_have_skills") or expand_skill_requirements(jd_skills))
     preferred_skills = normalize_skill_list(jd_profile.get("nice_to_have_skills") or _split_skill_values((jd_data or {}).get("preferred_skills")))
 
@@ -4325,9 +4387,17 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     skill_evidence_depth = {}
     matched_skill_evidence = []
     employer_name_only_skills = []
+    verification_required = []
     for required in required_skills:
         direct, equiv = _skill_match(required, candidate_skills)
-        skill_evidence = _classify_skill_evidence(required, parsed, resume_text, candidate_skills, equivalent=equiv)
+        skill_evidence = _classify_skill_evidence(
+            required,
+            parsed,
+            resume_text,
+            candidate_skills,
+            equivalent=equiv,
+            role_family=(jd_profile.get("role_family") or "other").lower(),
+        )
         resume_hit = _resume_evidence_skill_match(required, resume_text)
         if resume_hit and skill_evidence.get("evidence_level") in {"missing", "keyword_only"}:
             skill_evidence = {
@@ -4344,6 +4414,10 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         if skill_evidence.get("employer_name_only"):
             _append_unique(employer_name_only_skills, [required])
             _append_unique(missing, [required])
+        elif status == "verify" and weight > 0:
+            _append_unique(verification_required, [required])
+            mandatory_coverage_points += weight
+            matched_skill_evidence.append(skill_evidence)
         elif status != "missing" and weight > 0:
             _append_unique(matched, [required])
             mandatory_coverage_points += weight
@@ -4365,10 +4439,18 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
 
     required_count = max(len(required_skills), 1)
     mandatory_coverage = round((mandatory_coverage_points / required_count) * 100, 2)
+    core_resume_text = " ".join([
+        resume_text or "",
+        *[
+            " ".join([str(job.get("role") or ""), str(job.get("description") or "")])
+            for job in parsed.get("experience") or []
+            if isinstance(job, dict)
+        ],
+    ])
     core_match = match_core_skill_groups(
         jd_profile.get("core_skill_groups") or {},
         candidate_skills,
-        resume_text,
+        core_resume_text,
     )
     core_percent = core_match["core_skill_match_percent"]
     direct_match_percent = round(((len(matched) + len(transferable) * 0.55) / required_count) * 100, 2)
@@ -4676,6 +4758,8 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
 
     if missing:
         _append_unique(risk_flags, ["missing_mandatory_skills"])
+    if verification_required:
+        _append_unique(risk_flags, ["skills_requiring_verification"])
     if employer_name_only_skills:
         _append_unique(risk_flags, ["employer_name_only_match"])
         _append_unique(recruiter_flags, ["employer_name_only_match"])
@@ -4735,11 +4819,26 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
     recommendation = _generic_recommendation(final_score, mandatory_coverage, confidence, caps, risk_flags)
     band = fit_band(rank_score, mandatory_coverage / 100, confidence)
 
-    ranking_reason = (
-        f"Rank score {rank_score}/100 with {confidence}% confidence: "
-        f"{mandatory_coverage}% mandatory skill coverage, {core_percent}% core group coverage, "
-        f"{relevant_years:g}/{total_years:g} relevant/total years, role relevance {role_relevance:g}/100."
-    )
+    if (jd_profile.get("role_family") or "").lower() == "embedded_firmware":
+        proven = [
+            item.get("skill") for item in matched_skill_evidence
+            if item.get("status") != "verify"
+            and item.get("evidence_level") in {"professional_strong", "professional_weak", "project_strong", "project_weak", "skills_section_only"}
+        ]
+        ranking_reason = (
+            f"Embedded/firmware alignment is supported by {', '.join(proven[:6]) or 'resume work evidence'}. "
+            f"Calculated JD-relevant experience is {relevant_years:g} years out of {total_years:g} calendar years."
+        )
+        if verification_required:
+            ranking_reason += f" Verify explicitly: {', '.join(verification_required[:4])}."
+        if missing:
+            ranking_reason += f" Missing evidence: {', '.join(missing[:4])}."
+    else:
+        ranking_reason = (
+            f"Rank score {rank_score}/100 with {confidence}% confidence: "
+            f"{mandatory_coverage}% mandatory skill coverage, {core_percent}% core group coverage, "
+            f"{relevant_years:g}/{total_years:g} relevant/total years, role relevance {role_relevance:g}/100."
+        )
     if missing:
         ranking_reason += f" Missing skills: {', '.join(missing[:4])}."
     if missing_core_groups:
@@ -4778,12 +4877,13 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         "transferable_skills": transferable,
         "preferred_matched_skills": preferred_matched,
         "missing_skills": missing,
+        "verification_required_skills": verification_required,
         "skill_evidence_depth": skill_evidence_depth,
         "skill_evidence": evidence,
         "matched_skill_evidence": matched_skill_evidence,
         "missing_or_weak_skills": [
             item for item in evidence.values()
-            if item.get("status") in {"missing", "weak", "training_only"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only"}
+            if item.get("status") in {"missing", "weak", "training_only", "verify"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only", "contextual_support"}
         ],
         "employer_name_only_skills": employer_name_only_skills,
         "skill_match_percent": mandatory_coverage,
@@ -4838,7 +4938,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "non_jd_projects": parsed.get("non_jd_projects") or [],
             "missing_or_weak_skills": [
                 item for item in evidence.values()
-                if item.get("status") in {"missing", "weak", "training_only"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only"}
+                if item.get("status") in {"missing", "weak", "training_only", "verify"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only", "contextual_support"}
             ],
             "score_caps_applied": caps,
         },
@@ -4861,7 +4961,7 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             "matched_skills": matched_skill_evidence,
             "missing_or_weak_skills": [
                 item for item in evidence.values()
-                if item.get("status") in {"missing", "weak", "training_only"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only"}
+                if item.get("status") in {"missing", "weak", "training_only", "verify"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only", "contextual_support"}
             ],
             "jd_aligned_work_evidence": parsed.get("jd_aligned_work_evidence") or [],
             "jd_aligned_project_evidence": parsed.get("jd_aligned_project_evidence") or [],

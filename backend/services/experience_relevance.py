@@ -49,13 +49,23 @@ def _parse_relevance_date(value, is_end=False):
         year_text = season.group(2)
         year = int(year_text if len(year_text) == 4 else f"20{year_text}")
         start_month, end_month = {
-            "winter": (1, 2),
+            "winter": (1, 3),
             "spring": (3, 5),
             "summer": (6, 8),
             "autumn": (9, 11),
             "fall": (9, 11),
         }[season.group(1).lower()]
         month = end_month if is_end else start_month
+        return datetime(year, month, monthrange(year, month)[1] if is_end else 1)
+    month_year = re.fullmatch(
+        r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{4})",
+        text,
+        re.I,
+    )
+    if month_year:
+        month = datetime.strptime(month_year.group(1)[:3], "%b").month
+        year = int(month_year.group(2))
         return datetime(year, month, monthrange(year, month)[1] if is_end else 1)
     return parse_date(text)
 
@@ -109,6 +119,12 @@ SALESFORCE_DEV_SPECIFIC_RE = re.compile(
 SENIOR_ROLE_RE = re.compile(r"\b(senior|sr\.?|lead|principal|architect|manager|tech\s+lead)\b", re.I)
 INTERNSHIP_RE = re.compile(r"\b(intern|internship|trainee|training|certification|trailhead)\b", re.I)
 DIRECT_ROLE_PATTERNS = {
+    "embedded_firmware": re.compile(
+        r"\b(?:embedded\s+(?:firmware|software|systems?)\s+(?:engineer|developer)|"
+        r"firmware(?:\s+and\s+hardware|\s*[-/]\s*[^\n]{0,35})?\s*(?:engineer|developer)?|"
+        r"hardware\s+engineer)\b",
+        re.I,
+    ),
     "qa_automation": re.compile(
         r"\b(?:qa\s*/\s*automation|qa\s+automation(?:\s+engineer)?|automation\s+(?:test|testing|qa)\s+engineer|"
         r"test\s+automation\s+engineer|sdet|software\s+development\s+engineer\s+in\s+test|"
@@ -175,6 +191,14 @@ DIRECT_ROLE_PATTERNS = {
 FULL_STACK_ROLE_RE = re.compile(
     r"\b(full[-\s]?stack|mern|mean|web\s+developer|software\s+engineer|software\s+developer|"
     r"frontend|front[-\s]?end|backend|back[-\s]?end)\b",
+    re.I,
+)
+
+EMBEDDED_WORK_SIGNAL_RE = re.compile(
+    r"\b(?:firmware|embedded\s+(?:software|systems?|hardware|hw|fw)|rtos|real[-\s]?time|"
+    r"microcontrollers?|mcus?|pcbs?|chip\s+architectures?|hardware\s*/\s*software|"
+    r"debug(?:ged|ging)?|rf\s+(?:testing|systems?)|hf\s+and\s+vhf|"
+    r"communication\s+systems?|production\s+vehicles?|drive\s+inverter|phased\s+array)\b",
     re.I,
 )
 
@@ -555,6 +579,24 @@ def _score_ratio(value, maximum):
 
 
 def _years_from_job(job):
+    date_text = " ".join([
+        str((job or {}).get("start_date") or ""),
+        str((job or {}).get("end_date") or ""),
+    ])
+    season_terms = {
+        (name.lower(), year if len(year) == 4 else f"20{year}")
+        for name, year in re.findall(
+            r"\b(summer|winter|spring|autumn|fall)\s*'?\s*(\d{2,4})\b",
+            date_text,
+            re.I,
+        )
+    }
+    # A comma-separated co-op record describes distinct terms, not one
+    # continuous period between the first and last season.
+    if len(season_terms) >= 2:
+        return round(len(season_terms) * 0.25, 4)
+    if len(season_terms) == 1 and not str((job or {}).get("end_date") or "").strip():
+        return 0.25
     years = 0.0
     for key in ("duration_years", "years", "experience_years"):
         try:
@@ -667,6 +709,21 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             role_title_score = 100
         if role_family == "data_analytics" and DIRECT_ANALYST_ROLE_RE.search(role):
             role_title_score = 100
+
+        embedded_hits = set()
+        if role_family == "embedded_firmware":
+            embedded_hits = {match.group(0).lower() for match in EMBEDDED_WORK_SIGNAL_RE.finditer(block_text)}
+            firmware_title = bool(re.search(r"\b(?:firmware|embedded)\b", role, re.I))
+            hardware_title = bool(re.search(r"\bhardware\s+engineer\b", role, re.I))
+            generic_leadership_title = bool(re.search(r"\b(?:head\s+of\s+engineering|engineering\s+(?:lead|manager))\b", role, re.I))
+            if firmware_title:
+                role_title_score = 100
+                direct_role_match = True
+            elif hardware_title and len(embedded_hits) >= 2:
+                role_title_score = max(role_title_score, 88)
+                direct_role_match = True
+            elif generic_leadership_title and embedded_hits:
+                role_title_score = max(role_title_score, 74)
         elif role_family == "salesforce_crm" and SALESFORCE_ROLE_RE.search(role):
             role_title_score = 100
         elif role_family in {"full_stack", "dotnet_full_stack"}:
@@ -786,9 +843,13 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             if any(required.lower() == skill.lower() for skill in block_skills) or _contains_any(block_text, [required]):
                 skill_hits.append(required)
         skill_evidence_score = _score_ratio(len(set(skill_hits)), min(max(len(must_have), 1), 5))
+        if role_family == "embedded_firmware" and embedded_hits:
+            skill_evidence_score = max(skill_evidence_score, min(100, 38 + len(embedded_hits) * 9))
 
         responsibility_hits = [signal for signal in required_signals if signal and re.search(r"\b" + re.escape(signal) + r"\w*\b", block_lower)]
         responsibility_match_score = _score_ratio(len(set(responsibility_hits)), min(max(len(required_signals), 1), 5))
+        if role_family == "embedded_firmware" and embedded_hits:
+            responsibility_match_score = max(responsibility_match_score, min(100, 32 + len(embedded_hits) * 10))
         if ba_evidence_hits:
             responsibility_match_score = max(responsibility_match_score, min(100, len(ba_evidence_hits) * 24))
         if role_family == "software_frontend":
@@ -836,6 +897,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             domain_hits += sum(1 for hits in m365_migration_group_hits.values() if hits)
         if role_family == "aml_transaction_monitoring":
             domain_hits += sum(1 for hits in aml_tm_group_hits.values() if hits)
+        if role_family == "embedded_firmware":
+            domain_hits += min(3, len(embedded_hits))
         domain_match_score = min(100, domain_hits * 35)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_evidence_hits:
@@ -860,6 +923,10 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             final_block_score = max(final_block_score, 78)
         if direct_role_match and (skill_evidence_score >= 25 or responsibility_match_score >= 20):
             final_block_score = max(final_block_score, 82)
+        if role_family == "embedded_firmware" and generic_leadership_title and embedded_hits:
+            # A generic leadership title remains only partially relevant unless
+            # the title itself proves firmware/embedded identity.
+            final_block_score = max(final_block_score, 60)
         if role_family in {"business_analyst", "business_analysis"}:
             if ba_direct_role and len(ba_evidence_hits) >= 2:
                 final_block_score = max(final_block_score, 86)
@@ -956,4 +1023,7 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         "experience_relevance_label": label,
         "experience_evidence": evidence,
         "experience_warnings": warnings,
+        "candidate_role_affinity": {
+            role_family: round(min(1.0, role_relevance_score / 100), 2)
+        } if role_family != "other" else {},
     }

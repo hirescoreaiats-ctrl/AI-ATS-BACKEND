@@ -285,6 +285,9 @@ def enrich_recruiter_decision(score_data: dict, jd_profile: dict | None = None, 
         concerns.append("Missing critical must-have evidence: " + ", ".join(missing_critical[:5]))
     if missing_core_groups:
         concerns.append("Missing core groups: " + ", ".join(_label_list(missing_core_groups, 5)))
+    verification_required = normalize_skill_list(score_data.get("verification_required_skills") or [])
+    if verification_required:
+        concerns.append("Needs explicit verification: " + ", ".join(verification_required[:5]))
     if parser_action == "manual_review_required":
         concerns.append("Parser quality requires manual review.")
     if role_alignment in {"mismatch", "weak", "transferable"}:

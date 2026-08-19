@@ -4,6 +4,48 @@ from backend.services.taxonomy import equivalent_skill, known_skills_in_text, no
 
 
 ROLE_FAMILIES = {
+    "embedded_firmware": {
+        "patterns": [
+            r"\bfirmware\s*/\s*embedded\s+software\s+engineer\b",
+            r"\bembedded\s+(?:firmware|software|systems?)\s+(?:engineer|developer)\b",
+            r"\bfirmware\s+(?:engineer|developer)\b",
+            r"\bembedded\s+(?:firmware|software|systems?)\b",
+            r"\brtos\b",
+            r"\bmicrocontrollers?\b",
+        ],
+        "skills": [
+            "C", "C++", "Firmware", "Embedded Firmware", "Embedded Software",
+            "Embedded Systems", "Embedded Hardware", "Microcontrollers", "RTOS",
+            "Real-time Systems", "Real-time Firmware", "Debugging",
+            "Hardware/Software Integration", "Printed Circuit Board",
+            "Electronic Schematics", "Laboratory Equipment", "RF Systems",
+            "Communication Systems", "Telecommunications", "Python", "Git", "Jira",
+        ],
+        "default_must_have": [
+            "C", "Embedded Firmware", "Embedded Systems", "Microcontrollers",
+            "Embedded Hardware", "Debugging", "Hardware/Software Integration",
+        ],
+        "default_nice_to_have": [
+            "RTOS", "Real-time Systems", "Python", "Printed Circuit Board",
+            "Electronic Schematics", "Laboratory Equipment", "RF Systems",
+            "Telecommunications", "Git", "Jira",
+        ],
+        "default_core_groups": {
+            "programming": ["C", "C++"],
+            "embedded_firmware": ["Firmware", "Embedded Firmware", "Embedded Software", "Embedded Systems", "RTOS", "Real-time Systems", "Real-time Firmware"],
+            "microcontroller_hardware": ["Microcontrollers", "Embedded Hardware", "Printed Circuit Board"],
+            "debugging_integration": ["Debugging", "Hardware/Software Integration"],
+        },
+        "core_groups": {
+            "programming": ["C", "C++"],
+            "embedded_firmware": ["Firmware", "Embedded Firmware", "Embedded Software", "Embedded Systems", "RTOS", "Real-time Systems", "Real-time Firmware"],
+            "microcontroller_hardware": ["Microcontrollers", "Embedded Hardware", "Printed Circuit Board"],
+            "debugging_integration": ["Debugging", "Hardware/Software Integration"],
+            "hardware_electronics": ["Electronic Schematics", "Laboratory Equipment", "Printed Circuit Board"],
+            "test_automation": ["Python", "Automation Testing"],
+            "production_support": ["Firmware", "Debugging", "Validation"],
+        },
+    },
     "qa_automation": {
         "patterns": [
             r"\bqa\s+automation\b",
@@ -736,21 +778,46 @@ def role_family_default_nice_to_have(role_family):
     return normalize_skill_list((ROLE_FAMILIES.get(role_family) or {}).get("default_nice_to_have") or [])
 
 
-def detect_role_family(text, skills=None):
+def detect_role_family(text, skills=None, role_title=""):
     combined = f"{text or ''} {' '.join(str(item) for item in skills or [])}".lower()
+    title_text = str(role_title or "").lower()
     best_family = "other"
     best_score = 0
 
     for family, config in ROLE_FAMILIES.items():
         score = 0
+        pattern_hits = 0
         for pattern in config.get("patterns") or []:
+            if title_text and re.search(pattern, title_text, re.I):
+                score += 40
             if re.search(pattern, combined, re.I):
                 score += 5
+                pattern_hits += 1
         family_skills = normalize_skill_list(config.get("skills") or [])
         input_skills = normalize_skill_list(skills or [])
         for skill in input_skills:
             if any(skill.lower() == item.lower() or equivalent_skill(skill, item) for item in family_skills):
                 score += 3
+        # Generic testing language is common in engineering JDs. It can support a
+        # QA title, but it cannot override an explicit non-QA title by itself.
+        if family in {"qa_automation", "manual_qa"} and title_text:
+            qa_title = bool(re.search(
+                r"\b(?:qa|sqa|sdet|quality\s+assurance|quality\s+engineer|"
+                r"test\s+automation\s+engineer|automation\s+test(?:ing)?\s+engineer|"
+                r"software\s+testing\s+engineer|manual\s+tester)\b",
+                title_text,
+                re.I,
+            ))
+            explicit_non_qa = bool(re.search(
+                r"\b(?:firmware|embedded|backend|front[-\s]?end|full[-\s]?stack|"
+                r"data\s+engineer|devops|mobile|salesforce)\b",
+                title_text,
+                re.I,
+            ))
+            if explicit_non_qa and not qa_title:
+                score = min(score, 12)
+        if family in {"qa_automation", "manual_qa"} and pattern_hits == 0:
+            score = 0
         if score > best_score:
             best_family = family
             best_score = score

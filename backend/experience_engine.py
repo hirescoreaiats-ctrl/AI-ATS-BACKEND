@@ -205,7 +205,6 @@ def safe_parse_date(date_str, is_end=False):
 
     if not date_str:
         return None
-
     date_str = str(date_str).strip()
     date_str = (
         date_str.replace("‘", "")
@@ -225,7 +224,7 @@ def safe_parse_date(date_str, is_end=False):
         year_text = season_match.group(2)
         year = int(year_text if len(year_text) == 4 else f"20{year_text}")
         start_month, end_month = {
-            "winter": (1, 2),
+            "winter": (1, 3),
             "spring": (3, 5),
             "summer": (6, 8),
             "autumn": (9, 11),
@@ -251,6 +250,17 @@ def safe_parse_date(date_str, is_end=False):
             return datetime(year, 12, 31)
         return datetime(year, 1, 1)
 
+    month_year = re.fullmatch(
+        r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{4})",
+        date_str,
+        re.I,
+    )
+    if month_year:
+        month = datetime.strptime(month_year.group(1)[:3], "%b").month
+        year = int(month_year.group(2))
+        return datetime(year, month, monthrange(year, month)[1] if is_end else 1)
+
     try:
         parsed = parser.parse(date_str, fuzzy=True)
         if is_end and not re.search(r"\b\d{1,2}\b", date_str):
@@ -260,6 +270,28 @@ def safe_parse_date(date_str, is_end=False):
 
     except:
         return None
+
+
+def _distinct_season_periods(job):
+    text = " ".join([
+        str((job or {}).get("start_date") or ""),
+        str((job or {}).get("end_date") or ""),
+    ])
+    tokens = []
+    seen = set()
+    for season, year_text in re.findall(
+        r"\b(summer|winter|spring|autumn|fall)\s*'?\s*(\d{2,4})\b",
+        text,
+        re.I,
+    ):
+        year = year_text if len(year_text) == 4 else f"20{year_text}"
+        key = (season.lower(), year)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = f"{season} {year}"
+        tokens.append((safe_parse_date(label), safe_parse_date(label, is_end=True)))
+    return [(start, end) for start, end in tokens if start and end] if len(tokens) >= 2 else []
 
 
 def merge_overlapping_periods(periods):
@@ -392,6 +424,7 @@ def process_experience(experience_list):
             continue
 
         raw_end = str(job.get("end_date") or "")
+        distinct_seasons = _distinct_season_periods(job)
         is_current = raw_end.strip().lower() in ["present", "current", "till date"] or "present" in raw_end.lower()
         start = safe_parse_date(job.get("start_date"))
         end = safe_parse_date(job.get("end_date"), is_end=True)
@@ -445,7 +478,10 @@ def process_experience(experience_list):
 
         })
 
-        date_ranges.append((start, end))
+        if distinct_seasons:
+            date_ranges.extend(distinct_seasons)
+        else:
+            date_ranges.append((start, end))
 
     if not processed:
         return {
