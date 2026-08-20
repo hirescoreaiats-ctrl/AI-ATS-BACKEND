@@ -221,6 +221,7 @@ def ensure_resume_columns():
         add_column("resumes", resume_columns, "apply_tracking_url", "TEXT")
 
         add_column("jobs", job_columns, "organization_id", "VARCHAR")
+        add_column("jobs", job_columns, "company_website", "VARCHAR")
         add_column("jobs", job_columns, "preferred_skills", "TEXT")
         add_column("jobs", job_columns, "owner_user_id", "VARCHAR")
         add_column("jobs", job_columns, "pipeline_template", "TEXT")

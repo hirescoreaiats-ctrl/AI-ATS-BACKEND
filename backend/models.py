@@ -23,6 +23,7 @@ class Job(Base):
     # Job post info
     job_title = Column(String)
     company_name = Column(String)
+    company_website = Column(String, nullable=True)
     location = Column(String)
     salary_range = Column(String)
     job_type = Column(String)

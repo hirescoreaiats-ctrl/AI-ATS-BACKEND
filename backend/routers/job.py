@@ -17,7 +17,7 @@ import tempfile
 import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 import requests
 from sqlalchemy import and_, case, false, func, or_
 from cryptography.fernet import Fernet, InvalidToken
@@ -1331,6 +1331,7 @@ class JobCreate(BaseModel):
 
     job_title: str
     company_name: str
+    company_website: str | None = None
     department: str | None = None
     location: str
     work_mode: str | None = None
@@ -1620,12 +1621,27 @@ def _requirement_platform_job_url(job_id: str) -> str:
     return f"{base}{separator}{urlencode({'job_id': job_id})}"
 
 
+def _normalize_company_website(value: str | None) -> str | None:
+    website = (value or "").strip()
+    if not website:
+        return None
+    if re.match(r"^[a-z][a-z0-9+.-]*:", website, flags=re.I) and not re.match(r"^https?://", website, flags=re.I):
+        raise HTTPException(status_code=400, detail="Company website must be a valid HTTP or HTTPS URL.")
+    if "://" not in website:
+        website = f"https://{website}"
+    parsed = urlsplit(website)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or any(char.isspace() for char in parsed.netloc):
+        raise HTTPException(status_code=400, detail="Company website must be a valid HTTP or HTTPS URL.")
+    return website[:500]
+
+
 def _public_sourcing_requirement(job: Job, db=None) -> dict:
     links = build_apply_links(job, db)
     return {
         "id": job.id,
         "title": job.job_title,
         "company_name": job.company_name,
+        "company_website": job.company_website,
         "department": job.department,
         "location": job.location,
         "work_mode": job.work_mode,
@@ -1650,6 +1666,7 @@ def _deliver_sourcing_request_email(job: Job, owner: User, db) -> dict:
         ("Account company", getattr(owner, "company_name", None) or "Not provided"),
         ("Job title", job.job_title),
         ("Hiring company", job.company_name),
+        ("Company website", job.company_website or "Not provided"),
         ("Department", job.department or "Not provided"),
         ("Location", job.location),
         ("Work mode", job.work_mode or "Not provided"),
@@ -1740,6 +1757,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
 
             job_title=job.job_title,
             company_name=job.company_name,
+            company_website=_normalize_company_website(job.company_website),
 
             department=job.department,
             location=job.location,

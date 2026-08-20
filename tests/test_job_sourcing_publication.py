@@ -13,6 +13,7 @@ def job_input(*, sourcing: bool):
     return job_router.JobCreate(
         job_title="Embedded Software Engineer",
         company_name="Example Devices",
+        company_website="exampledevices.com",
         department="Engineering",
         location="Bengaluru",
         work_mode="Hybrid",
@@ -54,6 +55,7 @@ def test_sourcing_opt_in_publishes_job_and_sends_complete_email(monkeypatch, ten
     feed = job_router.public_sourcing_requirements(job_id=stored.id, limit=10)
     assert feed["count"] == 1
     assert feed["results"][0]["title"] == "Embedded Software Engineer"
+    assert feed["results"][0]["company_website"] == "https://exampledevices.com"
     assert feed["results"][0]["primary_skills"] == ["C", "RTOS", "Microcontrollers"]
     assert "hiring_manager" not in feed["results"][0]
 
@@ -78,6 +80,7 @@ def test_sourcing_email_contains_owner_and_complete_job_details(monkeypatch, ten
         id="email-job",
         job_title="Embedded Software Engineer",
         company_name="Example Devices",
+        company_website="https://exampledevices.com/careers",
         department="Engineering",
         location="Bengaluru",
         work_mode="Hybrid",
@@ -100,9 +103,27 @@ def test_sourcing_email_contains_owner_and_complete_job_details(monkeypatch, ten
     assert captured["to_email"].lower() == "info@hirescoreai.com"
     assert "Recruiter email: recruiter@example.com" in captured["text_body"]
     assert "Hiring manager: Engineering Lead" in captured["text_body"]
+    assert "Company website: https://exampledevices.com/careers" in captured["text_body"]
     assert "Required skills: C,RTOS,Microcontrollers" in captured["text_body"]
     assert "Full job description: Complete embedded firmware job description." in captured["text_body"]
     assert "requirement-platform/?view=requirements&amp;job_id=email-job" in captured["html_body"]
+
+
+def test_company_website_is_optional_and_rejects_unsafe_schemes(monkeypatch, tenant_db):
+    monkeypatch.setattr(job_router, "enrich_jd_for_scoring", scoring_enrichment)
+    no_website = job_input(sourcing=False)
+    no_website.company_website = None
+    response = job_router.create_job(no_website, user=recruiter("org-a"))
+    assert tenant_db.query(Job).filter(Job.id == response["job_id"]).one().company_website is None
+
+    unsafe = job_input(sourcing=False)
+    unsafe.company_website = "javascript:alert(1)"
+    try:
+        job_router.create_job(unsafe, user=recruiter("org-a"))
+    except job_router.HTTPException as exc:
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("Unsafe company website should be rejected")
 
 
 def test_no_sourcing_opt_in_does_not_publish_or_send(monkeypatch, tenant_db):
