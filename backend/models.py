@@ -49,6 +49,10 @@ class Job(Base):
     jd_hash = Column(String, nullable=True, index=True)
     jd_profile_version = Column(String, nullable=True)
     jd_profile_json = Column(Text, nullable=True)
+    sourcing_requested = Column(Boolean, nullable=False, default=False, index=True)
+    sourcing_requested_at = Column(DateTime, nullable=True, index=True)
+    sourcing_email_status = Column(String, nullable=True)
+    sourcing_email_error = Column(Text, nullable=True)
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

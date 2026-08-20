@@ -238,6 +238,10 @@ def ensure_resume_columns():
         add_column("jobs", job_columns, "jd_hash", "VARCHAR")
         add_column("jobs", job_columns, "jd_profile_version", "VARCHAR")
         add_column("jobs", job_columns, "jd_profile_json", "TEXT")
+        add_column("jobs", job_columns, "sourcing_requested", boolean_false_definition)
+        add_column("jobs", job_columns, "sourcing_requested_at", datetime_definition)
+        add_column("jobs", job_columns, "sourcing_email_status", "VARCHAR")
+        add_column("jobs", job_columns, "sourcing_email_error", "TEXT")
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_jobs_apply_slug ON jobs (apply_slug)"))
 
         if organization_columns:

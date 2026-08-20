@@ -41,6 +41,7 @@ from backend.services.scoring_context import apply_job_jd_snapshot, apply_job_sc
 from backend.services.semantic_service import cosine_similarity_cached
 from backend.services.storage import download_stored_file, is_remote_storage_uri, materialize_resume_file, persist_resume_file
 from backend.services.storage_service import is_vercel_blob_uri, upload_resume_file
+from backend.services.transactional_email import send_transactional_email
 from backend.services.pilot_access import enforce_job_activation, enforce_job_creation, release_resume_reservation, reserve_resume_batch
 from backend.services.sourcing import (
     TRACKED_APPLICATION_SOURCES,
@@ -1342,6 +1343,7 @@ class JobCreate(BaseModel):
     shortlist_score: int = 70
     public_apply_enabled: bool = True
     source_tracking_enabled: bool = True
+    request_candidate_sourcing: bool = False
 
 
 class ShortlistFilterRequest(BaseModel):
@@ -1612,6 +1614,71 @@ def _jd_autofill_payload(jd_text: str) -> dict:
     }
 
 
+def _requirement_platform_job_url(job_id: str) -> str:
+    base = (get_settings().requirement_platform_url or "https://hirescoreai.com/requirement-platform/?view=requirements").strip()
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{urlencode({'job_id': job_id})}"
+
+
+def _public_sourcing_requirement(job: Job, db=None) -> dict:
+    links = build_apply_links(job, db)
+    return {
+        "id": job.id,
+        "title": job.job_title,
+        "company_name": job.company_name,
+        "department": job.department,
+        "location": job.location,
+        "work_mode": job.work_mode,
+        "employment_type": job.job_type,
+        "salary_range": job.salary_range,
+        "experience_required": job.experience_required,
+        "primary_skills": _split_skill_text(job.required_skills),
+        "secondary_skills": _split_skill_text(job.preferred_skills),
+        "description": job.jd_text,
+        "application_deadline": job.application_deadline,
+        "apply_url": links.get("main"),
+        "published_at": job.sourcing_requested_at.isoformat() if job.sourcing_requested_at else None,
+    }
+
+
+def _deliver_sourcing_request_email(job: Job, owner: User, db) -> dict:
+    public = _public_sourcing_requirement(job, db)
+    entries = [
+        ("ATS job ID", job.id),
+        ("Created by", getattr(owner, "name", None) or "Not provided"),
+        ("Recruiter email", getattr(owner, "email", None) or "Not provided"),
+        ("Account company", getattr(owner, "company_name", None) or "Not provided"),
+        ("Job title", job.job_title),
+        ("Hiring company", job.company_name),
+        ("Department", job.department or "Not provided"),
+        ("Location", job.location),
+        ("Work mode", job.work_mode or "Not provided"),
+        ("Employment type", job.job_type),
+        ("Experience", job.experience_required or "Not provided"),
+        ("Salary / CTC", job.salary_range or "Not provided"),
+        ("Required skills", job.required_skills or "Not provided"),
+        ("Preferred skills", job.preferred_skills or "Not provided"),
+        ("Application deadline", job.application_deadline or "Not provided"),
+        ("Hiring manager", job.hiring_manager or "Not provided"),
+        ("Public apply link", public["apply_url"] or "Not available"),
+        ("Requirement Platform link", _requirement_platform_job_url(job.id)),
+        ("Full job description", job.jd_text),
+    ]
+    text_body = "New ATS candidate sourcing request\n\n" + "\n".join(f"{label}: {value}" for label, value in entries)
+    rows = "".join(
+        f'<tr><th style="text-align:left;padding:8px;border:1px solid #ddd;vertical-align:top">{html.escape(str(label))}</th>'
+        f'<td style="padding:8px;border:1px solid #ddd;white-space:pre-wrap">{html.escape(str(value))}</td></tr>'
+        for label, value in entries
+    )
+    return send_transactional_email(
+        to_email=get_settings().sourcing_request_to_email,
+        to_name="HireScore AI Sourcing",
+        subject=f"Candidate sourcing request: {job.job_title} — {job.company_name}",
+        text_body=text_body,
+        html_body=f"<h1>New ATS candidate sourcing request</h1><table style='border-collapse:collapse'>{rows}</table>",
+    )
+
+
 @router.post("/parse-jd-text", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
 def parse_jd_text(data: JDTextParseRequest):
     jd_text = normalize_extracted_text(data.jd_text or "")
@@ -1698,6 +1765,9 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
             education=edu,
             organization_id=_user_organization_id(effective_user),
             owner_user_id=effective_user.id,
+            sourcing_requested=bool(job.request_candidate_sourcing),
+            sourcing_requested_at=datetime.utcnow() if job.request_candidate_sourcing else None,
+            sourcing_email_status="pending" if job.request_candidate_sourcing else None,
         )
 
         db.add(new_job)
@@ -1707,11 +1777,51 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
         db.commit()
         db.refresh(new_job)
 
+        email_delivery = None
+        if new_job.sourcing_requested:
+            try:
+                email_delivery = _deliver_sourcing_request_email(new_job, effective_user, db)
+                new_job.sourcing_email_status = "sent"
+                new_job.sourcing_email_error = None
+            except Exception as exc:
+                logger.exception("Candidate sourcing request email failed for job %s", new_job.id)
+                new_job.sourcing_email_status = "failed"
+                new_job.sourcing_email_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            db.commit()
+            db.refresh(new_job)
+
         payload = sourcing_payload(new_job)
         return {
             "job_id": new_job.id,
             "apply_link": links["main"],
+            "sourcing_requested": bool(new_job.sourcing_requested),
+            "sourcing_email_status": new_job.sourcing_email_status,
+            "sourcing_email_provider": (email_delivery or {}).get("provider"),
+            "requirement_url": _requirement_platform_job_url(new_job.id) if new_job.sourcing_requested else None,
             **payload,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/public-sourcing-requirements")
+def public_sourcing_requirements(
+    job_id: str | None = Query(default=None),
+    limit: int = Query(default=30, ge=1, le=100),
+):
+    """Sanitized public feed for hirescoreai.com Requirement Platform."""
+    db = SessionLocal()
+    try:
+        query = db.query(Job).filter(
+            Job.is_active == True,
+            Job.sourcing_requested == True,
+        )
+        if job_id:
+            query = query.filter(Job.id == job_id)
+        rows = query.order_by(Job.sourcing_requested_at.desc(), Job.created_at.desc(), Job.id.desc()).limit(limit).all()
+        return {
+            "results": [_public_sourcing_requirement(row, db) for row in rows],
+            "count": len(rows),
         }
     finally:
         db.close()
