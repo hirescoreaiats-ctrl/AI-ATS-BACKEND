@@ -54,6 +54,11 @@ class Job(Base):
     sourcing_requested_at = Column(DateTime, nullable=True, index=True)
     sourcing_email_status = Column(String, nullable=True)
     sourcing_email_error = Column(Text, nullable=True)
+    sourcing_approval_status = Column(String, nullable=True, index=True)
+    sourcing_approval_token_hash = Column(String, nullable=True, index=True)
+    sourcing_approved_at = Column(DateTime, nullable=True)
+    sourcing_rejected_at = Column(DateTime, nullable=True)
+    sourcing_request_source = Column(String, nullable=True)
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -243,6 +243,11 @@ def ensure_resume_columns():
         add_column("jobs", job_columns, "sourcing_requested_at", datetime_definition)
         add_column("jobs", job_columns, "sourcing_email_status", "VARCHAR")
         add_column("jobs", job_columns, "sourcing_email_error", "TEXT")
+        add_column("jobs", job_columns, "sourcing_approval_status", "VARCHAR")
+        add_column("jobs", job_columns, "sourcing_approval_token_hash", "VARCHAR")
+        add_column("jobs", job_columns, "sourcing_approved_at", datetime_definition)
+        add_column("jobs", job_columns, "sourcing_rejected_at", datetime_definition)
+        add_column("jobs", job_columns, "sourcing_request_source", "VARCHAR")
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_jobs_apply_slug ON jobs (apply_slug)"))
 
         if organization_columns:

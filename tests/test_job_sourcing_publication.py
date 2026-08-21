@@ -41,7 +41,7 @@ def scoring_enrichment(*_args, **_kwargs):
 def test_sourcing_opt_in_publishes_job_and_sends_complete_email(monkeypatch, tenant_db):
     sent = []
     monkeypatch.setattr(job_router, "enrich_jd_for_scoring", scoring_enrichment)
-    monkeypatch.setattr(job_router, "_deliver_sourcing_request_email", lambda job, owner, db: sent.append((job.id, owner.id)) or {"provider": "test"})
+    monkeypatch.setattr(job_router, "_deliver_sourcing_request_email", lambda job, owner, db, token, extra_entries=None: sent.append((job.id, owner.id, bool(token))) or {"provider": "test"})
 
     response = job_router.create_job(job_input(sourcing=True), user=recruiter("org-a"))
     stored = tenant_db.query(Job).filter(Job.id == response["job_id"]).one()
@@ -49,9 +49,13 @@ def test_sourcing_opt_in_publishes_job_and_sends_complete_email(monkeypatch, ten
     assert stored.sourcing_requested is True
     assert stored.sourcing_requested_at is not None
     assert stored.sourcing_email_status == "sent"
-    assert sent == [(stored.id, "user-org-a")]
+    assert sent == [(stored.id, "user-org-a", True)]
+    assert stored.sourcing_approval_status == "pending"
     assert response["requirement_url"].startswith("https://hirescoreai.com/requirement-platform/?view=requirements&job_id=")
 
+    assert job_router.public_sourcing_requirements(job_id=stored.id, limit=10)["count"] == 0
+    stored.sourcing_approval_status = "approved"
+    tenant_db.commit()
     feed = job_router.public_sourcing_requirements(job_id=stored.id, limit=10)
     assert feed["count"] == 1
     assert feed["results"][0]["title"] == "Embedded Software Engineer"
@@ -97,13 +101,15 @@ def test_sourcing_email_contains_owner_and_complete_job_details(monkeypatch, ten
     )
     owner = SimpleNamespace(id="owner-1", name="Recruiter Name", email="recruiter@example.com", company_name="Account Company")
 
-    result = job_router._deliver_sourcing_request_email(job, owner, tenant_db)
+    result = job_router._deliver_sourcing_request_email(job, owner, tenant_db, "review-token")
 
     assert result["provider"] == "test"
     assert captured["to_email"].lower() == "info@hirescoreai.com"
     assert "Recruiter email: recruiter@example.com" in captured["text_body"]
     assert "Hiring manager: Engineering Lead" in captured["text_body"]
     assert "Company website: https://exampledevices.com/careers" in captured["text_body"]
+    assert "Approval status: Pending" in captured["text_body"]
+    assert "Review requirement" in captured["html_body"]
     assert "Required skills: C,RTOS,Microcontrollers" in captured["text_body"]
     assert "Full job description: Complete embedded firmware job description." in captured["text_body"]
     assert "requirement-platform/?view=requirements&amp;job_id=email-job" in captured["html_body"]
@@ -134,4 +140,61 @@ def test_no_sourcing_opt_in_does_not_publish_or_send(monkeypatch, tenant_db):
 
     assert response["sourcing_requested"] is False
     assert response["requirement_url"] is None
+    assert job_router.public_sourcing_requirements(job_id=response["job_id"], limit=10)["count"] == 0
+
+
+def vendor_input():
+    return job_router.PublicSourcingSubmission(
+        fullName="Vendor Recruiter", workEmail="vendor@example.com", phone="+91 9000000000",
+        companyName="Vendor Company", companyWebsite="vendor.example.com", jobTitle="Python Engineer",
+        openings=3, location="Remote / India", workMode="Remote", experienceRange="3-5 years",
+        mustHaveSkills="Python, FastAPI, SQL", preferredSkills="AWS", budgetRange="15-20 LPA",
+        maximumNoticePeriod="30 days", candidatesRequired=10, targetShortlistDate="2026-09-30",
+        hiringUrgency="Within 30 days", jobDescription="Build secure Python APIs and maintain production backend services.",
+        additionalDetails="Replacement hiring", consent=True,
+    )
+
+
+def test_vendor_submission_is_pending_until_admin_approval(monkeypatch, tenant_db):
+    captured = {}
+    monkeypatch.setattr(job_router, "enrich_jd_for_scoring", scoring_enrichment)
+    monkeypatch.setattr(
+        job_router,
+        "_deliver_sourcing_request_email",
+        lambda job, owner, db, token, extra_entries=None: captured.update(job=job.id, email=owner.email, token=token, extra=extra_entries) or {"provider": "test"},
+    )
+
+    response = job_router.submit_public_sourcing_requirement(vendor_input())
+    stored = tenant_db.query(Job).filter(Job.id == response["job_id"]).one()
+
+    assert response["status"] == "pending_approval"
+    assert stored.sourcing_request_source == "vendor"
+    assert stored.sourcing_approval_status == "pending"
+    assert stored.company_website == "https://vendor.example.com"
+    assert captured["email"] == "vendor@example.com"
+    assert captured["token"]
+    assert job_router.public_sourcing_requirements(job_id=stored.id, limit=10)["count"] == 0
+
+    review = job_router.sourcing_review(captured["token"])
+    assert review.status_code == 200
+    assert b"Approve &amp; publish" not in review.body
+    assert b"Approve & publish" in review.body
+
+    approved = job_router.sourcing_review_decision(captured["token"], captured["token"], "approve")
+    assert approved.status_code == 200
+    assert b"now published" in approved.body
+    assert job_router.public_sourcing_requirements(job_id=stored.id, limit=10)["count"] == 1
+
+
+def test_rejected_requirement_stays_hidden_and_invalid_review_is_safe(monkeypatch, tenant_db):
+    token_holder = {}
+    monkeypatch.setattr(job_router, "enrich_jd_for_scoring", scoring_enrichment)
+    monkeypatch.setattr(job_router, "_deliver_sourcing_request_email", lambda job, owner, db, token, extra_entries=None: token_holder.update(token=token) or {"provider": "test"})
+    response = job_router.submit_public_sourcing_requirement(vendor_input())
+
+    assert job_router.sourcing_review("not-a-real-token").status_code == 404
+    assert job_router.sourcing_review_decision(token_holder["token"], "different-token", "approve").status_code == 400
+    rejected = job_router.sourcing_review_decision(token_holder["token"], token_holder["token"], "reject")
+    assert rejected.status_code == 200
+    assert b"remains hidden" in rejected.body
     assert job_router.public_sourcing_requirements(job_id=response["job_id"], limit=10)["count"] == 0

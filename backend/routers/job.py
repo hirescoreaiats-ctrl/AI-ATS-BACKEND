@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, Query, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Body, Depends, Query, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse, RedirectResponse
 import csv
@@ -1347,6 +1347,29 @@ class JobCreate(BaseModel):
     request_candidate_sourcing: bool = False
 
 
+class PublicSourcingSubmission(BaseModel):
+    fullName: str
+    workEmail: str
+    phone: str
+    companyName: str
+    companyWebsite: str | None = None
+    jobTitle: str
+    openings: int
+    location: str
+    workMode: str
+    experienceRange: str
+    mustHaveSkills: str
+    preferredSkills: str | None = None
+    budgetRange: str
+    maximumNoticePeriod: str
+    candidatesRequired: int
+    targetShortlistDate: str
+    hiringUrgency: str
+    jobDescription: str
+    additionalDetails: str | None = None
+    consent: bool = False
+
+
 class ShortlistFilterRequest(BaseModel):
     job_id: str
     min_score: float | None = None
@@ -1635,6 +1658,15 @@ def _normalize_company_website(value: str | None) -> str | None:
     return website[:500]
 
 
+def _new_sourcing_approval_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _sourcing_review_url(token: str) -> str:
+    return f"{resolve_public_base_url().rstrip('/')}/sourcing-review/{token}"
+
+
 def _public_sourcing_requirement(job: Job, db=None) -> dict:
     links = build_apply_links(job, db)
     return {
@@ -1657,7 +1689,7 @@ def _public_sourcing_requirement(job: Job, db=None) -> dict:
     }
 
 
-def _deliver_sourcing_request_email(job: Job, owner: User, db) -> dict:
+def _deliver_sourcing_request_email(job: Job, owner, db, approval_token: str, extra_entries: list[tuple[str, object]] | None = None) -> dict:
     public = _public_sourcing_requirement(job, db)
     entries = [
         ("ATS job ID", job.id),
@@ -1680,6 +1712,9 @@ def _deliver_sourcing_request_email(job: Job, owner: User, db) -> dict:
         ("Public apply link", public["apply_url"] or "Not available"),
         ("Requirement Platform link", _requirement_platform_job_url(job.id)),
         ("Full job description", job.jd_text),
+        *(extra_entries or []),
+        ("Approval status", "Pending — this requirement is not public yet"),
+        ("Review and approve", _sourcing_review_url(approval_token)),
     ]
     text_body = "New ATS candidate sourcing request\n\n" + "\n".join(f"{label}: {value}" for label, value in entries)
     rows = "".join(
@@ -1690,10 +1725,61 @@ def _deliver_sourcing_request_email(job: Job, owner: User, db) -> dict:
     return send_transactional_email(
         to_email=get_settings().sourcing_request_to_email,
         to_name="HireScore AI Sourcing",
-        subject=f"Candidate sourcing request: {job.job_title} — {job.company_name}",
+        subject=f"Approval required: {job.job_title} — {job.company_name}",
         text_body=text_body,
-        html_body=f"<h1>New ATS candidate sourcing request</h1><table style='border-collapse:collapse'>{rows}</table>",
+        html_body=f"<h1>Candidate sourcing approval required</h1><p>This requirement will remain hidden until approved.</p><p><a href='{html.escape(_sourcing_review_url(approval_token))}' style='display:inline-block;padding:12px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px'>Review requirement</a></p><table style='border-collapse:collapse'>{rows}</table>",
     )
+
+
+def _review_page(job: Job, token: str, message: str = "") -> str:
+    safe_token = html.escape(token, quote=True)
+    notice = f"<p class='notice'>{html.escape(message)}</p>" if message else ""
+    return f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Requirement approval</title><style>body{{margin:0;background:#080d18;color:#e5edf8;font:15px Arial,sans-serif}}main{{max-width:780px;margin:48px auto;padding:30px;border:1px solid #24324a;border-radius:18px;background:#101827}}h1{{margin-top:0}}dl{{display:grid;grid-template-columns:170px 1fr;gap:10px 18px}}dt{{color:#8293ab}}dd{{margin:0;white-space:pre-wrap}}form{{display:flex;gap:12px;margin-top:28px}}button{{padding:12px 20px;border:0;border-radius:9px;font-weight:800;cursor:pointer}}.approve{{background:#22c55e;color:#052e16}}.reject{{background:#ef4444;color:#fff}}.notice{{padding:12px;border-radius:8px;background:#17233a}}</style></head><body><main><h1>Review sourcing requirement</h1>{notice}<dl><dt>Status</dt><dd>{html.escape(job.sourcing_approval_status or 'pending')}</dd><dt>Role</dt><dd>{html.escape(job.job_title or '')}</dd><dt>Company</dt><dd>{html.escape(job.company_name or '')}</dd><dt>Location</dt><dd>{html.escape(job.location or '')}</dd><dt>Experience</dt><dd>{html.escape(job.experience_required or '')}</dd><dt>Salary</dt><dd>{html.escape(job.salary_range or '')}</dd><dt>Required skills</dt><dd>{html.escape(job.required_skills or '')}</dd><dt>Job description</dt><dd>{html.escape(job.jd_text or '')}</dd></dl><form method='post'><input type='hidden' name='token' value='{safe_token}'><button class='approve' name='decision' value='approve'>Approve & publish</button><button class='reject' name='decision' value='reject'>Reject</button></form></main></body></html>"""
+
+
+def _job_for_approval_token(db, token: str) -> Job | None:
+    digest = hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+    return db.query(Job).filter(Job.sourcing_approval_token_hash == digest).one_or_none()
+
+
+@router.get("/sourcing-review/{token}", response_class=HTMLResponse)
+def sourcing_review(token: str):
+    db = SessionLocal()
+    try:
+        job = _job_for_approval_token(db, token)
+        if not job:
+            return HTMLResponse("<h1>Invalid or expired review link</h1>", status_code=404)
+        return HTMLResponse(_review_page(job, token))
+    finally:
+        db.close()
+
+
+@router.post("/sourcing-review/{path_token}", response_class=HTMLResponse)
+def sourcing_review_decision(path_token: str, token: str = Form(...), decision: str = Form(...)):
+    if not secrets.compare_digest(path_token, token):
+        return HTMLResponse("<h1>Invalid review request</h1>", status_code=400)
+    db = SessionLocal()
+    try:
+        job = _job_for_approval_token(db, token)
+        if not job:
+            return HTMLResponse("<h1>Invalid or expired review link</h1>", status_code=404)
+        now = datetime.utcnow()
+        if decision == "approve":
+            job.sourcing_approval_status = "approved"
+            job.sourcing_approved_at = now
+            job.sourcing_rejected_at = None
+            message = "Approved. This requirement is now published."
+        elif decision == "reject":
+            job.sourcing_approval_status = "rejected"
+            job.sourcing_rejected_at = now
+            message = "Rejected. This requirement remains hidden."
+        else:
+            return HTMLResponse("<h1>Invalid decision</h1>", status_code=400)
+        db.commit()
+        db.refresh(job)
+        return HTMLResponse(_review_page(job, token, message))
+    finally:
+        db.close()
 
 
 @router.post("/parse-jd-text", dependencies=LEGACY_RECRUITER_DEPENDENCIES)
@@ -1753,6 +1839,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
         if isinstance(edu, list):
             edu = ",".join(edu)
 
+        approval_token, approval_token_hash = _new_sourcing_approval_token() if job.request_candidate_sourcing else (None, None)
         new_job = Job(
 
             job_title=job.job_title,
@@ -1786,6 +1873,9 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
             sourcing_requested=bool(job.request_candidate_sourcing),
             sourcing_requested_at=datetime.utcnow() if job.request_candidate_sourcing else None,
             sourcing_email_status="pending" if job.request_candidate_sourcing else None,
+            sourcing_approval_status="pending" if job.request_candidate_sourcing else None,
+            sourcing_approval_token_hash=approval_token_hash,
+            sourcing_request_source="ats" if job.request_candidate_sourcing else None,
         )
 
         db.add(new_job)
@@ -1798,7 +1888,7 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
         email_delivery = None
         if new_job.sourcing_requested:
             try:
-                email_delivery = _deliver_sourcing_request_email(new_job, effective_user, db)
+                email_delivery = _deliver_sourcing_request_email(new_job, effective_user, db, approval_token)
                 new_job.sourcing_email_status = "sent"
                 new_job.sourcing_email_error = None
             except Exception as exc:
@@ -1815,7 +1905,8 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
             "sourcing_requested": bool(new_job.sourcing_requested),
             "sourcing_email_status": new_job.sourcing_email_status,
             "sourcing_email_provider": (email_delivery or {}).get("provider"),
-            "requirement_url": _requirement_platform_job_url(new_job.id) if new_job.sourcing_requested else None,
+            "sourcing_approval_status": new_job.sourcing_approval_status,
+            "requirement_url": f"{_requirement_platform_job_url(new_job.id)}&submission=pending" if new_job.sourcing_requested else None,
             **payload,
         }
     finally:
@@ -1833,6 +1924,7 @@ def public_sourcing_requirements(
         query = db.query(Job).filter(
             Job.is_active == True,
             Job.sourcing_requested == True,
+            Job.sourcing_approval_status == "approved",
         )
         if job_id:
             query = query.filter(Job.id == job_id)
@@ -1841,6 +1933,51 @@ def public_sourcing_requirements(
             "results": [_public_sourcing_requirement(row, db) for row in rows],
             "count": len(rows),
         }
+    finally:
+        db.close()
+
+
+@router.post("/public-sourcing-requirements/submit")
+def submit_public_sourcing_requirement(data: PublicSourcingSubmission):
+    if not data.consent or not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", data.workEmail or ""):
+        raise HTTPException(status_code=400, detail="Valid contact details and consent are required.")
+    if not 1 <= data.openings <= 10000 or not 1 <= data.candidatesRequired <= 10000:
+        raise HTTPException(status_code=400, detail="Please provide valid position and candidate quantities.")
+    if len((data.jobDescription or "").split()) < 8:
+        raise HTTPException(status_code=400, detail="Please provide a complete job description.")
+    db = SessionLocal()
+    try:
+        approval_token, token_hash = _new_sourcing_approval_token()
+        enrichment = enrich_jd_for_scoring(data.jobDescription, {"job_title": data.jobTitle, "experience_required": data.experienceRange})
+        job = Job(
+            job_title=data.jobTitle.strip(), company_name=data.companyName.strip(), company_website=_normalize_company_website(data.companyWebsite),
+            department=None, location=data.location.strip(), work_mode=data.workMode.strip(), job_type="Full Time",
+            salary_range=data.budgetRange.strip(), experience_required=data.experienceRange.strip(), application_deadline=data.targetShortlistDate,
+            hiring_manager=data.fullName.strip(), jd_text=data.jobDescription.strip(), required_skills=data.mustHaveSkills.strip(),
+            preferred_skills=(data.preferredSkills or "").strip() or None, role=enrichment.get("role") or data.jobTitle,
+            min_experience_years=enrichment.get("min_experience_years"), headcount=data.openings,
+            sourcing_requested=True, sourcing_requested_at=datetime.utcnow(), sourcing_email_status="pending",
+            sourcing_approval_status="pending", sourcing_approval_token_hash=token_hash, sourcing_request_source="vendor",
+            public_apply_enabled=True, source_tracking_enabled=True,
+        )
+        db.add(job)
+        db.flush()
+        ensure_generated_sourcing_content(job, db)
+        db.commit()
+        db.refresh(job)
+        owner = type("VendorContact", (), {"name": data.fullName, "email": data.workEmail, "company_name": data.companyName})()
+        extra = [("Phone", data.phone), ("Openings", data.openings), ("Candidates required", data.candidatesRequired), ("Maximum notice period", data.maximumNoticePeriod), ("Hiring urgency", data.hiringUrgency), ("Additional details", data.additionalDetails or "Not provided")]
+        try:
+            delivery = _deliver_sourcing_request_email(job, owner, db, approval_token, extra)
+            job.sourcing_email_status = "sent"
+            job.sourcing_email_error = None
+        except Exception as exc:
+            logger.exception("Vendor sourcing approval email failed for job %s", job.id)
+            delivery = None
+            job.sourcing_email_status = "failed"
+            job.sourcing_email_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+        db.commit()
+        return {"job_id": job.id, "status": "pending_approval", "email_status": job.sourcing_email_status, "provider": (delivery or {}).get("provider"), "message": "Requirement submitted for approval. It will be published only after HireScoreAI review."}
     finally:
         db.close()
 
