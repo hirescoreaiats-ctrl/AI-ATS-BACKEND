@@ -761,12 +761,16 @@ def _eligibility_constraints(jd_text="", min_years=0, max_years=0, location="", 
         constraints.append({"type": "experience_minimum", "value": min_years, "hard": bool(hard_min)})
     if max_years:
         constraints.append({"type": "experience_maximum", "value": max_years, "hard": bool(hard_max)})
-    if location or work_mode:
+    local_required = bool(re.search(r"\bmust\s+be\s+local|local\s+(?:to|in)\b|must\s+(?:live|reside)\s+(?:in|near)\b", text, re.I))
+    onsite_required = bool(re.search(r"\b(?:onsite|on[-\s]?site)\s+(?:required|only|position)|must\s+(?:work|be)\s+on[-\s]?site|willing\s+to\s+work\s+on[-\s]?site\b", text, re.I))
+    if location:
         constraints.append({
-            "type": "location_work_mode",
-            "value": " / ".join(item for item in [str(location or ""), str(work_mode or "")] if item),
-            "hard": bool(re.search(r"\bmust\s+be\s+local|will\s+not\s+consider\s+remote|onsite\s+required\b", text, re.I)),
+            "type": "location",
+            "value": str(location),
+            "hard": local_required,
         })
+    if work_mode or onsite_required:
+        constraints.append({"type": "work_mode", "value": work_mode or "onsite", "hard": onsite_required})
     return constraints
 
 
@@ -825,11 +829,11 @@ def _location_work_mode(jd_text="", jd_data=None):
     location = jd_data.get("location") or ""
     if not location:
         match = re.search(
-            r"\b(?:location|based\s+in|work\s+from)\s*[:\-]?\s*([A-Z][A-Za-z .,-]{2,60})",
+            r"\b(?:location|based\s+in|work\s+from|local\s+to|local\s+in|reside\s+in)\s*[:\-]?\s*([A-Z][A-Za-z .,-]{2,60})",
             jd_text or "",
         )
         if match:
-            location = re.split(r"\n|\.|;", match.group(1))[0].strip(" ,-")
+            location = re.split(r"\n|\.|;|\s+and\s+(?:be\s+)?willing|\s+and\s+work", match.group(1), flags=re.I)[0].strip(" ,-")
     return str(location or "").strip(), work_mode
 
 

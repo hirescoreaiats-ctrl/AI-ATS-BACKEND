@@ -85,6 +85,12 @@ TECHNICAL_ENTITY_WORD_RE = re.compile(
     r"testing|automation|architecture|framework|database|cloud|oem|odm|rtos|autosar)\b",
     re.I,
 )
+TECHNICAL_PRODUCT_PHRASE_RE = re.compile(
+    r"^(?:(?:[a-z][a-z0-9+.#-]*\s+){0,3}(?:sdk|ddk|ide|toolchain|compiler|debugger|"
+    r"framework|runtime|platform)(?:\s+\d+(?:\.\d+)*)?|"
+    r"(?:[a-z][a-z0-9+.#-]*\s+){0,2}studio(?:\s+\d+(?:\.\d+)*)?)$",
+    re.I,
+)
 
 
 def looks_like_technical_entity_name(value, context=""):
@@ -107,6 +113,17 @@ def looks_like_technical_entity_name(value, context=""):
             return True
         return False
     if TECHNICAL_ENTITY_WORD_RE.fullmatch(text):
+        return True
+    # Product/tool phrases frequently arrive as comma-separated work-bullet
+    # fragments.  Require every fragment to look technical so legitimate
+    # employers containing words such as "Studio" are not rejected.
+    fragments = [item.strip(" .,-|") for item in re.split(r"[,;/|]+", text) if item.strip(" .,-|")]
+    if fragments and all(
+        TECHNICAL_PRODUCT_PHRASE_RE.fullmatch(item)
+        or TECHNICAL_ENTITY_RE.fullmatch(item)
+        or TECHNICAL_ENTITY_WORD_RE.fullmatch(item)
+        for item in fragments
+    ):
         return True
     if TECHNICAL_ENTITY_RE.fullmatch(text):
         contextual = str(context or "")

@@ -1,3 +1,4 @@
+import logging
 import re
 
 from backend.services.semantic_service import cosine_similarity_cached
@@ -6,6 +7,9 @@ from backend.services.taxonomy import equivalent_skill, expand_skill_requirement
 from backend.services.recruiter_decision import enrich_recruiter_decision
 from backend.services.canonical_capabilities import capability_evidence
 from backend.services.scoring_policy import apply_global_scoring_policy
+
+
+logger = logging.getLogger(__name__)
 
 
 def infer_seniority(title, years=0, experience_text=""):
@@ -747,6 +751,7 @@ def _attach_jd_profile_metadata(score_data, jd_profile, parsed=None, role_identi
     score_data.setdefault("jd_relevant_experience_years", parsed.get("relevant_experience_years"))
     score_data.setdefault("direct_role_experience_years", parsed.get("direct_relevant_experience_years"))
     score_data.setdefault("adjacent_role_experience_years", parsed.get("transferable_experience_years"))
+    score_data.setdefault("recent_relevant_experience_years", parsed.get("recent_relevant_experience_years"))
     total = _safe_float(parsed.get("total_experience_years"))
     relevant = _safe_float(parsed.get("relevant_experience_years"))
     score_data.setdefault("unrelated_experience_years", round(max(0, total - relevant), 2))
@@ -774,8 +779,33 @@ def _attach_jd_profile_metadata(score_data, jd_profile, parsed=None, role_identi
             "applied_boosts": score_data.get("applied_boosts"),
             "role_alignment": score_data.get("role_alignment"),
             "role_alignment_reason": score_data.get("role_alignment_reason"),
+            "recent_relevant_experience_years": parsed.get("recent_relevant_experience_years"),
+            "experience_dates_considered": parsed.get("experience_dates_considered") or [],
+            "requirement_coverage": score_data.get("requirement_coverage") or {},
         })
-    return enrich_recruiter_decision(score_data, jd_profile, parsed)
+    enriched = enrich_recruiter_decision(score_data, jd_profile, parsed)
+    logger.info(
+        "candidate_ranking_diagnostics",
+        extra={"ranking_diagnostics": {
+            "role_family": enriched.get("detected_role_family"),
+            "mandatory_requirements": len(jd_profile.get("must_have_skills") or []),
+            "core_requirement_groups": len(jd_profile.get("core_skill_groups") or {}),
+            "matched_core_groups": enriched.get("matched_core_skill_groups") or [],
+            "missing_core_groups": enriched.get("missing_core_skill_groups") or [],
+            "total_experience_years": parsed.get("total_experience_years"),
+            "direct_relevant_experience_years": parsed.get("direct_relevant_experience_years"),
+            "transferable_experience_years": parsed.get("transferable_experience_years"),
+            "recent_relevant_experience_years": parsed.get("recent_relevant_experience_years"),
+            "seniority_alignment": enriched.get("seniority_alignment"),
+            "mandatory_constraint_status": enriched.get("mandatory_constraint_status"),
+            "parser_confidence": enriched.get("parser_confidence"),
+            "technical_fit_score": enriched.get("technical_fit_score"),
+            "overall_recruiter_fit_score": enriched.get("overall_recruiter_fit_score"),
+            "decision": enriched.get("shortlist_decision"),
+            "score_confidence": enriched.get("confidence_score"),
+        }},
+    )
+    return enriched
 
 
 def _is_data_analyst_jd(jd_text, jd_data, required_skills):
@@ -4467,6 +4497,12 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
         core_resume_text,
     )
     core_percent = core_match["core_skill_match_percent"]
+    weighted_requirement_coverage = round(
+        mandatory_coverage * 0.65 + core_percent * 0.35
+        if (jd_profile.get("core_skill_groups") or {})
+        else mandatory_coverage,
+        2,
+    )
     direct_match_percent = round(((len(matched) + len(transferable) * 0.55) / required_count) * 100, 2)
 
     min_years = _safe_float(jd_profile.get("min_experience_years") or (jd_data or {}).get("min_experience_years"))
@@ -4893,10 +4929,20 @@ def _score_candidate_role_agnostic(parsed, jd_text, jd_skills, jd_data, resume_t
             if item.get("status") in {"missing", "weak", "training_only", "verify"} or item.get("evidence_level") in {"skills_section_only", "keyword_only", "employer_name_only", "contextual_support"}
         ],
         "employer_name_only_skills": employer_name_only_skills,
-        "skill_match_percent": mandatory_coverage,
+        # Compatibility field used by the current UI.  It now represents the
+        # actual JD denominator (skills plus role-family core groups), so a few
+        # generic keyword hits cannot display as 100% JD coverage.
+        "skill_match_percent": weighted_requirement_coverage,
+        "jd_skill_coverage": weighted_requirement_coverage,
         "mandatory_skill_coverage": mandatory_coverage,
         "preferred_skill_coverage": round((len(preferred_matched) / max(len(preferred_skills), 1)) * 100, 2) if preferred_skills else 0,
         "core_skill_match_percent": core_percent,
+        "requirement_coverage": {
+            "critical": {"matched": len([item for item in jd_profile.get("critical_must_have") or [] if item in matched]), "total": len(jd_profile.get("critical_must_have") or []), "percent": mandatory_coverage if jd_profile.get("critical_must_have") else None},
+            "core": {"matched": len(core_match["matched_core_skill_groups"]), "total": len(jd_profile.get("core_skill_groups") or {}), "percent": core_percent},
+            "preferred": {"matched": len(preferred_matched), "total": len(preferred_skills), "percent": round((len(preferred_matched) / max(len(preferred_skills), 1)) * 100, 2) if preferred_skills else 0},
+            "overall_weighted_percent": weighted_requirement_coverage,
+        },
         "matched_core_skill_groups": core_match["matched_core_skill_groups"],
         "missing_core_skill_groups": missing_core_groups,
         "confidence_score": confidence,

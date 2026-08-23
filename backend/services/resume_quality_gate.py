@@ -87,6 +87,9 @@ def build_parser_quality_report(text, parsed, exp_data=None, jd_data=None):
         _flag(flags, "missing_email", "warning", "Candidate email is missing or invalid.", 6)
 
     parser_flags = set(parsed.get("parser_flags") or [])
+    ai_status = _clean_text(parsed.get("ai_parse_status")).lower()
+    if ai_status and ai_status != "success":
+        _flag(flags, "ai_parse_fallback", "warning", "AI parsing was unavailable; deterministic fallback fields require confidence-aware review.", 12)
     if "ai_parse_recovered" in parser_flags:
         _flag(flags, "parser_recovered_ai_pollution", "warning", "Initial AI parse had polluted fields and was repaired from resume sections.", 5)
 

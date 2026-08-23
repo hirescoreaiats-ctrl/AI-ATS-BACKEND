@@ -126,12 +126,15 @@ def apply_global_scoring_policy(result: dict, jd_profile: dict | None, parsed: d
         })
         technical_score = adjusted
 
+    seniority_adjustment = _number(result.get("seniority_score_adjustment"))
+    overall_recruiter_fit = round(max(0, min(100, technical_score + seniority_adjustment)), 2)
     result.update({
         "technical_fit_score": technical_score,
         "final_score": technical_score,
         "rank_score": technical_score,
         "technical_score_before_policy": before_caps,
-        "seniority_score_adjustment": 0.0,
+        "seniority_score_adjustment": seniority_adjustment,
+        "overall_recruiter_fit_score": overall_recruiter_fit,
         "location_score_adjustment": 0.0,
         "parser_confidence_score_adjustment": 0.0,
         "score_caps_applied": active_caps,
@@ -139,11 +142,32 @@ def apply_global_scoring_policy(result: dict, jd_profile: dict | None, parsed: d
         "review_findings": review_findings,
         "consistency_flags": result.get("consistency_flags") or [],
     })
+    mandatory_status = str(result.get("mandatory_constraint_status") or "")
+    if technical_score >= 65 and mandatory_status in {"FAIL", "VERIFY"}:
+        reason = (
+            "Strong technical fit, but a mandatory constraint appears to fail and requires recruiter review."
+            if mandatory_status == "FAIL"
+            else "Strong technical fit; mandatory constraint verification is required before proceeding."
+        )
+        result.update({
+            "shortlist_decision": "Needs Review",
+            "recommendation": "in_review",
+            "fit_band": "needs_review",
+            "decision_reason": reason,
+            "recruiter_explanation": reason,
+            "overall_recruiter_status": (
+                "Strong Technical Fit — Mandatory Constraint Failed"
+                if mandatory_status == "FAIL"
+                else "Strong Technical Fit — Mandatory Constraint Verification Required"
+            ),
+            "canonical_decision": {"decision": "Needs Review", "recommendation": "in_review", "fit_band": "needs_review", "reason": reason},
+        })
     breakdown = result.setdefault("scoring_breakdown", {})
     if isinstance(breakdown, dict):
         breakdown.update({
             "technical_fit_score": technical_score,
-            "seniority_score_adjustment": 0.0,
+            "seniority_score_adjustment": seniority_adjustment,
+            "overall_recruiter_fit_score": overall_recruiter_fit,
             "location_score_adjustment": 0.0,
             "parser_confidence_score_adjustment": 0.0,
             "review_findings": review_findings,

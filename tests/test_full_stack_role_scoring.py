@@ -92,7 +92,8 @@ def test_senior_full_stack_candidate_is_review_overqualified_not_fake_low_releva
     result = score_candidate(parsed, FULL_STACK_JD, profile["must_have_skills"], {"role": "Full Stack Web Developer"}, FULL_STACK_JD, jd_profile=profile)
 
     assert result["final_score"] >= 60
-    assert result["recommendation"] == "shortlisted"
+    assert result["recommendation"] == "in_review"
+    assert "seniority_review" in result["recruiter_flags"]
     assert "overqualified" in result["recruiter_flags"]
     assert result["experience_fit"] == "senior_overqualified"
 

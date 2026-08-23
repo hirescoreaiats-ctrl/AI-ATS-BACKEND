@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Job, Resume, User
+from backend.models import CandidateActivity, Job, Resume, User
 from backend.services.help_action_agent import execute_confirmed_action, prepare_action_agent
 from backend.services.help_intent import fallback_parse_intent
 
@@ -90,6 +90,30 @@ def test_confirmed_workflow_shortlists_and_moves_only_previewed_candidates(monke
     assert db.get(Resume, "candidate-3").stage == "review"
 
 
+def test_duplicate_confirmation_is_idempotent(monkeypatch, db):
+    user, _, _, _, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+    plan = prepare_action_agent(
+        message="data analyst ka top candidate shortlist kar do",
+        current_route="/dashboard",
+        current_context={"limit": 1},
+        db=db,
+        user=user,
+    )
+
+    first = execute_confirmed_action(confirmation_token=plan["confirmation"]["token"], db=db, user=user)
+    activity_count = db.query(CandidateActivity).count()
+    replay = execute_confirmed_action(confirmation_token=plan["confirmation"]["token"], db=db, user=user)
+
+    assert first["status"] == "completed"
+    assert replay["status"] == "already_completed"
+    assert replay["idempotent_replay"] is True
+    assert db.query(CandidateActivity).count() == activity_count
+
+
 def test_confirmation_token_cannot_be_used_by_another_user(monkeypatch, db):
     user, second_user, _, _, _ = _seed_workspace(db)
     monkeypatch.setattr(
@@ -131,6 +155,26 @@ def test_outside_tenant_cannot_resolve_job_or_candidates(monkeypatch, db):
 
     assert "job" in result["missing_fields"]
     assert result["candidate_preview"] == []
+    assert result["confirmation"] is None
+
+
+def test_hallucinated_candidate_id_never_reaches_confirmation(monkeypatch, db):
+    user, _, _, _, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="data analyst candidate shortlist kar do",
+        current_route="/results",
+        current_context={"candidate_ids": ["candidate-does-not-exist"]},
+        db=db,
+        user=user,
+    )
+
+    assert result["candidate_preview"] == []
+    assert "candidate_ids" in result["missing_fields"]
     assert result["confirmation"] is None
 
 
@@ -194,3 +238,29 @@ def test_role_query_searches_candidates_across_jobs_without_job_picker(monkeypat
     assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-3"]
     assert result["clarification_needed"] is False
     assert result["actions"] == []
+
+
+def test_candidate_filters_query_stored_fields_without_mutation(monkeypatch, db):
+    user, _, _, _, _ = _seed_workspace(db)
+    matching = db.get(Resume, "candidate-3")
+    matching.location = "San Jose, California"
+    matching.direct_relevant_experience_years = 6
+    matching.key_skills = "Firmware, C, RTOS"
+    db.commit()
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="Show me California candidates with 5-7 years firmware experience.",
+        current_route="/results",
+        current_context={},
+        db=db,
+        user=user,
+    )
+
+    assert result["intent"] == "filter_candidates"
+    assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-3"]
+    assert result["requires_confirmation"] is False
+    assert db.get(Resume, "candidate-3").stage == "review"

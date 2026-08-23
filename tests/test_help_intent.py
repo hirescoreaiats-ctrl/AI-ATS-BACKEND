@@ -1,4 +1,39 @@
+from types import SimpleNamespace
+
 from backend.services.help_intent import fallback_parse_intent, parse_intent, _merge_with_fallback, normalize_intent_response
+
+
+def test_natural_language_candidate_filters_are_structured():
+    result = fallback_parse_intent("Show me California candidates with 5-7 years firmware experience.")
+
+    assert result["intent"] == "filter_candidates"
+    assert result["entities"]["filters"] == {
+        "relevant_experience_min": 5.0,
+        "relevant_experience_max": 7.0,
+        "location": "California",
+        "skills": ["firmware"],
+    }
+    assert result["actions"][0]["action_id"] == "filter_candidates"
+    assert result["requires_confirmation"] is False
+
+
+def test_invalid_model_json_degrades_to_deterministic_intent(monkeypatch):
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **_kwargs: SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="not-json"))]
+                )
+            )
+        )
+    )
+    monkeypatch.setattr("backend.services.help_intent._client", lambda: client)
+
+    result = parse_intent("show all candidates of data analyst", "/results", {})
+
+    assert result["intent"] == "view_candidates_by_stage"
+    assert result["understanding_source"] == "fallback"
+    assert result["ai_runtime"] == "error"
 
 
 def should_require_candidate(result):

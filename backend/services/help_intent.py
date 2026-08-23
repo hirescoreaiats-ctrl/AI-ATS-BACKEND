@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from functools import lru_cache
 from typing import Any
 
@@ -17,6 +18,7 @@ AGENT_CONTRACT_VERSION = "2026-07-general-v1"
 
 
 SUPPORTED_INTENTS = {
+    "filter_candidates",
     "search_talent",
     "candidate_workflow",
     "create_job",
@@ -66,6 +68,7 @@ STAGE_ALIASES = {
 }
 
 DEFAULT_ENTITIES = {
+    "filters": None,
     "search_query": None,
     "job_title": None,
     "candidate_name": None,
@@ -265,6 +268,13 @@ def _workflow_tasks(intent: str, entities: dict[str, Any]) -> list[dict[str, Any
     target_stage = entities.get("target_stage") or entities.get("stage")
     limit = entities.get("limit")
 
+    if intent == "filter_candidates":
+        tasks.append({
+            "intent": "filter_candidates",
+            "description": "Filter stored candidates using validated ATS fields.",
+            "entities": {"filters": entities.get("filters") or {}, "limit": limit or 10},
+        })
+
     if intent == "search_talent":
         tasks.append({
             "intent": "search_talent",
@@ -411,6 +421,18 @@ def _action_plan(tasks: list[dict[str, Any]], entities: dict[str, Any]) -> list[
                     "requires_confirmation": False,
                 }
             )
+        elif task_intent == "filter_candidates":
+            actions.append(
+                {
+                    "action_id": "filter_candidates",
+                    "actor": "action_agent",
+                    "method": "GET",
+                    "endpoint": "/api/v1/help/chat",
+                    "needs": ["filters"],
+                    "params": {"filters": entities.get("filters") or {}, "limit": entities.get("limit") or 10},
+                    "requires_confirmation": False,
+                }
+            )
         elif task_intent == "shortlist_candidate":
             actions.append(
                 {
@@ -514,6 +536,8 @@ def _missing_fields_for_actions(actions: list[dict[str, Any]], entities: dict[st
         missing.append("meeting_url")
     if any("search_query" in action.get("needs", []) for action in actions) and not entities.get("search_query"):
         missing.append("search_query")
+    if any("filters" in action.get("needs", []) for action in actions) and not entities.get("filters"):
+        missing.append("filters")
     return missing
 
 
@@ -649,6 +673,29 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     intent = "unknown"
     confidence = 0.25
 
+    filters: dict[str, Any] = {}
+    experience_range = re.search(r"(\d+(?:\.\d+)?)\s*(?:-|–|to|\s)\s*(\d+(?:\.\d+)?)\s*years?", text)
+    if experience_range:
+        filters["relevant_experience_min"] = float(experience_range.group(1))
+        filters["relevant_experience_max"] = float(experience_range.group(2))
+    location_match = re.search(
+        r"(?:local\s+to|from|in)\s+([a-z][a-z .-]*?)(?=\s+(?:candidate|candidates|with|having|who|and)\b|$)",
+        text,
+    )
+    if not location_match:
+        location_match = re.search(r"(?:show\s+me|find|filter)\s+([a-z][a-z .-]*?)\s+candidates?\b", text)
+    if location_match:
+        filters["location"] = location_match.group(1).strip().title()
+    score_match = re.search(r"(?:score|fit)\s*(?:above|over|>=|at\s+least)\s*(\d+(?:\.\d+)?)", text)
+    if score_match:
+        filters["score_min"] = float(score_match.group(1))
+    skill_match = re.search(r"years?\s+([a-z0-9+#. -]+?)\s+experience\b", text)
+    if skill_match:
+        skill_phrase = re.sub(r"\b(?:of|in|with|and)\b", " ", skill_match.group(1))
+        filters["skills"] = [part for part in skill_phrase.split() if len(part) > 1][:8]
+    if filters:
+        entities["filters"] = filters
+
     resume_terms = any(term in text for term in ("resume", "cv", "profile"))
     upload_terms = any(term in text for term in ("upload", "add", "dalna", "dalo", "add karna"))
     selection_requested = _candidate_selection_requested(text)
@@ -663,7 +710,10 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
         text,
     )
     discovery_query = _title_case_job(discovery_match.group(1)) if discovery_match else None
-    if discovery_query and not any(term in text for term in ("top ", "shortlist", "reject", " job", " of ", " for ")):
+    if filters and _has_any_word(text, ("show", "find", "filter", "candidate", "candidates", "profiles")):
+        intent, confidence = "filter_candidates", 0.93
+        entities["candidate_group"] = "filtered"
+    elif discovery_query and not any(term in text for term in ("top ", "shortlist", "reject", " job", " of ", " for ")):
         intent, confidence = "search_talent", 0.9
         entities["search_query"] = discovery_query
         entities["candidate_group"] = "all"
@@ -739,7 +789,27 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
     incoming_entities = data.get("entities") if isinstance(data.get("entities"), dict) else {}
     for key in entities:
         value = incoming_entities.get(key)
-        if key == "limit":
+        if key == "filters":
+            validated_filters: dict[str, Any] = {}
+            if isinstance(value, dict):
+                for numeric_key in (
+                    "relevant_experience_min", "relevant_experience_max", "score_min", "recency_days"
+                ):
+                    try:
+                        if value.get(numeric_key) is not None:
+                            validated_filters[numeric_key] = max(0.0, float(value[numeric_key]))
+                    except (TypeError, ValueError):
+                        pass
+                location = _friendly_user_text(value.get("location"))
+                if location:
+                    validated_filters["location"] = location[:120]
+                skills = value.get("skills")
+                if isinstance(skills, list):
+                    validated_filters["skills"] = [
+                        str(item).strip()[:80] for item in skills[:10] if str(item).strip()
+                    ]
+            entities[key] = validated_filters or None
+        elif key == "limit":
             try:
                 entities[key] = max(1, min(int(value), 100)) if value is not None and str(value).strip() else None
             except (TypeError, ValueError):
@@ -932,7 +1002,12 @@ def parse_intent(message: str, current_route: str | None = None, current_context
     fallback = fallback_parse_intent(message, current_route, current_context)
     client = _client()
     if client is None:
-        return {**fallback, "understanding_source": "fallback", "ai_runtime": "not_configured"}
+        return {
+            **fallback,
+            "understanding_source": "fallback",
+            "ai_runtime": "not_configured",
+            "ai_telemetry": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "model": None},
+        }
 
     system = (
         "You are HireScore AI's conversational hiring copilot and task planner. Return JSON only. "
@@ -955,6 +1030,7 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "Understand English, Hinglish, broken English, typos, and ATS/recruitment terms. "
         "Supported intents: " + ", ".join(sorted(SUPPORTED_INTENTS)) + ". "
         "Entity fields: job_title, job_id, candidate_name, candidate_ids, candidate_group, stage, target_stage, date_time, meeting_url, email, plan, limit. "
+        "For candidate filters, use intent filter_candidates and entities.filters with only relevant_experience_min, relevant_experience_max, location, score_min, skills, and recency_days. "
         "For requests such as 'data science candidates', 'find Python profiles', or role/skill candidate discovery without a specific job, "
         "use intent search_talent and put the natural role/skill phrase in entities.search_query. This searches candidates across jobs. "
         "For requests like 'top 10 candidates for Data Analyst and move them to communication', use intent candidate_workflow "
@@ -983,6 +1059,7 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         },
     }
     try:
+        started_at = time.perf_counter()
         response = client.chat.completions.create(
             model=_model(),
             messages=[
@@ -999,7 +1076,20 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         result = _merge_with_fallback(normalize_intent_response(parsed), fallback)
         result["understanding_source"] = "openai"
         result["ai_runtime"] = "active"
+        usage = getattr(response, "usage", None)
+        result["ai_telemetry"] = {
+            "calls": 1,
+            "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+            "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            "model": _model(),
+            "latency_ms": round((time.perf_counter() - started_at) * 1000),
+        }
         return result
     except Exception as exc:
         logger.warning("Help Agent AI planning failed; using deterministic fallback: %s", exc.__class__.__name__)
-        return {**fallback, "understanding_source": "fallback", "ai_runtime": "error"}
+        return {
+            **fallback,
+            "understanding_source": "fallback",
+            "ai_runtime": "error",
+            "ai_telemetry": {"calls": 1, "input_tokens": 0, "output_tokens": 0, "model": _model()},
+        }

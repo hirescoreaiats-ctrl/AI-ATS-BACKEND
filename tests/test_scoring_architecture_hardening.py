@@ -5,6 +5,7 @@ from backend.services.canonical_capabilities import capability_evidence
 from backend.services.jd_profile_engine import build_jd_profile
 from backend.services.experience_relevance import estimate_relevant_experience_v2
 from backend.services.parsing_service import _clean_experience_records, _looks_like_bad_company, parse_resume_enterprise
+from backend.services.resume_quality_gate import build_parser_quality_report
 from backend.services.recruiter_decision import enrich_recruiter_decision
 from backend.services.scoring_service import score_candidate
 from backend.services.taxonomy import known_skills_in_text
@@ -220,3 +221,113 @@ def test_training_responsibility_does_not_cap_consultant_as_internship():
 
 def test_extracted_mcu_never_finishes_as_missing_microcontrollers():
     assert "Microcontrollers" in known_skills_in_text("STM32, NXP MCU, ARM Cortex-M and FreeRTOS firmware")
+
+
+def test_long_embedded_history_uses_evidence_across_varied_titles():
+    profile = build_jd_profile(EMBEDDED_JD, {"role": "Firmware / Embedded Software Engineer"})
+    parsed = {
+        "total_experience_years": 18,
+        "experience": [
+            {"company_name": "Alpha Devices", "role": "Product Engineer", "start_date": "Jan 2006", "end_date": "Dec 2011", "description": "Developed bare-metal C firmware, BSPs and device drivers for ARM microcontrollers."},
+            {"company_name": "Beta Radio", "role": "Systems Engineer", "start_date": "Jan 2012", "end_date": "Dec 2017", "description": "Built RTOS firmware, board bring-up diagnostics, I2C and SPI drivers for RF products."},
+            {"company_name": "Gamma Networks", "role": "Technical Lead", "start_date": "Jan 2018", "end_date": "Dec 2023", "description": "Led embedded Linux, firmware, hardware debugging and oscilloscope validation for fiber networking."},
+        ],
+    }
+    result = estimate_relevant_experience_v2(parsed, "", profile)
+    assert result["direct_relevant_experience_years"] >= 15
+    assert result["relevant_experience_years"] >= 15
+    assert result["recent_relevant_experience_years"] > 2
+
+
+def test_visual_studio_and_ddk_fragment_is_not_an_employer():
+    assert looks_like_technical_entity_name("Visual Studio 2022, Windows DDK")
+    result = process_experience([{"company_name": "Visual Studio 2022, Windows DDK", "role": "Firmware Engineer", "start_date": "2022", "end_date": "2024"}])
+    assert result["last_company_name"] is None
+    assert result["last_company_needs_review"] is True
+
+
+def test_hard_location_and_onsite_are_separate_mandatory_checks():
+    jd = """Firmware Engineer. Experience 5-7 years. Must be local to Los Angeles and willing to work onsite.
+    Required Qualifications: Strong C programming, embedded firmware, microcontrollers and debugging."""
+    profile = build_jd_profile(jd, {"role": "Firmware Engineer"})
+    text = "Developed C firmware for STM32 microcontrollers and debugged boards using an oscilloscope."
+    parsed = {
+        "designation": "Firmware Engineer", "location": "Opelika, Alabama", "resume_text": text,
+        "key_skills": ["C", "Firmware", "STM32", "Debugging"],
+        "experience": [{"company_name": "Device Labs", "role": "Firmware Engineer", "description": text}],
+        "total_experience_years": 6, "relevant_experience_years": 6, "direct_relevant_experience_years": 6,
+        "role_relevance_score": 95, "parser_quality_score": 92, "semantic_score": 0.9,
+    }
+    result = score_candidate(parsed, jd, profile["must_have_skills"], {"role": "Firmware Engineer"}, text, jd_profile=profile)
+    checks = {item["type"]: item for item in result["mandatory_checks"]}
+    assert result["technical_fit_score"] >= 70
+    assert checks["location"]["status"] == "FAIL"
+    assert checks["work_mode"]["status"] == "UNKNOWN"
+    assert result["shortlist_decision"] == "Needs Review"
+    assert "Mandatory Constraint" in result["overall_recruiter_status"]
+
+
+def test_severe_overqualification_changes_recruiter_fit_not_technical_fit():
+    jd = "Firmware Engineer. Experience 5-7 years. Required Qualifications: C programming, firmware, microcontrollers and debugging."
+    profile = build_jd_profile(jd, {"role": "Firmware Engineer"})
+    text = "Developed C firmware for STM32 microcontrollers and debugged embedded hardware."
+    parsed = {
+        "designation": "Principal Firmware Engineer", "key_skills": ["C", "Firmware", "STM32", "Debugging"],
+        "experience": [{"company_name": "Device Labs", "role": "Principal Firmware Engineer", "description": text}],
+        "total_experience_years": 20, "relevant_experience_years": 20, "direct_relevant_experience_years": 20,
+        "role_relevance_score": 96, "parser_quality_score": 95, "semantic_score": 0.9,
+    }
+    result = score_candidate(parsed, jd, profile["must_have_skills"], {"role": "Firmware Engineer"}, text, jd_profile=profile)
+    assert result["technical_fit_score"] > result["overall_recruiter_fit_score"]
+    assert result["experience_alignment"] == "Severely above target"
+    assert result["seniority_score_adjustment"] == -12
+    assert "seniority_review" in result["recruiter_flags"]
+
+
+def test_coverage_uses_core_groups_not_only_three_generic_hits():
+    profile = build_jd_profile(EMBEDDED_JD, {"role": "Firmware / Embedded Software Engineer"})
+    text = "Used Python, Git and validation tooling."
+    parsed = {
+        "designation": "Software Engineer", "key_skills": ["Python", "Git", "Validation"],
+        "experience": [{"company_name": "Software Co", "role": "Software Engineer", "description": text}],
+        "total_experience_years": 6, "relevant_experience_years": 1, "direct_relevant_experience_years": 0,
+        "role_relevance_score": 25, "parser_quality_score": 90, "semantic_score": 0.3,
+    }
+    result = score_candidate(parsed, EMBEDDED_JD, profile["must_have_skills"], {"role": profile["role_title"]}, text, jd_profile=profile)
+    assert result["skill_match_percent"] < 100
+    assert result["requirement_coverage"]["overall_weighted_percent"] < 100
+
+
+def test_overlapping_relevant_roles_do_not_double_count_relevant_tenure():
+    profile = build_jd_profile("Firmware Engineer. Required embedded firmware and microcontrollers.", {"role": "Firmware Engineer"})
+    parsed = {
+        "total_experience_years": 4,
+        "experience": [
+            {"company_name": "Alpha", "role": "Firmware Engineer", "start_date": "Jan 2020", "end_date": "Dec 2022", "description": "Developed STM32 embedded firmware."},
+            {"company_name": "Beta", "role": "Embedded Consultant", "start_date": "Jan 2021", "end_date": "Dec 2023", "description": "Developed ESP32 firmware and device drivers."},
+        ],
+    }
+    result = estimate_relevant_experience_v2(parsed, "", profile)
+    assert result["relevant_experience_years"] == pytest.approx(4.0, abs=0.05)
+    assert result["direct_relevant_experience_years"] <= 4.05
+
+
+def test_capability_evidence_preserves_role_company_and_source_snippet():
+    parsed = {"experience": [{"company_name": "CoachComm", "role": "Senior Product Engineer - Firmware", "start_date": "2023", "end_date": "Present", "description": "Root cause analysis of I2C issues during board bring-up."}]}
+    item = capability_evidence("Peripheral Interfaces", parsed, "", "embedded_firmware")
+    assert item["evidence_state"] == "MATCHED"
+    assert item["role"] == "Senior Product Engineer - Firmware"
+    assert item["company"] == "CoachComm"
+    assert "I2C" in item["evidence_text"]
+
+
+def test_ai_parser_failure_preserves_fallback_fields_but_reduces_confidence(monkeypatch):
+    text = """Jane Engineer\njane@example.com\nProfessional Experience\nFirmware Engineer, Acme Devices\nJan 2020 - Dec 2024\nDeveloped STM32 C firmware and SPI drivers.\nEducation\nBachelor of Engineering"""
+    monkeypatch.setattr("backend.services.parsing_service.parse_resume", lambda _text: {"__ai_parse_status": "failed api error"})
+    parsed = parse_resume_enterprise(text)
+    report = build_parser_quality_report(text, parsed, {"total_experience_years": 5})
+    assert parsed["ai_parse_status"] == "failed api error"
+    assert parsed["experience"]
+    assert parsed["email"] == "jane@example.com"
+    assert any(item["code"] == "ai_parse_fallback" for item in report["parser_quality_flags"])
+    assert report["parser_quality_score"] < parsed["resume_quality_score"]

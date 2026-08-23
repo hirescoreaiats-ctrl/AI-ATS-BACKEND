@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
+from backend.core.config import get_settings
 from backend.core.security import get_current_user
 from backend.database import get_db
+from backend.services.conversation_context import build_conversation_context
 from backend.services.help_action_agent import execute_confirmed_action, prepare_action_agent
 from backend.services.help_intent import parse_intent
 
@@ -24,16 +26,12 @@ class HelpActionExecuteRequest(BaseModel):
 
 
 def _request_context(payload: HelpIntentRequest) -> dict:
-    context = dict(payload.current_context or {})
-    context["conversation_history"] = [
-        {
-            "role": str(item.get("role") or "user")[:20],
-            "content": str(item.get("content") or "")[:1000],
-        }
-        for item in payload.conversation_history[-12:]
-        if isinstance(item, dict) and str(item.get("content") or "").strip()
-    ]
-    return context
+    return build_conversation_context(payload.current_context, payload.conversation_history)
+
+
+def _require_action_agent_enabled() -> None:
+    if not get_settings().conversational_action_agent_enabled:
+        raise HTTPException(status_code=503, detail="Conversational Action Agent is disabled")
 
 
 @router.post("/parse-intent")
@@ -60,6 +58,7 @@ def chat_with_help_agent(
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
+    _require_action_agent_enabled()
     return prepare_action_agent(
         message=payload.message,
         current_route=payload.current_route,
@@ -75,6 +74,7 @@ def execute_help_action(
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
+    _require_action_agent_enabled()
     return execute_confirmed_action(
         confirmation_token=payload.confirmation_token,
         db=db,

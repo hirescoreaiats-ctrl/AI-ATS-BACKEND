@@ -544,7 +544,8 @@ class ResumeParsingRegressionTests(unittest.TestCase):
         self.assertEqual(parsed["overqualified_penalty"], 0)
         self.assertEqual(parsed["experience_target_max_years"], 3.0)
         self.assertIn("over_experienced", score["recruiter_flags"])
-        self.assertEqual(score["seniority_score_adjustment"], 0)
+        self.assertLess(score["seniority_score_adjustment"], 0)
+        self.assertLess(score["overall_recruiter_fit_score"], score["technical_fit_score"])
         self.assertEqual(score["final_score"], score["technical_fit_score"])
 
     def test_project_only_resume_does_not_count_education_or_cert_dates_as_work(self):

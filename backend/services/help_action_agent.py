@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -7,12 +9,12 @@ from typing import Any
 
 import jwt
 from fastapi import HTTPException, status
-from sqlalchemy import false, func
+from sqlalchemy import false, func, or_
 
 from backend.ai.search import hybrid_candidate_rank
 from backend.core.config import get_settings
 from backend.core.security import decode_token
-from backend.models import CandidateStageHistory, Interview, Job, Resume, User
+from backend.models import AuditLog, CandidateStageHistory, Interview, Job, Resume, User
 from backend.repositories.audit_repository import write_audit_log, write_candidate_activity
 from backend.services.candidate_intelligence import from_json_text
 from backend.services.help_intent import parse_intent
@@ -20,6 +22,7 @@ from backend.services.help_intent import parse_intent
 
 GLOBAL_ROLES = {"admin", "super_admin"}
 SERVER_ACTIONS = {
+    "filter_candidates",
     "search_talent",
     "find_top_candidates",
     "shortlist_candidates",
@@ -28,13 +31,39 @@ SERVER_ACTIONS = {
     "move_to_interview_scheduling",
     "schedule_interview_slot",
 }
-MUTATING_ACTIONS = SERVER_ACTIONS - {"find_top_candidates", "search_talent"}
+MUTATING_ACTIONS = SERVER_ACTIONS - {"filter_candidates", "find_top_candidates", "search_talent"}
 MAX_MUTATION_CANDIDATES = 25
 CONFIRMATION_MINUTES = 10
 
 
 def _normalized(value: Any) -> str:
     return re.sub(r"[^a-z0-9+#]+", " ", str(value or "").lower()).strip()
+
+
+def _audit_plan(db, user: User, message: str, result: dict[str, Any]) -> None:
+    telemetry = result.get("ai_telemetry") if isinstance(result.get("ai_telemetry"), dict) else {}
+    write_audit_log(
+        db,
+        action="help_agent.intent_planned",
+        entity_type="conversation",
+        actor_user_id=user.id,
+        organization_id=getattr(user, "organization_id", None),
+        metadata={
+            "message_sha256": hashlib.sha256(message.encode("utf-8", errors="ignore")).hexdigest(),
+            "message_chars": len(message),
+            "intent": result.get("intent"),
+            "response_type": result.get("response_type"),
+            "confidence": result.get("confidence"),
+            "understanding_source": result.get("understanding_source"),
+            "ai_runtime": result.get("ai_runtime"),
+            "ai_calls": telemetry.get("calls", 0),
+            "input_tokens": telemetry.get("input_tokens", 0),
+            "output_tokens": telemetry.get("output_tokens", 0),
+            "model": telemetry.get("model"),
+            "latency_ms": telemetry.get("latency_ms"),
+        },
+    )
+    db.commit()
 
 
 def _visible_jobs_query(db, user: User):
@@ -159,6 +188,46 @@ def _resolve_candidates(
             return rows
         return []
 
+    if result.get("intent") == "filter_candidates" or "filter_candidates" in action_ids:
+        filters = entities.get("filters") if isinstance(entities.get("filters"), dict) else {}
+        allowed = {
+            "relevant_experience_min", "relevant_experience_max", "location", "score_min", "skills", "recency_days"
+        }
+        filters = {key: value for key, value in filters.items() if key in allowed}
+        relevant_years = func.coalesce(
+            Resume.direct_relevant_experience_years,
+            Resume.relevant_experience_years,
+            Resume.total_experience_years,
+            0,
+        )
+        if filters.get("relevant_experience_min") is not None:
+            query = query.filter(relevant_years >= float(filters["relevant_experience_min"]))
+        if filters.get("relevant_experience_max") is not None:
+            query = query.filter(relevant_years <= float(filters["relevant_experience_max"]))
+        if filters.get("score_min") is not None:
+            query = query.filter(func.coalesce(Resume.rank_score, Resume.final_score, 0) >= float(filters["score_min"]))
+        location = str(filters.get("location") or "").strip()
+        if location:
+            pattern = f"%{location.lower()}%"
+            query = query.filter(or_(
+                func.lower(func.coalesce(Resume.location, "")).like(pattern),
+                func.lower(func.coalesce(Resume.form_location, "")).like(pattern),
+                func.lower(func.coalesce(Resume.preferred_location, "")).like(pattern),
+            ))
+        skills = filters.get("skills") if isinstance(filters.get("skills"), list) else []
+        for skill in [str(item).strip().lower() for item in skills[:10] if str(item).strip()]:
+            pattern = f"%{skill}%"
+            query = query.filter(or_(
+                func.lower(func.coalesce(Resume.key_skills, "")).like(pattern),
+                func.lower(func.coalesce(Resume.matched_skills, "")).like(pattern),
+                func.lower(func.coalesce(Resume.designation, "")).like(pattern),
+            ))
+        if filters.get("recency_days") is not None:
+            days = min(max(int(filters["recency_days"]), 1), 3650)
+            query = query.filter(Resume.created_at >= datetime.utcnow() - timedelta(days=days))
+        limit = min(max(int(entities.get("limit") or 10), 1), 100)
+        return query.order_by(func.coalesce(Resume.rank_score, Resume.final_score, 0).desc()).limit(limit).all()
+
     intent = result.get("intent")
     if intent == "search_talent" or "search_talent" in action_ids:
         search_query = str(entities.get("search_query") or "").strip()
@@ -237,6 +306,7 @@ def prepare_action_agent(
     user: User,
 ) -> dict[str, Any]:
     result = parse_intent(message, current_route, current_context or {})
+    _audit_plan(db, user, message, result)
     if result.get("response_type") != "workflow":
         result["tasks"] = []
         result["actions"] = []
@@ -262,7 +332,7 @@ def prepare_action_agent(
         if isinstance(action, dict) and action.get("action_id") in SERVER_ACTIONS
     ]
 
-    is_talent_search = result.get("intent") == "search_talent"
+    is_talent_search = result.get("intent") in {"filter_candidates", "search_talent"}
     job, job_options = (None, []) if is_talent_search else _resolve_job(db, user, entities)
     if job:
         entities["job_id"] = job.id
@@ -271,6 +341,26 @@ def prepare_action_agent(
     candidates = _resolve_candidates(db, user, {**result, "entities": entities}, job, action_ids)
     if candidates:
         entities["candidate_ids"] = [candidate.id for candidate in candidates]
+
+    if result.get("intent") == "filter_candidates":
+        result["entities"] = entities
+        result["candidate_preview"] = [_candidate_payload(candidate) for candidate in candidates]
+        result["job_options"] = []
+        result["confirmation"] = None
+        result["actions"] = [action for action in raw_actions if action.get("action_id") == "filter_candidates"]
+        result["missing_fields"] = [] if entities.get("filters") else ["filters"]
+        result["requires_confirmation"] = False
+        result["ready_for_action_agent"] = False
+        result["clarification_needed"] = not bool(entities.get("filters"))
+        result["assistant_reply"] = f"I found {len(candidates)} candidate(s) matching the validated filters."
+        result["guidance"] = result["assistant_reply"]
+        result["action_agent_plan"] = {
+            "enabled": False,
+            "actions": result["actions"],
+            "missing_fields": result["missing_fields"],
+            "requires_confirmation": False,
+        }
+        return result
 
     if is_talent_search:
         query_label = entities.get("search_query") or "your search"
@@ -398,6 +488,36 @@ def _record_stage_change(db, user: User, candidate: Resume, stage: str, status_l
     return True
 
 
+def _completed_confirmation(db, user: User, confirmation_jti: str) -> dict[str, Any] | None:
+    """Return a prior receipt so retrying the same signed confirmation is harmless."""
+    if not confirmation_jti:
+        return None
+    rows = db.query(AuditLog).filter(
+        AuditLog.actor_user_id == user.id,
+        AuditLog.organization_id == getattr(user, "organization_id", None),
+        AuditLog.action.like("help_agent.%"),
+        AuditLog.metadata_json.like(f"%{confirmation_jti}%"),
+    ).order_by(AuditLog.created_at.asc()).all()
+    receipts = []
+    candidate_ids: list[str] = []
+    for row in rows:
+        try:
+            metadata = json.loads(row.metadata_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if metadata.get("confirmation_jti") != confirmation_jti:
+            continue
+        candidate_ids = candidate_ids or [str(item) for item in metadata.get("candidate_ids") or []]
+        receipts.append({
+            "action_id": row.action.removeprefix("help_agent."),
+            "status": "already_completed",
+            "count": int(metadata.get("changed") or 0),
+        })
+    if not receipts:
+        return None
+    return {"candidate_ids": candidate_ids, "receipts": receipts}
+
+
 def execute_confirmed_action(*, confirmation_token: str, db, user: User) -> dict[str, Any]:
     payload = decode_token(confirmation_token)
     if payload.get("purpose") != "help_action_confirmation" or payload.get("sub") != user.id:
@@ -406,6 +526,15 @@ def execute_confirmed_action(*, confirmation_token: str, db, user: User) -> dict
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization context changed; create a new action preview")
 
     job = _require_visible_job(db, user, str(payload.get("job_id") or ""))
+    completed = _completed_confirmation(db, user, str(payload.get("jti") or ""))
+    if completed:
+        return {
+            "status": "already_completed",
+            "idempotent_replay": True,
+            "job": {"id": job.id, "job_title": job.job_title or job.role},
+            "candidate_count": len(completed["candidate_ids"]),
+            **completed,
+        }
     candidate_ids = [str(item) for item in (payload.get("candidate_ids") or [])]
     actions = [str(item) for item in (payload.get("actions") or []) if str(item) in SERVER_ACTIONS]
     if not candidate_ids or not actions:

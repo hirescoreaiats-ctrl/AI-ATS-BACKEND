@@ -139,15 +139,22 @@ def canonical_capability(value: str) -> str:
     return CANONICAL_ALIASES.get(str(value or "").strip().lower(), str(value or "").strip())
 
 
-def _source_blocks(parsed: dict) -> list[tuple[str, str]]:
+def _source_blocks(parsed: dict) -> list[tuple[str, str, dict]]:
     blocks = []
     for job in parsed.get("experience") or []:
         if isinstance(job, dict):
-            blocks.append(("work_experience", " ".join(str(job.get(key) or "") for key in ("role", "description"))))
+            blocks.append(("work_experience", " ".join(str(job.get(key) or "") for key in ("role", "description")), {
+                "role": job.get("role") or "",
+                "company": job.get("company_name") or job.get("company") or "",
+                "start_date": job.get("start_date"),
+                "end_date": job.get("end_date"),
+            }))
     for project in parsed.get("projects") or []:
         if isinstance(project, dict):
-            blocks.append(("project", " ".join(str(project.get(key) or "") for key in ("name", "title", "description", "summary"))))
-    blocks.append(("skills_section", " ".join(str(item) for item in parsed.get("key_skills") or [])))
+            blocks.append(("project", " ".join(str(project.get(key) or "") for key in ("name", "title", "description", "summary")), {
+                "project": project.get("name") or project.get("title") or "",
+            }))
+    blocks.append(("skills_section", " ".join(str(item) for item in parsed.get("key_skills") or []), {}))
     return blocks
 
 
@@ -171,7 +178,7 @@ def capability_evidence(required: str, parsed: dict | None, resume_text: str = "
 
     parsed = parsed or {}
     candidates = []
-    for source, text in _source_blocks(parsed):
+    for source, text, metadata in _source_blocks(parsed):
         match = rule.pattern.search(text or "")
         if not match:
             continue
@@ -187,22 +194,22 @@ def capability_evidence(required: str, parsed: dict | None, resume_text: str = "
                 re.I,
             ))
             level, weight = ("professional_strong", 1.0) if action else ("professional_weak", 0.78)
-            candidates.append((5 if action else 4, source, level, weight, evidence_text))
+            candidates.append((5 if action else 4, source, level, weight, evidence_text, metadata))
         elif source == "project":
             action = bool(re.search(r"\b(?:developed|designed|implemented|built|integrated|debugged|tested|created)\b", text, re.I))
             level, weight = ("project_strong", 0.76) if action else ("project_weak", 0.52)
-            candidates.append((3 if action else 2, source, level, weight, evidence_text))
+            candidates.append((3 if action else 2, source, level, weight, evidence_text, metadata))
         else:
-            candidates.append((1, source, "skills_section_only", 0.36, evidence_text))
+            candidates.append((1, source, "skills_section_only", 0.36, evidence_text, metadata))
 
     if not candidates:
         match = rule.pattern.search(resume_text or "")
         if match and (not rule.requires_embedded_context or EMBEDDED_CONTEXT_RE.search(resume_text or "")):
-            candidates.append((1, "resume_text", "contextual_support", 0.30, _snippet(resume_text, match)))
+            candidates.append((1, "resume_text", "contextual_support", 0.30, _snippet(resume_text, match), {}))
     if not candidates:
         return None
 
-    _, source, level, weight, original = max(candidates, key=lambda item: item[0])
+    _, source, level, weight, original, metadata = max(candidates, key=lambda item: item[0])
     verify = level in {"skills_section_only", "contextual_support"}
     return {
         "skill": required,
@@ -217,4 +224,11 @@ def capability_evidence(required: str, parsed: dict | None, resume_text: str = "
         "weight": weight,
         "employer_name_only": False,
         "inference": canonical != required,
+        "role": metadata.get("role") or None,
+        "company": metadata.get("company") or None,
+        "project": metadata.get("project") or None,
+        "start_date": metadata.get("start_date"),
+        "end_date": metadata.get("end_date"),
+        "evidence_recency": "recent" if re.search(r"\b(?:202[2-9]|present|current)\b", " ".join(str(metadata.get(key) or "") for key in ("start_date", "end_date")), re.I) else "historical_or_unknown",
+        "evidence_type": "direct" if not verify else "needs_verification",
     }

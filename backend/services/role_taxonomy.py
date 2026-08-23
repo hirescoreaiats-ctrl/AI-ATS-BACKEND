@@ -279,6 +279,32 @@ ROLE_FAMILIES = {
             "language": ["Kotlin", "Swift", "Java", "Dart", "JavaScript"],
         },
     },
+    "data_engineering": {
+        "patterns": [
+            r"\bdata\s+engineer(?:ing)?\b",
+            r"\betl\s+(?:engineer|developer)\b",
+            r"\bdata\s+pipeline(?:s)?\b",
+            r"\bdata\s+warehouse(?:ing)?\b",
+        ],
+        "skills": [
+            "Python", "SQL", "ETL", "Data Pipelines", "Data Warehousing", "Apache Spark",
+            "Airflow", "Kafka", "Databricks", "Snowflake", "AWS", "Azure", "GCP",
+        ],
+        "default_must_have": ["Python", "SQL", "ETL", "Data Pipelines", "Data Warehousing"],
+        "default_core_groups": {
+            "programming_querying": ["Python", "SQL", "Scala"],
+            "pipelines_orchestration": ["ETL", "Data Pipelines", "Airflow", "Dagster", "Prefect"],
+            "distributed_processing": ["Apache Spark", "Databricks", "Kafka", "Flink"],
+            "warehouse_cloud": ["Data Warehousing", "Snowflake", "BigQuery", "Redshift", "AWS", "Azure", "GCP"],
+        },
+        "default_nice_to_have": ["Apache Spark", "Airflow", "Kafka", "Databricks", "Snowflake", "Docker", "CI/CD"],
+        "core_groups": {
+            "programming_querying": ["Python", "SQL", "Scala"],
+            "pipelines_orchestration": ["ETL", "ELT", "Data Pipelines", "Airflow", "Dagster", "Prefect"],
+            "distributed_processing": ["Apache Spark", "Databricks", "Kafka", "Flink"],
+            "warehouse_cloud": ["Data Warehousing", "Snowflake", "BigQuery", "Redshift", "AWS", "Azure", "GCP"],
+        },
+    },
     "data_analytics": {
         "patterns": [
             r"\bdata\s+analyst\b",

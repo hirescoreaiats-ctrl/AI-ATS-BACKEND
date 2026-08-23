@@ -1,0 +1,11 @@
+[
+  {"name": "firmware", "title": "Firmware Engineer", "jd": "Required C, embedded firmware, microcontrollers and debugging.", "role_family": "embedded_firmware"},
+  {"name": "backend", "title": "Backend Engineer", "jd": "Required Python, FastAPI, REST API, PostgreSQL and authentication.", "role_family": "software_backend"},
+  {"name": "frontend", "title": "Frontend Engineer", "jd": "Required React, JavaScript, HTML, CSS and REST API integration.", "role_family": "software_frontend"},
+  {"name": "data_engineering", "title": "Data Engineer", "jd": "Required Python, SQL, ETL, Airflow, Spark and data pipelines.", "role_family": "data_engineering"},
+  {"name": "qa", "title": "QA Automation Engineer", "jd": "Required Selenium, API Testing, SQL, regression testing and Jira.", "role_family": "qa_automation"},
+  {"name": "devops", "title": "DevOps Engineer", "jd": "Required AWS, Docker, Kubernetes, Terraform and CI/CD.", "role_family": "devops_cloud"},
+  {"name": "ai_ml", "title": "Machine Learning Engineer", "jd": "Required Python, machine learning, model deployment and MLOps.", "role_family": "applied_ml_engineer"},
+  {"name": "recruitment", "title": "Technical Recruiter", "jd": "Required sourcing, screening, stakeholder management and recruitment.", "role_family": "hr_recruitment"},
+  {"name": "sales", "title": "Sales Manager", "jd": "Required B2B sales, lead generation, CRM and negotiation.", "role_family": "sales_business_development"}
+]

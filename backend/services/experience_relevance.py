@@ -119,6 +119,7 @@ SALESFORCE_DEV_SPECIFIC_RE = re.compile(
 SENIOR_ROLE_RE = re.compile(r"\b(senior|sr\.?|lead|principal|architect|manager|tech\s+lead)\b", re.I)
 INTERNSHIP_RE = re.compile(r"\b(intern|internship|trainee|training|certification|trailhead)\b", re.I)
 DIRECT_ROLE_PATTERNS = {
+    "data_engineering": re.compile(r"\b(?:data\s+engineer|etl\s+(?:engineer|developer)|data\s+platform\s+engineer)\b", re.I),
     "embedded_firmware": re.compile(
         r"\b(?:embedded\s+(?:firmware|software|systems?)\s+(?:engineer|developer)|"
         r"firmware(?:\s+and\s+hardware|\s*[-/]\s*[^\n]{0,35})?\s*(?:engineer|developer)?|"
@@ -638,6 +639,48 @@ def _recency_score(job):
     return 25
 
 
+def _job_period(job):
+    start = _parse_relevance_date((job or {}).get("start_date"))
+    end = _parse_relevance_date((job or {}).get("end_date"), is_end=True)
+    if not start:
+        return None
+    if not end or re.search(r"\b(present|current|now|till\s+date)\b", str((job or {}).get("end_date") or ""), re.I):
+        end = datetime.now()
+    end = min(end, datetime.now())
+    return (start, end) if end >= start else None
+
+
+def _weighted_calendar_years(periods, *, recent_years=None):
+    """Credit the strongest relevance once for every overlapping day."""
+    normalized = []
+    recent_cutoff = None
+    if recent_years:
+        now = datetime.now()
+        recent_cutoff = now.replace(year=max(1, now.year - recent_years))
+    for start, end, weight, kind in periods:
+        if recent_cutoff:
+            start = max(start, recent_cutoff)
+        if end > start and weight > 0:
+            normalized.append((start, end, float(weight), kind))
+    if not normalized:
+        return {"direct": 0.0, "transferable": 0.0, "relevant": 0.0}
+    boundaries = sorted({point for start, end, _, _ in normalized for point in (start, end)})
+    totals = {"direct": 0.0, "transferable": 0.0, "relevant": 0.0}
+    for left, right in zip(boundaries, boundaries[1:]):
+        active = [(weight, kind) for start, end, weight, kind in normalized if start < right and end > left]
+        if not active:
+            continue
+        direct_weight = max((weight for weight, kind in active if kind == "direct"), default=0.0)
+        transferable_weight = max((weight for weight, kind in active if kind == "transferable"), default=0.0)
+        days = (right - left).days
+        if direct_weight:
+            totals["direct"] += days * direct_weight
+        elif transferable_weight:
+            totals["transferable"] += days * transferable_weight
+        totals["relevant"] += days * max(direct_weight, transferable_weight)
+    return {key: round(value / 365, 4) for key, value in totals.items()}
+
+
 def _seniority_block_score(job, target_seniority):
     target = (target_seniority or "unknown").lower()
     text = " ".join([
@@ -677,6 +720,7 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
     evidence = []
     warnings = []
     block_scores = []
+    relevance_periods = []
 
     role_terms = set(_family_role_terms(role_family))
     role_terms.update(part.lower() for part in re.split(r"\W+", role_title or "") if len(part) > 2)
@@ -926,6 +970,14 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             final_block_score = max(final_block_score, 78)
         if direct_role_match and (skill_evidence_score >= 25 or responsibility_match_score >= 20):
             final_block_score = max(final_block_score, 82)
+        if role_family == "embedded_firmware" and len(embedded_hits) >= 2 and re.search(
+            r"\b(?:developed|built|designed|implemented|integrated|debugged|validated|led|maintained|refactored|programmed)\b",
+            description,
+            re.I,
+        ):
+            # Sustained embedded responsibilities are direct evidence even if
+            # the employer used a broad title such as Product/System Engineer.
+            final_block_score = max(final_block_score, 82)
         if role_family == "embedded_firmware" and generic_leadership_title and embedded_hits:
             # A generic leadership title remains only partially relevant unless
             # the title itself proves firmware/embedded identity.
@@ -973,6 +1025,11 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             elif label in {"transferable", "strong_transferable"}:
                 transferable_years = max(0.0, transferable_years - (years * weight) + credited_years)
 
+        period = _job_period(job)
+        if period and credited_years > 0:
+            credited_weight = min(1.0, credited_years / max(years, 0.0001))
+            relevance_periods.append((*period, credited_weight, "direct" if label in {"direct", "partial"} else "transferable"))
+
         if SENIOR_ROLE_RE.search(role) and final_block_score >= 55:
             senior_years += credited_years
 
@@ -991,6 +1048,8 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
             "recency_score": recency_score,
             "final_block_relevance_score": final_block_score,
             "relevance_weight": weight,
+            "start_date": job.get("start_date"),
+            "end_date": job.get("end_date"),
             "matched_skills": sorted(set(skill_hits))[:10],
             "matched_responsibilities": sorted(set(responsibility_hits))[:8],
         })
@@ -1001,7 +1060,12 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
     except (TypeError, ValueError):
         parsed_total = 0.0
     total_years = round(parsed_total if parsed_total > 0 else summed_total_years, 2)
-    relevant_years = round(min(total_years, direct_years + transferable_years), 2)
+    calendar_credit = _weighted_calendar_years(relevance_periods)
+    recent_credit = _weighted_calendar_years(relevance_periods, recent_years=5)
+    if relevance_periods:
+        direct_years = calendar_credit["direct"]
+        transferable_years = calendar_credit["transferable"]
+    relevant_years = round(min(total_years, calendar_credit["relevant"] if relevance_periods else direct_years + transferable_years), 2)
     role_relevance_score = round(max(block_scores or [0]), 2)
 
     if not evidence and re.search(r"\b\d+(?:\.\d+)?\s*\+?\s*(?:years?|yrs?)\s+(?:of\s+)?experience\b", resume_text or "", re.I):
@@ -1021,6 +1085,11 @@ def estimate_relevant_experience_v2(parsed, resume_text, jd_profile):
         "relevant_experience_years": relevant_years,
         "direct_relevant_experience_years": round(min(total_years, direct_years), 2),
         "transferable_experience_years": round(min(total_years, transferable_years), 2),
+        "recent_relevant_experience_years": round(min(total_years, recent_credit["relevant"]), 2),
+        "experience_dates_considered": [
+            {"role": item.get("role"), "company_name": item.get("company_name"), "start_date": item.get("start_date"), "end_date": item.get("end_date"), "credited_years": item.get("credited_years"), "label": item.get("label")}
+            for item in evidence
+        ],
         "senior_role_experience_years": round(min(total_years, senior_years), 2),
         "role_relevance_score": role_relevance_score,
         "experience_relevance_label": label,

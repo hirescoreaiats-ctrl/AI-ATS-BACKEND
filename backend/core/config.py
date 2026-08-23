@@ -79,6 +79,10 @@ class Settings:
     sentry_dsn: str | None = field(default_factory=lambda: os.getenv("SENTRY_DSN"))
 
     openai_api_key: str | None = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
+    conversational_action_agent_enabled: bool = field(
+        default_factory=lambda: os.getenv("CONVERSATIONAL_ACTION_AGENT", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     frontend_url: str = field(default_factory=lambda: os.getenv("FRONTEND_URL", "http://127.0.0.1:5500"))
     frontend_signup_path: str = field(default_factory=lambda: os.getenv("FRONTEND_SIGNUP_PATH", "Signup.html"))
     frontend_login_path: str = field(default_factory=lambda: os.getenv("FRONTEND_LOGIN_PATH", "login.html"))
