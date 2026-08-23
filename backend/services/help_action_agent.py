@@ -167,6 +167,31 @@ def _candidate_payload(candidate: Resume) -> dict[str, Any]:
     }
 
 
+def _candidate_fit_reply(candidate: Resume, job: Job | None) -> str:
+    payload = _candidate_payload(candidate)
+    name = payload["full_name"]
+    role = (job.job_title or job.role) if job else "this role"
+    try:
+        score = float(payload.get("rank_score") or payload.get("final_score") or 0)
+    except (TypeError, ValueError):
+        score = 0.0
+    fit_band = str(payload.get("fit_band") or "review").strip()
+    reason = str(payload.get("recruiter_explanation") or payload.get("ranking_reason") or "").strip()
+    strengths = payload.get("strengths") or []
+    concerns = payload.get("concerns") or []
+    matched = payload.get("matched_skills") or []
+    parts = [f"{name} is rated {score:g}/100 ({fit_band}) for {role} based on stored ATS evidence."]
+    if reason:
+        parts.append(reason)
+    if matched:
+        parts.append("Matched skills: " + ", ".join(matched) + ".")
+    if strengths:
+        parts.append("Key strengths: " + "; ".join(strengths) + ".")
+    if concerns:
+        parts.append("Points to verify: " + "; ".join(concerns) + ".")
+    return " ".join(parts)
+
+
 def _job_payload(db, job: Job) -> dict[str, Any]:
     candidates = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_active == True).all()
     scores = [float(item.rank_score or item.final_score or 0) for item in candidates]
@@ -450,6 +475,9 @@ def _prepare_action_agent(
     candidates = _resolve_candidates(db, user, {**result, "entities": entities}, job, action_ids)
     if candidates:
         entities["candidate_ids"] = [candidate.id for candidate in candidates]
+    if result.get("intent") == "explain_candidate_score" and candidates:
+        result["assistant_reply"] = _candidate_fit_reply(candidates[0], job)
+        result["guidance"] = result["assistant_reply"]
 
     if result.get("intent") == "view_sourcing_status":
         if not job:
@@ -528,6 +556,8 @@ def _prepare_action_agent(
     }
     if needs_job and not job:
         missing_fields.append("job")
+    if result.get("intent") in {"explain_candidate_score", "view_candidate_profile"} and not candidates:
+        missing_fields.append("candidate_ids")
     if any(action_id in MUTATING_ACTIONS for action_id in action_ids) and not candidates:
         missing_fields.append("candidate_ids")
     if len(candidates) > MAX_MUTATION_CANDIDATES and any(action_id in MUTATING_ACTIONS for action_id in action_ids):

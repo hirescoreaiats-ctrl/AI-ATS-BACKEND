@@ -364,6 +364,35 @@ def test_reject_below_score_requires_signed_confirmation(monkeypatch, db):
     assert result["requires_confirmation"] is True
 
 
+def test_candidate_fit_follow_up_returns_stored_evidence_without_reasking_context(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="how is that candidate fit for this role?",
+        current_route="topCandidate",
+        current_context={
+            "job_id": job.id,
+            "job_title": job.job_title,
+            "candidate_id": "candidate-1",
+            "candidate_ids": ["candidate-1"],
+        },
+        db=db,
+        user=user,
+    )
+
+    assert result["intent"] == "explain_candidate_score"
+    assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-1"]
+    assert "Asha Singh" in result["assistant_reply"]
+    assert "Strong SQL and analytics evidence" in result["assistant_reply"]
+    assert "Matched skills: SQL, Power BI" in result["assistant_reply"]
+    assert result["missing_fields"] == []
+    assert result["clarification_needed"] is False
+
+
 def test_follow_up_shortlist_best_three_limits_context_candidates(monkeypatch, db):
     user, _, _, job, _ = _seed_workspace(db)
     monkeypatch.setattr(

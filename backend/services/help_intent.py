@@ -814,6 +814,11 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
         intent, confidence = "create_job", 0.88
     elif any(term in text for term in ("apply link", "public link", "share link")):
         intent, confidence = "share_public_apply_link", 0.85
+    elif (
+        any(term in text for term in ("fit for", "fit this", "fit that", "role fit", "good fit", "strong fit", "weak fit", "suitable", "suitability", "why this candidate", "why that candidate", "how this candidate", "how that candidate", "why is he", "why is she"))
+        and any(term in text for term in ("candidate", "profile", "guy", "person", " he ", " she ", " him", " her", "this", "that", "fit", "suitable"))
+    ):
+        intent, confidence = "explain_candidate_score", 0.97
     elif any(term in text for term in ("score", "ranking", "ranked", "ai score", "top score")):
         intent, confidence = ("explain_candidate_score" if "explain" in text else "review_ai_ranked_candidates"), 0.82
     elif entities["target_stage"] == "communication":
@@ -1093,6 +1098,7 @@ def parse_intent(message: str, current_route: str | None = None, current_context
         "extract the job_title, and do not ask for job_id because the server resolves exact titles. "
         "Candidate cardinality is strict: top N, all, shortlisted, or plural candidate requests are groups, not one candidate. "
         "For score explanations of a group, use review_ai_ranked_candidates with candidate_group and limit; never ask the user to choose one candidate. "
+        "For follow-ups such as 'why is this candidate fit', 'how is that person suitable', or 'explain why he matches', use explain_candidate_score and preserve the candidate IDs from current_context. "
         "If a user simply asks to see candidates for a named job without a requested action or filter, default to intent view_candidates_by_stage "
         "with candidate_group all. Do not ask whether they mean all/top/shortlisted unless their wording genuinely conflicts. "
         "Do not invent job IDs or candidate IDs when they are not present in current_context. "

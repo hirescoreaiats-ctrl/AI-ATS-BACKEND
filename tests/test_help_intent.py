@@ -112,6 +112,23 @@ def test_best_candidate_count_is_extracted_for_follow_up_actions():
     assert result["entities"]["limit"] == 3
 
 
+def test_candidate_fit_follow_up_preserves_selected_candidate_context():
+    result = fallback_parse_intent(
+        "i want you to please tell me how that candidate is fit for this role",
+        current_context={
+            "job_id": "job-firmware",
+            "job_title": "Firmware Engineer",
+            "candidate_id": "candidate-sunny",
+            "candidate_ids": ["candidate-sunny"],
+        },
+    )
+
+    assert result["intent"] == "explain_candidate_score"
+    assert result["entities"]["job_id"] == "job-firmware"
+    assert result["entities"]["candidate_ids"] == ["candidate-sunny"]
+    assert result["clarification_needed"] is False
+
+
 def test_top_candidates_to_communication_builds_action_agent_plan():
     result = fallback_parse_intent(
         "mujhe 10 candiate nikal do data analyst kai lia aur unha commincation mai bhej do"
