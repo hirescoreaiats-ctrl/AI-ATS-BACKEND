@@ -194,6 +194,26 @@ def _candidate_fit_reply(candidate: Resume, job: Job | None) -> str:
     return " ".join(parts)
 
 
+def _candidate_group_fit_reply(candidates: list[Resume], job: Job | None) -> str:
+    role = (job.job_title or job.role) if job else "this role"
+    lines = [f"These {len(candidates)} candidates are the highest-ranked profiles for {role}, but each should be validated before selection."]
+    for index, candidate in enumerate(candidates, start=1):
+        payload = _candidate_payload(candidate)
+        name = payload["full_name"]
+        try:
+            score = float(payload.get("rank_score") or payload.get("final_score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        reason = str(payload.get("recruiter_explanation") or payload.get("ranking_reason") or "").strip()
+        strengths = payload.get("strengths") or []
+        concerns = payload.get("concerns") or []
+        detail = reason or ("Strengths: " + "; ".join(strengths) if strengths else "Review the candidate evidence against the JD.")
+        if concerns:
+            detail += " Verify: " + "; ".join(concerns) + "."
+        lines.append(f"#{index} {name} ({score:g}/100): {detail}")
+    return " ".join(lines)
+
+
 def _job_payload(db, job: Job) -> dict[str, Any]:
     candidates = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_active == True).all()
     scores = [float(item.rank_score or item.final_score or 0) for item in candidates]
@@ -478,7 +498,11 @@ def _prepare_action_agent(
     if candidates:
         entities["candidate_ids"] = [candidate.id for candidate in candidates]
     if result.get("intent") == "explain_candidate_score" and candidates:
-        result["assistant_reply"] = _candidate_fit_reply(candidates[0], job)
+        result["assistant_reply"] = (
+            _candidate_group_fit_reply(candidates, job)
+            if len(candidates) > 1
+            else _candidate_fit_reply(candidates[0], job)
+        )
         result["guidance"] = result["assistant_reply"]
 
     if result.get("intent") == "view_sourcing_status":

@@ -395,6 +395,33 @@ def test_candidate_fit_follow_up_returns_stored_evidence_without_reasking_contex
     assert result["clarification_needed"] is False
 
 
+def test_group_fit_follow_up_explains_every_context_candidate(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="mai inha hi kyu select kru",
+        current_route="topCandidate",
+        current_context={
+            "job_id": job.id,
+            "job_title": job.job_title,
+            "candidate_ids": ["candidate-1", "candidate-2", "candidate-3"],
+        },
+        db=db,
+        user=user,
+    )
+
+    assert result["intent"] == "explain_candidate_score"
+    assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-1", "candidate-2", "candidate-3"]
+    assert "These 3 candidates" in result["assistant_reply"]
+    assert "#1 Asha Singh" in result["assistant_reply"]
+    assert "#2 Ravi Kumar" in result["assistant_reply"]
+    assert "#3 Neha Shah" in result["assistant_reply"]
+
+
 def test_follow_up_shortlist_best_three_limits_context_candidates(monkeypatch, db):
     user, _, _, job, _ = _seed_workspace(db)
     monkeypatch.setattr(

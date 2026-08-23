@@ -777,8 +777,8 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     shortlist_action = _shortlist_action_requested(text)
     view_shortlisted = _view_shortlisted_requested(text)
     fit_explanation_requested = (
-        any(term in text for term in ("fit for", "fit this", "fit that", "role fit", "good fit", "strong fit", "weak fit", "suitable", "suitability", "why this candidate", "why that candidate", "how this candidate", "how that candidate", "why is he", "why is she", "why this is the best candidate", "why is this the best candidate", "why that is the best candidate", "why is he the best", "why is she the best", "why best candidate", "kyu best", "kyun best"))
-        and any(term in text for term in ("candidate", "profile", "guy", "person", " he ", " she ", " him", " her", "this", "that", "fit", "suitable", "best"))
+        any(term in text for term in ("fit for", "fit this", "fit that", "role fit", "good fit", "strong fit", "weak fit", "suitable", "suitability", "why this candidate", "why that candidate", "how this candidate", "how that candidate", "why is he", "why is she", "why this is the best candidate", "why is this the best candidate", "why that is the best candidate", "why is he the best", "why is she the best", "why best candidate", "why consider", "why should i consider", "why need to consider", "why i need to consider", "why do i need to consider", "why select", "why choose", "kyu best", "kyun best", "kyu select", "kyun select", "inha kyu", "inhe kyu", "inko kyu"))
+        and any(term in text for term in ("candidate", "candidates", "profile", "guy", "person", " he ", " she ", " him", " her", "this", "that", "these", "three", "them", "inha", "inhe", "inko", "fit", "suitable", "best", "consider", "select", "choose"))
     )
     interview_action_requested = (
         "interview" in text

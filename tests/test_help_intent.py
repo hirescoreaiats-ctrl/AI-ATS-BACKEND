@@ -324,3 +324,11 @@ def test_typo_heavy_apply_page_request_is_understood():
     result = fallback_parse_intent("give me aply paeg for this job")
 
     assert result["intent"] == "share_public_apply_link"
+
+
+def test_group_why_select_follow_up_preserves_explanation_intent():
+    english = fallback_parse_intent("can tell me why i need to consider these three candidates")
+    hinglish = fallback_parse_intent("mai inha hi kyu select kru")
+
+    assert english["intent"] == "explain_candidate_score"
+    assert hinglish["intent"] == "explain_candidate_score"
