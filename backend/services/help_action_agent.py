@@ -151,6 +151,8 @@ def _candidate_payload(candidate: Resume) -> dict[str, Any]:
         "fit_band": candidate.fit_band,
         "stage": candidate.stage,
         "status": candidate.status,
+        "mail_status": candidate.mail_status,
+        "response_status": candidate.response_status,
         "ranking_reason": candidate.ranking_reason,
         "recruiter_explanation": candidate.recruiter_explanation or candidate.ranking_reason or candidate.decision_reason,
         "strengths": list_field(candidate.strengths),

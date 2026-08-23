@@ -143,6 +143,29 @@ def test_no_sourcing_opt_in_does_not_publish_or_send(monkeypatch, tenant_db):
     assert job_router.public_sourcing_requirements(job_id=response["job_id"], limit=10)["count"] == 0
 
 
+def test_existing_job_can_request_sourcing_once_from_agent(monkeypatch, tenant_db):
+    sent = []
+    monkeypatch.setattr(job_router, "enrich_jd_for_scoring", scoring_enrichment)
+    monkeypatch.setattr(
+        job_router,
+        "_deliver_sourcing_request_email",
+        lambda job, owner, db, token, extra_entries=None: sent.append((job.id, owner.id, bool(token))) or {"provider": "test"},
+    )
+    user = recruiter("org-a")
+    created = job_router.create_job(job_input(sourcing=False), user=user)
+
+    first = job_router.request_candidate_sourcing_for_job(created["job_id"], user=user)
+    second = job_router.request_candidate_sourcing_for_job(created["job_id"], user=user)
+    stored = tenant_db.query(Job).filter(Job.id == created["job_id"]).one()
+
+    assert first["status"] == "pending_approval"
+    assert first["email_status"] == "sent"
+    assert first["already_requested"] is False
+    assert second["already_requested"] is True
+    assert stored.sourcing_approval_status == "pending"
+    assert sent == [(stored.id, "user-org-a", True)]
+
+
 def vendor_input():
     return job_router.PublicSourcingSubmission(
         fullName="Vendor Recruiter", workEmail="vendor@example.com", phone="+91 9000000000",

@@ -389,6 +389,8 @@ def test_candidate_fit_follow_up_returns_stored_evidence_without_reasking_contex
     assert "Asha Singh" in result["assistant_reply"]
     assert "Strong SQL and analytics evidence" in result["assistant_reply"]
     assert "Matched skills: SQL, Power BI" in result["assistant_reply"]
+    assert "mail_status" in result["candidate_preview"][0]
+    assert "response_status" in result["candidate_preview"][0]
     assert result["missing_fields"] == []
     assert result["clarification_needed"] is False
 

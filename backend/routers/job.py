@@ -1913,6 +1913,63 @@ def create_job(job: JobCreate, user: User = Depends(require_roles("admin", "supe
         db.close()
 
 
+@router.post("/jobs/{job_id}/request-candidate-sourcing")
+def request_candidate_sourcing_for_job(
+    job_id: str,
+    user: User = Depends(require_roles("admin", "super_admin", "recruiter", "hiring_manager")),
+):
+    """Submit an existing ATS job for private sourcing approval.
+
+    This is idempotent: repeated chat confirmations do not create duplicate public
+    requirements or rotate an approval that is already pending/approved.
+    """
+    db = SessionLocal()
+    try:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        _require_job_visible(job, user)
+        if job.sourcing_requested:
+            return {
+                "job_id": job.id,
+                "status": job.sourcing_approval_status or "pending_approval",
+                "email_status": job.sourcing_email_status,
+                "already_requested": True,
+                "message": "Candidate sourcing was already requested for this job.",
+            }
+
+        approval_token, token_hash = _new_sourcing_approval_token()
+        job.sourcing_requested = True
+        job.sourcing_requested_at = datetime.utcnow()
+        job.sourcing_email_status = "pending"
+        job.sourcing_email_error = None
+        job.sourcing_approval_status = "pending"
+        job.sourcing_approval_token_hash = token_hash
+        job.sourcing_request_source = "ats_agent"
+        db.commit()
+        db.refresh(job)
+
+        delivery = None
+        try:
+            delivery = _deliver_sourcing_request_email(job, user, db, approval_token)
+            job.sourcing_email_status = "sent"
+        except Exception as exc:
+            logger.exception("Candidate sourcing request email failed for existing job %s", job.id)
+            job.sourcing_email_status = "failed"
+            job.sourcing_email_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+        db.commit()
+        db.refresh(job)
+        return {
+            "job_id": job.id,
+            "status": "pending_approval",
+            "email_status": job.sourcing_email_status,
+            "provider": (delivery or {}).get("provider"),
+            "already_requested": False,
+            "requirement_url": f"{_requirement_platform_job_url(job.id)}&submission=pending",
+            "message": "Requirement submitted for approval. Pricing and any remaining requirements will be shared by the HireScoreAI team.",
+        }
+    finally:
+        db.close()
+
+
 @router.get("/public-sourcing-requirements")
 def public_sourcing_requirements(
     job_id: str | None = Query(default=None),

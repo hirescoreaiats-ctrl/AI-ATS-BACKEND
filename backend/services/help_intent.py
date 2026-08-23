@@ -131,9 +131,19 @@ def _norm(value: str | None) -> str:
     text = re.sub(r"[^a-z0-9+#]+", " ", text)
     text = re.sub(r"\bshort\s*(?:list|ist|lst|lis)\b", "shortlist", text)
     text = re.sub(r"\bupl\s*aod\b|\buplod\b|\buplaod\b", "upload", text)
-    text = re.sub(r"\bcandiate\b|\bcandiadte\b", "candidate", text)
+    text = re.sub(r"\bcandiate\b|\bcandaite\b|\bcnadiate\b|\bcandiadte\b", "candidate", text)
+    text = re.sub(r"\bcandiates\b|\bcandaites\b|\bcnadiates\b|\bcandiadtes\b", "candidates", text)
     text = re.sub(r"\bcommincation\b|\bcommuncation\b|\bcomunication\b", "communication", text)
-    text = re.sub(r"\bshedule\b|\bsehdule\b", "schedule", text)
+    text = re.sub(r"\bshedule\b|\bsehdule\b|\bscedule\b|\bschedul\b|\bsheduleing\b|\bsheduling\b", "schedule", text)
+    text = re.sub(r"\binterveiw\b|\bintervieww\b|\binterviw\b|\bintreview\b", "interview", text)
+    text = re.sub(r"\brequimremnts?\b|\brequiemnts?\b|\brequierments?\b|\brequirments?\b", "requirement", text)
+    text = re.sub(r"\bsorcing\b|\bsoucing\b|\bsourching\b", "sourcing", text)
+    text = re.sub(r"\baply\b|\bappply\b", "apply", text)
+    text = re.sub(r"\bpaeg\b", "page", text)
+    text = re.sub(r"\bcreatre\b|\bcrate\b|\bcreatee\b", "create", text)
+    text = re.sub(r"\bstauts\b|\bstatuc\b", "status", text)
+    text = re.sub(r"\breslts\b|\bresutls\b", "results", text)
+    text = re.sub(r"\bprofil\b", "profile", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -699,6 +709,10 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     )
     entities["candidate_name"] = _extract_candidate_name(raw)
     entities["email"] = (re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", raw, re.I) or [None])[0]
+    meeting_match = re.search(r"https?://[^\s<>\"]+", raw, re.I)
+    entities["meeting_url"] = meeting_match.group(0).rstrip("),.;") if meeting_match else None
+    date_time_match = re.search(r"\b(20\d{2}-[01]\d-[0-3]\d[T ](?:[01]\d|2[0-3]):[0-5]\d)\b", raw)
+    entities["date_time"] = date_time_match.group(1).replace(" ", "T") if date_time_match else None
     entities["limit"] = _extract_limit(text)
     entities["target_stage"] = _target_stage_from_text(text)
     entities["job_id"] = context.get("job_id") or context.get("current_job_id")
@@ -762,12 +776,30 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     ))
     shortlist_action = _shortlist_action_requested(text)
     view_shortlisted = _view_shortlisted_requested(text)
+    fit_explanation_requested = (
+        any(term in text for term in ("fit for", "fit this", "fit that", "role fit", "good fit", "strong fit", "weak fit", "suitable", "suitability", "why this candidate", "why that candidate", "how this candidate", "how that candidate", "why is he", "why is she", "why this is the best candidate", "why is this the best candidate", "why that is the best candidate", "why is he the best", "why is she the best", "why best candidate", "kyu best", "kyun best"))
+        and any(term in text for term in ("candidate", "profile", "guy", "person", " he ", " she ", " him", " her", "this", "that", "fit", "suitable", "best"))
+    )
+    interview_action_requested = (
+        "interview" in text
+        and not selection_requested
+        and (
+            _has_any_word(text, ("schedule", "book", "arrange", "set"))
+            or bool(entities.get("date_time"))
+            or bool(entities.get("meeting_url"))
+            or bool(re.search(r"\b(?:interview)\s+(?:this|that|the|selected)?\s*candidate\b", text))
+        )
+    )
     discovery_match = re.search(
         r"^(?:i\s+want|show\s+me|find|search|get|give\s+me|mujhe)?\s*(.+?)\s+(?:candidate|candidates|profiles|resumes)\s*$",
         text,
     )
     discovery_query = _title_case_job(discovery_match.group(1)) if discovery_match else None
-    if re.search(r"\b(?:which|show|list|find)\s+(?:of\s+)?(?:my\s+)?jobs?\s+(?:need|needs|needing|require)\s+attention\b", text):
+    if fit_explanation_requested:
+        intent, confidence = "explain_candidate_score", 0.97
+    elif interview_action_requested:
+        intent, confidence = "schedule_interview", 0.96
+    elif re.search(r"\b(?:which|show|list|find)\s+(?:of\s+)?(?:my\s+)?jobs?\s+(?:need|needs|needing|require)\s+attention\b", text):
         intent, confidence = "jobs_needing_attention", 0.96
     elif re.search(r"\b(?:show|list|open)\s+(?:me\s+)?(?:my\s+)?active\s+jobs?\b", text):
         intent, confidence = "view_active_jobs", 0.96
@@ -812,13 +844,8 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
         intent, confidence = "upload_resumes", 0.9
     elif any(term in text for term in ("new job", "create job", "job create", "jd add", "jd banana", "opening create")):
         intent, confidence = "create_job", 0.88
-    elif any(term in text for term in ("apply link", "public link", "share link")):
+    elif any(term in text for term in ("apply link", "apply page", "application page", "application link", "public link", "share link")):
         intent, confidence = "share_public_apply_link", 0.85
-    elif (
-        any(term in text for term in ("fit for", "fit this", "fit that", "role fit", "good fit", "strong fit", "weak fit", "suitable", "suitability", "why this candidate", "why that candidate", "how this candidate", "how that candidate", "why is he", "why is she"))
-        and any(term in text for term in ("candidate", "profile", "guy", "person", " he ", " she ", " him", " her", "this", "that", "fit", "suitable"))
-    ):
-        intent, confidence = "explain_candidate_score", 0.97
     elif any(term in text for term in ("score", "ranking", "ranked", "ai score", "top score")):
         intent, confidence = ("explain_candidate_score" if "explain" in text else "review_ai_ranked_candidates"), 0.82
     elif entities["target_stage"] == "communication":

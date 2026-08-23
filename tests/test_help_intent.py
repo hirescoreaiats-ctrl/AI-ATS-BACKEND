@@ -128,6 +128,13 @@ def test_candidate_fit_follow_up_preserves_selected_candidate_context():
     assert result["entities"]["candidate_ids"] == ["candidate-sunny"]
     assert result["clarification_needed"] is False
 
+    best_result = fallback_parse_intent(
+        "can you tell why this is the best candaite",
+        current_context={"job_id": "job-firmware", "candidate_ids": ["candidate-sunny"]},
+    )
+    assert best_result["intent"] == "explain_candidate_score"
+    assert best_result["entities"]["candidate_ids"] == ["candidate-sunny"]
+
 
 def test_top_candidates_to_communication_builds_action_agent_plan():
     result = fallback_parse_intent(
@@ -301,3 +308,19 @@ def test_role_candidate_request_uses_cross_job_talent_search():
     assert result["entities"]["job_title"] is None
     assert result["entities"]["job_id"] is None
     assert [action["action_id"] for action in result["actions"]] == ["search_talent"]
+
+
+def test_typo_heavy_interview_request_keeps_schedule_intent_and_slots():
+    result = fallback_parse_intent(
+        "plese intreview this candaite on 2026-08-25 15:30 https://meet.google.com/abc-defg-hij"
+    )
+
+    assert result["intent"] == "schedule_interview"
+    assert result["entities"]["date_time"] == "2026-08-25T15:30"
+    assert result["entities"]["meeting_url"] == "https://meet.google.com/abc-defg-hij"
+
+
+def test_typo_heavy_apply_page_request_is_understood():
+    result = fallback_parse_intent("give me aply paeg for this job")
+
+    assert result["intent"] == "share_public_apply_link"
