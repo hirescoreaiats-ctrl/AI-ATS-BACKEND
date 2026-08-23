@@ -114,6 +114,30 @@ def test_duplicate_confirmation_is_idempotent(monkeypatch, db):
     assert db.query(CandidateActivity).count() == activity_count
 
 
+def test_database_failure_never_returns_a_false_action_success(monkeypatch, db):
+    user, _, _, _, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+    plan = prepare_action_agent(
+        message="data analyst ka top candidate shortlist kar do",
+        current_route="/dashboard",
+        current_context={"limit": 1},
+        db=db,
+        user=user,
+    )
+
+    def fail_commit():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        execute_confirmed_action(confirmation_token=plan["confirmation"]["token"], db=db, user=user)
+
+    assert db.get(Resume, "candidate-1").stage == "review"
+
+
 def test_confirmation_token_cannot_be_used_by_another_user(monkeypatch, db):
     user, second_user, _, _, _ = _seed_workspace(db)
     monkeypatch.setattr(
@@ -264,3 +288,103 @@ def test_candidate_filters_query_stored_fields_without_mutation(monkeypatch, db)
     assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-3"]
     assert result["requires_confirmation"] is False
     assert db.get(Resume, "candidate-3").stage == "review"
+
+
+def test_job_scoped_skill_filter_returns_real_candidates_and_stable_cards(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    db.get(Resume, "candidate-1").key_skills = "AWS, Python, SQL"
+    db.get(Resume, "candidate-2").key_skills = "Azure, Excel"
+    db.commit()
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="Show me the top 10 candidates with AWS",
+        current_route="jobResult",
+        current_context={"job_id": job.id, "job_title": job.job_title},
+        db=db,
+        user=user,
+    )
+
+    assert result["intent"] == "filter_candidates"
+    assert result["entities"]["job_id"] == job.id
+    assert [item["id"] for item in result["ui"]["candidate_cards"]] == ["candidate-1"]
+    assert result["ui"]["kind"] == "candidate_results"
+
+
+def test_active_jobs_returns_tenant_scoped_job_cards(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="Show my active jobs", current_route="dashboard", current_context={}, db=db, user=user
+    )
+
+    assert result["intent"] == "view_active_jobs"
+    assert result["ui"]["kind"] == "job_results"
+    assert result["ui"]["job_cards"][0]["id"] == job.id
+    assert result["ui"]["job_cards"][0]["applicant_count"] == 3
+
+
+def test_no_result_filter_never_claims_candidates_exist(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="Show candidates with COBOL", current_route="jobResult",
+        current_context={"job_id": job.id, "job_title": job.job_title}, db=db, user=user,
+    )
+
+    assert result["candidate_preview"] == []
+    assert "0 candidate(s)" in result["assistant_reply"]
+    assert result["confirmation"] is None
+
+
+def test_reject_below_score_requires_signed_confirmation(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="Reject candidates with score below 90", current_route="jobResult",
+        current_context={"job_id": job.id, "job_title": job.job_title}, db=db, user=user,
+    )
+
+    assert [item["id"] for item in result["candidate_preview"]] == ["candidate-2", "candidate-3"]
+    assert result["requires_confirmation"] is True
+
+
+def test_follow_up_shortlist_best_three_limits_context_candidates(monkeypatch, db):
+    user, _, _, job, _ = _seed_workspace(db)
+    monkeypatch.setattr(
+        "backend.services.help_action_agent.parse_intent",
+        lambda message, current_route, current_context: fallback_parse_intent(message, current_route, current_context),
+    )
+
+    result = prepare_action_agent(
+        message="Shortlist the best 2",
+        current_route="jobResult",
+        current_context={
+            "job_id": job.id,
+            "job_title": job.job_title,
+            "candidate_ids": ["candidate-3", "candidate-1", "candidate-2"],
+        },
+        db=db,
+        user=user,
+    )
+
+    assert result["entities"]["limit"] == 2
+    assert [candidate["id"] for candidate in result["candidate_preview"]] == ["candidate-1", "candidate-2"]
+    assert result["requires_confirmation"] is True
+    assert result["confirmation"]["token"]
+    assert db.get(Resume, "candidate-2").stage == "review"

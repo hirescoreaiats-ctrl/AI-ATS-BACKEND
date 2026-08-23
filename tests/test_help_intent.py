@@ -105,6 +105,13 @@ def test_hinglish_cv_upload_extracts_job_title():
     assert result["entities"]["job_title"] == "Data Analyst"
 
 
+def test_best_candidate_count_is_extracted_for_follow_up_actions():
+    result = fallback_parse_intent("Shortlist the best 3")
+
+    assert result["intent"] == "shortlist_candidate"
+    assert result["entities"]["limit"] == 3
+
+
 def test_top_candidates_to_communication_builds_action_agent_plan():
     result = fallback_parse_intent(
         "mujhe 10 candiate nikal do data analyst kai lia aur unha commincation mai bhej do"

@@ -34,3 +34,21 @@ def test_long_history_is_compacted_to_recent_messages():
 
     assert len(context["conversation_history"]) == 8
     assert context["conversation_history"][0]["content"] == "message 12"
+
+
+def test_current_screen_job_candidate_and_filters_reach_planner_context():
+    context = build_conversation_context({
+        "current_screen": "candidateProfile",
+        "job_id": "job-1",
+        "job_title": "Firmware Engineer",
+        "candidate_id": "candidate-1",
+        "candidate_name": "John Smith",
+        "active_filters": {"skill": "AWS", "stage": "review"},
+        "organization_id": "untrusted-org",
+    }, [])
+
+    assert context["current_screen"] == "candidateProfile"
+    assert context["job_id"] == "job-1"
+    assert context["candidate_id"] == "candidate-1"
+    assert context["active_filters"] == {"skill": "AWS", "stage": "review"}
+    assert "organization_id" not in context

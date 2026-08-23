@@ -19,6 +19,10 @@ AGENT_CONTRACT_VERSION = "2026-07-general-v1"
 
 SUPPORTED_INTENTS = {
     "filter_candidates",
+    "view_active_jobs",
+    "jobs_needing_attention",
+    "applicant_metrics",
+    "view_sourcing_status",
     "search_talent",
     "candidate_workflow",
     "create_job",
@@ -72,6 +76,7 @@ DEFAULT_ENTITIES = {
     "search_query": None,
     "job_title": None,
     "candidate_name": None,
+    "candidate_id": None,
     "candidate_group": None,
     "stage": None,
     "target_stage": None,
@@ -184,6 +189,7 @@ def _extract_job_title(message: str) -> str | None:
 def _extract_limit(text: str) -> int | None:
     patterns = [
         r"\btop\s+(\d{1,3})\b",
+        r"\bbest\s+(\d{1,3})\b",
         r"\b(\d{1,3})\s+top\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
         r"\b(\d{1,3})\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
         r"\b(?:top\s+)?(" + "|".join(NUMBER_WORDS) + r")\s+(?:candidate|candidates|resume|resumes|profile|profiles)\b",
@@ -268,7 +274,14 @@ def _workflow_tasks(intent: str, entities: dict[str, Any]) -> list[dict[str, Any
     target_stage = entities.get("target_stage") or entities.get("stage")
     limit = entities.get("limit")
 
-    if intent == "filter_candidates":
+    if intent in {"view_active_jobs", "jobs_needing_attention", "applicant_metrics", "view_sourcing_status"}:
+        tasks.append({
+            "intent": intent,
+            "description": "Retrieve current ATS job and applicant data from the authorized workspace.",
+            "entities": entities,
+        })
+
+    if entities.get("filters") and intent in {"filter_candidates", "candidate_workflow"}:
         tasks.append({
             "intent": "filter_candidates",
             "description": "Filter stored candidates using validated ATS fields.",
@@ -282,7 +295,7 @@ def _workflow_tasks(intent: str, entities: dict[str, Any]) -> list[dict[str, Any
             "entities": {"search_query": entities.get("search_query"), "limit": limit or 10},
         })
 
-    if intent in {"candidate_workflow", "select_top_candidates", "review_ai_ranked_candidates"}:
+    if intent in {"candidate_workflow", "select_top_candidates", "review_ai_ranked_candidates"} and not entities.get("filters"):
         tasks.append(
             {
                 "intent": "select_top_candidates",
@@ -382,6 +395,13 @@ def _workflow_tasks(intent: str, entities: dict[str, Any]) -> list[dict[str, Any
             ]
         )
 
+    if target_stage == "rejected" and intent == "candidate_workflow":
+        tasks.append({
+            "intent": "reject_candidate",
+            "description": "Reject only the candidates returned by the validated filter after confirmation.",
+            "entities": {"job_id": entities.get("job_id"), "candidate_ids": entities.get("candidate_ids")},
+        })
+
     if not tasks and intent in SUPPORTED_INTENTS and intent != "unknown":
         tasks.append({"intent": intent, "description": "Handle the requested ATS workflow.", "entities": entities})
 
@@ -421,6 +441,27 @@ def _action_plan(tasks: list[dict[str, Any]], entities: dict[str, Any]) -> list[
                     "requires_confirmation": False,
                 }
             )
+
+        elif task_intent == "view_active_jobs":
+            actions.append({
+                "action_id": "list_active_jobs", "actor": "action_agent", "method": "GET",
+                "endpoint": "/jobs", "needs": [], "params": {"status": "active"}, "requires_confirmation": False,
+            })
+        elif task_intent == "jobs_needing_attention":
+            actions.append({
+                "action_id": "list_jobs_needing_attention", "actor": "action_agent", "method": "GET",
+                "endpoint": "/jobs", "needs": [], "params": {}, "requires_confirmation": False,
+            })
+        elif task_intent == "applicant_metrics":
+            actions.append({
+                "action_id": "get_applicant_metrics", "actor": "action_agent", "method": "GET",
+                "endpoint": "/jobs", "needs": [], "params": {"period": "today"}, "requires_confirmation": False,
+            })
+        elif task_intent == "view_sourcing_status":
+            actions.append({
+                "action_id": "get_sourcing_status", "actor": "action_agent", "method": "GET",
+                "endpoint": "/jobs/{job_id}", "needs": ["job_id"], "params": {}, "requires_confirmation": False,
+            })
         elif task_intent == "filter_candidates":
             actions.append(
                 {
@@ -661,9 +702,12 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     entities["limit"] = _extract_limit(text)
     entities["target_stage"] = _target_stage_from_text(text)
     entities["job_id"] = context.get("job_id") or context.get("current_job_id")
+    entities["candidate_id"] = context.get("candidate_id")
     context_candidate_ids = context.get("candidate_ids") or context.get("selected_candidate_ids")
     if isinstance(context_candidate_ids, list):
         entities["candidate_ids"] = [str(item).strip() for item in context_candidate_ids if str(item).strip()]
+    elif entities["candidate_id"]:
+        entities["candidate_ids"] = [str(entities["candidate_id"]).strip()]
 
     stage = _stage_from_text(text)
     if stage:
@@ -678,6 +722,9 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     if experience_range:
         filters["relevant_experience_min"] = float(experience_range.group(1))
         filters["relevant_experience_max"] = float(experience_range.group(2))
+    minimum_experience = re.search(r"(?:at\s+least\s+)?(\d+(?:\.\d+)?)\s*\+\s*years?", raw, re.I)
+    if minimum_experience and "relevant_experience_min" not in filters:
+        filters["relevant_experience_min"] = float(minimum_experience.group(1))
     location_match = re.search(
         r"(?:local\s+to|from|in)\s+([a-z][a-z .-]*?)(?=\s+(?:candidate|candidates|with|having|who|and)\b|$)",
         text,
@@ -689,10 +736,20 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
     score_match = re.search(r"(?:score|fit)\s*(?:above|over|>=|at\s+least)\s*(\d+(?:\.\d+)?)", text)
     if score_match:
         filters["score_min"] = float(score_match.group(1))
+    score_max_match = re.search(r"(?:score|fit)\s*(?:below|under|<|less\s+than)\s*(\d+(?:\.\d+)?)", text)
+    if score_max_match:
+        filters["score_max"] = float(score_max_match.group(1))
     skill_match = re.search(r"years?\s+([a-z0-9+#. -]+?)\s+experience\b", text)
     if skill_match:
         skill_phrase = re.sub(r"\b(?:of|in|with|and)\b", " ", skill_match.group(1))
         filters["skills"] = [part for part in skill_phrase.split() if len(part) > 1][:8]
+    if not filters:
+        with_skill = re.search(
+            r"(?:only\s+show|show|find|filter)?\s*(?:me\s+)?(?:the\s+)?(?:top\s+\d+\s+)?candidates?\s+with\s+([a-z0-9+#. -]+?)(?=\s+(?:and|who|with|having)\b|$)",
+            text,
+        )
+        if with_skill:
+            filters["skills"] = [part for part in with_skill.group(1).split() if len(part) > 1][:8]
     if filters:
         entities["filters"] = filters
 
@@ -710,7 +767,19 @@ def fallback_parse_intent(message: str, current_route: str | None = None, curren
         text,
     )
     discovery_query = _title_case_job(discovery_match.group(1)) if discovery_match else None
-    if filters and _has_any_word(text, ("show", "find", "filter", "candidate", "candidates", "profiles")):
+    if re.search(r"\b(?:which|show|list|find)\s+(?:of\s+)?(?:my\s+)?jobs?\s+(?:need|needs|needing|require)\s+attention\b", text):
+        intent, confidence = "jobs_needing_attention", 0.96
+    elif re.search(r"\b(?:show|list|open)\s+(?:me\s+)?(?:my\s+)?active\s+jobs?\b", text):
+        intent, confidence = "view_active_jobs", 0.96
+    elif re.search(r"\b(?:how\s+many|show)\s+(?:candidates?|applicants?)\s+(?:applied|today)\b", text):
+        intent, confidence = "applicant_metrics", 0.92
+    elif re.search(r"\b(?:is|show|check).*\bsourcing\s+(?:approved|approval|status)\b", text):
+        intent, confidence = "view_sourcing_status", 0.92
+    elif filters and re.search(r"\breject\b", text):
+        intent, confidence = "candidate_workflow", 0.94
+        entities["candidate_group"] = "filtered"
+        entities["target_stage"] = "rejected"
+    elif filters and _has_any_word(text, ("show", "find", "filter", "candidate", "candidates", "profiles")):
         intent, confidence = "filter_candidates", 0.93
         entities["candidate_group"] = "filtered"
     elif discovery_query and not any(term in text for term in ("top ", "shortlist", "reject", " job", " of ", " for ")):
@@ -793,7 +862,7 @@ def normalize_intent_response(data: dict[str, Any] | None) -> dict:
             validated_filters: dict[str, Any] = {}
             if isinstance(value, dict):
                 for numeric_key in (
-                    "relevant_experience_min", "relevant_experience_max", "score_min", "recency_days"
+                    "relevant_experience_min", "relevant_experience_max", "score_min", "score_max", "recency_days"
                 ):
                     try:
                         if value.get(numeric_key) is not None:

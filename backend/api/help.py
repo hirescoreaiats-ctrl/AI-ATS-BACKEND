@@ -25,6 +25,31 @@ class HelpActionExecuteRequest(BaseModel):
     confirmation_token: str = Field(..., min_length=20, max_length=10000)
 
 
+class AgentUIContract(BaseModel):
+    kind: str
+    candidate_cards: list[dict] = Field(default_factory=list)
+    job_cards: list[dict] = Field(default_factory=list)
+    navigation: dict | None = None
+    confirmation: dict | None = None
+    metrics: dict = Field(default_factory=dict)
+
+
+class AgentResponse(BaseModel):
+    result_schema_version: str
+    response_type: str | None = None
+    assistant_reply: str | None = None
+    status: str | None = None
+    intent: str | None = None
+    entities: dict = Field(default_factory=dict)
+    candidate_preview: list[dict] = Field(default_factory=list)
+    job_preview: list[dict] = Field(default_factory=list)
+    confirmation: dict | None = None
+    ui: AgentUIContract
+
+    class Config:
+        extra = "allow"
+
+
 def _request_context(payload: HelpIntentRequest) -> dict:
     return build_conversation_context(payload.current_context, payload.conversation_history)
 
@@ -52,7 +77,7 @@ def plan_help_action(payload: HelpIntentRequest, user=Depends(get_current_user))
     )
 
 
-@router.post("/chat")
+@router.post("/chat", response_model=AgentResponse)
 def chat_with_help_agent(
     payload: HelpIntentRequest,
     db=Depends(get_db),
@@ -68,7 +93,7 @@ def chat_with_help_agent(
     )
 
 
-@router.post("/execute")
+@router.post("/execute", response_model=AgentResponse)
 def execute_help_action(
     payload: HelpActionExecuteRequest,
     db=Depends(get_db),

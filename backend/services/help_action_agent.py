@@ -23,6 +23,10 @@ from backend.services.help_intent import parse_intent
 GLOBAL_ROLES = {"admin", "super_admin"}
 SERVER_ACTIONS = {
     "filter_candidates",
+    "list_active_jobs",
+    "list_jobs_needing_attention",
+    "get_applicant_metrics",
+    "get_sourcing_status",
     "search_talent",
     "find_top_candidates",
     "shortlist_candidates",
@@ -31,7 +35,11 @@ SERVER_ACTIONS = {
     "move_to_interview_scheduling",
     "schedule_interview_slot",
 }
-MUTATING_ACTIONS = SERVER_ACTIONS - {"filter_candidates", "find_top_candidates", "search_talent"}
+READ_ONLY_ACTIONS = {
+    "filter_candidates", "find_top_candidates", "search_talent", "list_active_jobs",
+    "list_jobs_needing_attention", "get_applicant_metrics", "get_sourcing_status",
+}
+MUTATING_ACTIONS = SERVER_ACTIONS - READ_ONLY_ACTIONS
 MAX_MUTATION_CANDIDATES = 25
 CONFIRMATION_MINUTES = 10
 
@@ -150,6 +158,63 @@ def _candidate_payload(candidate: Resume) -> dict[str, Any]:
         "matched_skills": list_field(candidate.matched_skills),
         "missing_skills": list_field(candidate.missing_skills),
         "recommendation": candidate.ai_recommendation or candidate.shortlist_decision or candidate.status,
+        "relevant_experience_years": (
+            candidate.direct_relevant_experience_years
+            or candidate.relevant_experience_years
+            or candidate.total_experience_years
+        ),
+        "location": candidate.location or candidate.form_location,
+    }
+
+
+def _job_payload(db, job: Job) -> dict[str, Any]:
+    candidates = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_active == True).all()
+    scores = [float(item.rank_score or item.final_score or 0) for item in candidates]
+    waiting = sum(1 for item in candidates if str(item.stage or "").lower() in {"", "review", "reviewed"})
+    return {
+        "id": job.id,
+        "job_title": job.job_title or job.role or "Untitled Job",
+        "company_name": job.company_name,
+        "location": job.location,
+        "work_mode": job.work_mode,
+        "status": job.status or ("active" if job.is_active else "inactive"),
+        "is_active": bool(job.is_active),
+        "applicant_count": len(candidates),
+        "top_score": max(scores) if scores else None,
+        "waiting_for_action": waiting,
+        "sourcing_requested": bool(job.sourcing_requested),
+        "sourcing_approval_status": job.sourcing_approval_status,
+    }
+
+
+def _agent_ui_contract(result: dict[str, Any]) -> dict[str, Any]:
+    candidates = result.get("candidate_preview") if isinstance(result.get("candidate_preview"), list) else []
+    jobs = result.get("job_preview") if isinstance(result.get("job_preview"), list) else []
+    confirmation = result.get("confirmation") if isinstance(result.get("confirmation"), dict) else None
+    if confirmation:
+        kind = "confirmation_request"
+    elif candidates:
+        kind = "candidate_results"
+    elif jobs:
+        kind = "job_results"
+    elif result.get("status") == "completed":
+        kind = "completed_action"
+    elif result.get("response_type") == "clarification":
+        kind = "recovery"
+    else:
+        kind = "conversational_answer"
+    navigation = result.get("navigation") if isinstance(result.get("navigation"), dict) else None
+    return {
+        **result,
+        "result_schema_version": "2026-08-agent-ui-v1",
+        "ui": {
+            "kind": kind,
+            "candidate_cards": candidates,
+            "job_cards": jobs,
+            "navigation": navigation,
+            "confirmation": confirmation,
+            "metrics": result.get("metrics") if isinstance(result.get("metrics"), dict) else {},
+        },
     }
 
 
@@ -177,7 +242,13 @@ def _resolve_candidates(
     explicit_ids = [str(item) for item in (entities.get("candidate_ids") or []) if str(item).strip()]
     query = _candidate_query(db, user, job.id if job else None)
     if explicit_ids:
-        return query.filter(Resume.id.in_(explicit_ids)).all()
+        query = query.filter(Resume.id.in_(explicit_ids)).order_by(
+            func.coalesce(Resume.rank_score, Resume.final_score, 0).desc()
+        )
+        requested_limit = entities.get("limit")
+        if requested_limit is not None:
+            query = query.limit(min(max(int(requested_limit), 1), 100))
+        return query.all()
 
     candidate_name = _normalized(entities.get("candidate_name"))
     if candidate_name:
@@ -191,7 +262,7 @@ def _resolve_candidates(
     if result.get("intent") == "filter_candidates" or "filter_candidates" in action_ids:
         filters = entities.get("filters") if isinstance(entities.get("filters"), dict) else {}
         allowed = {
-            "relevant_experience_min", "relevant_experience_max", "location", "score_min", "skills", "recency_days"
+            "relevant_experience_min", "relevant_experience_max", "location", "score_min", "score_max", "skills", "recency_days"
         }
         filters = {key: value for key, value in filters.items() if key in allowed}
         relevant_years = func.coalesce(
@@ -206,6 +277,8 @@ def _resolve_candidates(
             query = query.filter(relevant_years <= float(filters["relevant_experience_max"]))
         if filters.get("score_min") is not None:
             query = query.filter(func.coalesce(Resume.rank_score, Resume.final_score, 0) >= float(filters["score_min"]))
+        if filters.get("score_max") is not None:
+            query = query.filter(func.coalesce(Resume.rank_score, Resume.final_score, 0) < float(filters["score_max"]))
         location = str(filters.get("location") or "").strip()
         if location:
             pattern = f"%{location.lower()}%"
@@ -297,7 +370,7 @@ def _confirmation_token(user: User, job: Job, candidates: list[Resume], action_i
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm), expires_at
 
 
-def prepare_action_agent(
+def _prepare_action_agent(
     *,
     message: str,
     current_route: str | None,
@@ -332,7 +405,43 @@ def prepare_action_agent(
         if isinstance(action, dict) and action.get("action_id") in SERVER_ACTIONS
     ]
 
-    is_talent_search = result.get("intent") in {"filter_candidates", "search_talent"}
+    if result.get("intent") in {"view_active_jobs", "jobs_needing_attention", "applicant_metrics"}:
+        jobs = _visible_jobs_query(db, user).filter(Job.is_active == True).order_by(Job.created_at.desc()).limit(50).all()
+        job_cards = [_job_payload(db, job) for job in jobs]
+        if result.get("intent") == "jobs_needing_attention":
+            job_cards = [
+                item for item in job_cards
+                if item["waiting_for_action"] > 0 or item.get("sourcing_approval_status") == "pending"
+            ]
+            job_cards.sort(key=lambda item: (item["waiting_for_action"], item["applicant_count"]), reverse=True)
+        metrics: dict[str, Any] = {}
+        if result.get("intent") == "applicant_metrics":
+            today = datetime.utcnow().date()
+            today_count = _candidate_query(db, user).filter(Resume.created_at >= datetime.combine(today, datetime.min.time())).count()
+            metrics = {"applicants_today": today_count, "active_jobs": len(job_cards)}
+            result["assistant_reply"] = f"{today_count} candidate(s) applied today across {len(job_cards)} active job(s)."
+        else:
+            result["assistant_reply"] = (
+                f"I found {len(job_cards)} active job(s)."
+                if result.get("intent") == "view_active_jobs"
+                else f"{len(job_cards)} job(s) currently need recruiter attention."
+            )
+        result.update({
+            "job_preview": job_cards[:12],
+            "candidate_preview": [],
+            "job_options": [],
+            "confirmation": None,
+            "metrics": metrics,
+            "missing_fields": [],
+            "requires_confirmation": False,
+            "ready_for_action_agent": False,
+            "clarification_needed": False,
+            "navigation": {"page": "dashboard", "label": "Open Jobs"},
+        })
+        return result
+
+    is_talent_search = result.get("intent") == "search_talent"
+    is_filter = result.get("intent") == "filter_candidates"
     job, job_options = (None, []) if is_talent_search else _resolve_job(db, user, entities)
     if job:
         entities["job_id"] = job.id
@@ -342,7 +451,25 @@ def prepare_action_agent(
     if candidates:
         entities["candidate_ids"] = [candidate.id for candidate in candidates]
 
-    if result.get("intent") == "filter_candidates":
+    if result.get("intent") == "view_sourcing_status":
+        if not job:
+            result.update({
+                "job_options": job_options, "candidate_preview": [], "job_preview": [], "confirmation": None,
+                "missing_fields": ["job"], "requires_confirmation": False, "ready_for_action_agent": False,
+                "clarification_needed": True, "clarification_question": "Which job should I check sourcing for?",
+            })
+            return result
+        card = _job_payload(db, job)
+        result.update({
+            "job_preview": [card], "candidate_preview": [], "job_options": [], "confirmation": None,
+            "missing_fields": [], "requires_confirmation": False, "ready_for_action_agent": False,
+            "clarification_needed": False,
+            "assistant_reply": f"Sourcing for {card['job_title']} is {card.get('sourcing_approval_status') or 'not requested'}.",
+            "navigation": {"page": "dashboard", "job_id": job.id, "label": "Open Job"},
+        })
+        return result
+
+    if is_filter:
         result["entities"] = entities
         result["candidate_preview"] = [_candidate_payload(candidate) for candidate in candidates]
         result["job_options"] = []
@@ -453,6 +580,18 @@ def prepare_action_agent(
     return result
 
 
+def prepare_action_agent(
+    *, message: str, current_route: str | None, current_context: dict[str, Any] | None, db, user: User
+) -> dict[str, Any]:
+    return _agent_ui_contract(_prepare_action_agent(
+        message=message,
+        current_route=current_route,
+        current_context=current_context,
+        db=db,
+        user=user,
+    ))
+
+
 def _require_visible_job(db, user: User, job_id: str) -> Job:
     job = _visible_jobs_query(db, user).filter(Job.id == job_id).first()
     if not job:
@@ -528,13 +667,14 @@ def execute_confirmed_action(*, confirmation_token: str, db, user: User) -> dict
     job = _require_visible_job(db, user, str(payload.get("job_id") or ""))
     completed = _completed_confirmation(db, user, str(payload.get("jti") or ""))
     if completed:
-        return {
+        return _agent_ui_contract({
             "status": "already_completed",
             "idempotent_replay": True,
             "job": {"id": job.id, "job_title": job.job_title or job.role},
             "candidate_count": len(completed["candidate_ids"]),
             **completed,
-        }
+            "navigation": {"page": "jobResult", "job_id": job.id, "label": "View Updated Candidates"},
+        })
     candidate_ids = [str(item) for item in (payload.get("candidate_ids") or [])]
     actions = [str(item) for item in (payload.get("actions") or []) if str(item) in SERVER_ACTIONS]
     if not candidate_ids or not actions:
@@ -616,10 +756,11 @@ def execute_confirmed_action(*, confirmation_token: str, db, user: User) -> dict
         db.rollback()
         raise
 
-    return {
+    return _agent_ui_contract({
         "status": "completed",
         "job": {"id": job.id, "job_title": job.job_title or job.role},
         "candidate_count": len(candidates),
         "candidate_ids": candidate_ids,
         "receipts": receipts,
-    }
+        "navigation": {"page": "jobResult", "job_id": job.id, "label": "View Updated Candidates"},
+    })

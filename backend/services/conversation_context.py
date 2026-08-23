@@ -4,17 +4,22 @@ from typing import Any
 
 
 CONTEXT_FIELDS = {
+    "current_screen",
+    "current_route",
+    "active_filters",
     "job_id",
     "current_job_id",
     "job_title",
     "current_job_title",
     "candidate_ids",
+    "candidate_id",
     "selected_candidate_ids",
     "candidate_name",
     "stage",
     "limit",
     "date_time",
     "meeting_url",
+    "selected_items",
 }
 MAX_HISTORY_MESSAGES = 8
 MAX_HISTORY_CONTENT = 500
@@ -31,6 +36,21 @@ def build_conversation_context(current_context: dict[str, Any] | None, history: 
             context[key] = [str(value).strip() for value in values[:25] if str(value).strip()]
         elif values is not None:
             context.pop(key, None)
+
+    if isinstance(context.get("selected_items"), list):
+        context["selected_items"] = [str(value).strip() for value in context["selected_items"][:25] if str(value).strip()]
+    elif context.get("selected_items") is not None:
+        context.pop("selected_items", None)
+
+    filters = context.get("active_filters")
+    if isinstance(filters, dict):
+        context["active_filters"] = {
+            str(key)[:60]: str(value)[:160]
+            for key, value in list(filters.items())[:12]
+            if value is not None and str(value).strip()
+        }
+    elif filters is not None:
+        context.pop("active_filters", None)
 
     if "limit" in context:
         try:
