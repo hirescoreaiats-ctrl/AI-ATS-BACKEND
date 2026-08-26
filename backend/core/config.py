@@ -41,6 +41,7 @@ class Settings:
     paid_signup_access_codes: list[str] = field(default_factory=lambda: _csv(os.getenv("PAID_SIGNUP_ACCESS_CODES"), []))
     checkout_url: str | None = field(default_factory=lambda: os.getenv("CHECKOUT_URL"))
     sales_contact_email: str = field(default_factory=lambda: os.getenv("SALES_CONTACT_EMAIL", "sales@example.com"))
+    demo_request_to_email: str = field(default_factory=lambda: os.getenv("DEMO_REQUEST_TO_EMAIL", "info@hirescoreai.com"))
     sourcing_request_to_email: str = field(default_factory=lambda: os.getenv("SOURCING_REQUEST_TO_EMAIL", "info@hirescoreai.com"))
     requirement_platform_url: str = field(default_factory=lambda: os.getenv("REQUIREMENT_PLATFORM_URL", "https://hirescoreai.com/requirement-platform/?view=requirements"))
     candidate_tracking_token_days: int = field(default_factory=lambda: int(os.getenv("CANDIDATE_TRACKING_TOKEN_DAYS", "30")))
